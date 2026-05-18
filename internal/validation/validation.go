@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
-	"runtime"
 	"strings"
 
 	"github.com/aki-0421/loop/internal/artifactdb"
@@ -79,13 +78,7 @@ func Run(ctx context.Context, cwd, iterationDir string, commands []Command) (Res
 }
 
 func runShell(ctx context.Context, cwd, command string) (int, []byte) {
-	shell := "sh"
-	args := []string{"-c", command}
-	if runtime.GOOS == "windows" {
-		shell = "cmd"
-		args = []string{"/C", command}
-	}
-	cmd := exec.CommandContext(ctx, shell, args...)
+	cmd := newShellCommand(ctx, command)
 	cmd.Dir = cwd
 	var buf bytes.Buffer
 	cmd.Stdout = &buf

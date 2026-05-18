@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 )
@@ -82,7 +83,7 @@ func (r Runner) runOne(ctx context.Context, command Command) CommandResult {
 	}
 
 	start := time.Now()
-	cmd := exec.CommandContext(ctx, "sh", "-c", command.Run)
+	cmd := newShellCommand(ctx, command.Run)
 	cmd.Dir = r.WorkDir
 	var output bytes.Buffer
 	cmd.Stdout = &output
@@ -106,6 +107,38 @@ func (r Runner) runOne(ctx context.Context, command Command) CommandResult {
 		Output:   output.String(),
 		Duration: time.Since(start),
 		Err:      err,
+	}
+}
+
+func newShellCommand(ctx context.Context, command string) *exec.Cmd {
+	shell, args := shellCommand(command)
+	return exec.CommandContext(ctx, shell, args...)
+}
+
+func shellCommand(command string) (string, []string) {
+	if runtime.GOOS == "windows" {
+		shell := os.Getenv("COMSPEC")
+		if strings.TrimSpace(shell) == "" {
+			shell = "cmd"
+		}
+		return shell, []string{"/C", command}
+	}
+
+	shell := os.Getenv("SHELL")
+	if strings.TrimSpace(shell) == "" {
+		return "sh", []string{"-c", command}
+	}
+
+	name := strings.TrimSuffix(strings.ToLower(filepath.Base(shell)), ".exe")
+	switch name {
+	case "bash", "zsh", "fish", "ksh", "mksh", "pdksh", "oksh", "csh", "tcsh":
+		return shell, []string{"-lc", command}
+	case "nu":
+		return shell, []string{"-l", "-c", command}
+	case "pwsh", "powershell":
+		return shell, []string{"-Command", command}
+	default:
+		return shell, []string{"-c", command}
 	}
 }
 

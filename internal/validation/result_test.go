@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -48,5 +49,44 @@ func TestRunnerWritesMarkdownAndReturnsRequiredFailure(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "printf nope") {
 		t.Fatalf("validation markdown missing command output:\n%s", data)
+	}
+}
+
+func TestRunnerUsesUserDefaultShell(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("SHELL is not the default shell source on Windows")
+	}
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "shell-args.log")
+	shellPath := filepath.Join(dir, "zsh")
+	script := `#!/bin/sh
+printf '%s\n' "$@" > "$FAKE_SHELL_LOG"
+if [ "$1" = "-lc" ]; then
+  exec /bin/sh -c "$2"
+fi
+exec /bin/sh "$@"
+`
+	if err := os.WriteFile(shellPath, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SHELL", shellPath)
+	t.Setenv("FAKE_SHELL_LOG", logPath)
+
+	runner := Runner{WorkDir: dir}
+	results, err := runner.Run(context.Background(), []Command{
+		{Name: "shell", Run: "printf shell-ok", Required: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || results[0].Output != "shell-ok" {
+		t.Fatalf("results = %#v", results)
+	}
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(data); got != "-lc\nprintf shell-ok\n" {
+		t.Fatalf("shell args = %q", got)
 	}
 }

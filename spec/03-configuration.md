@@ -118,6 +118,20 @@ Modes:
 
 Pull request mode uses `gh` commands. The CLI writes the generated title and body to files before invoking `gh`.
 
+## `validation`
+
+Configured validation commands run after the agent phase and before integration. They run from the iteration work directory, which is the iteration worktree when `git.worktree=true`.
+
+Each command has:
+
+| Field | Behavior |
+| --- | --- |
+| `name` | Human-readable label used in validation logs. |
+| `run` | Shell command string to execute. |
+| `required` | When true, a non-zero exit code fails validation and blocks integration unless repair succeeds. |
+
+Validation commands use the user's default shell instead of hard-coded `sh` where possible. On Unix, the CLI reads `SHELL`; zsh, bash, fish, ksh, and csh-family shells run as login command shells, `nu` runs with `-l -c`, PowerShell-compatible shells run with `-Command`, and other shells run with `-c`. If `SHELL` is empty, the CLI falls back to `sh -c`. On Windows, the CLI uses `COMSPEC /C`, falling back to `cmd /C`.
+
 ## Environment variables
 
 | Variable | Behavior |

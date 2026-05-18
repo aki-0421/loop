@@ -132,6 +132,8 @@ If the agent exits with uncommitted changes:
 
 Validation commands come from configuration and agent result JSON. Commands marked required must pass before integration.
 
+Configured validation commands run from the current iteration work directory through the user's default shell as described in `03-configuration.md`.
+
 Validation output is saved to the `validation` artifact and structured events are appended to `agent-events.jsonl`.
 
 ## Integration phase

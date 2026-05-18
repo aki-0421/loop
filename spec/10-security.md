@@ -11,6 +11,7 @@
 ## Shell commands
 
 The CLI runs shell commands for Git, `gh`, validation, and agent launch. Commands come from configuration or built-in Git and `gh` operations.
+Validation command strings are executed through the user's default shell when available, not through a hard-coded POSIX shell. This makes command lookup follow the user's configured shell environment more closely, while keeping the configured command string visible in logs.
 
 Rules:
 
