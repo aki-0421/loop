@@ -1,5 +1,20 @@
 # Testing
 
+## Testing trophy shape
+
+The suite should favor tests that exercise user-visible contracts through real
+package boundaries:
+
+1. A small number of end-to-end CLI workflows with fake agents and fake `gh`.
+2. Integration tests around durable boundaries: Git repositories, SQLite
+   artifact storage, process adapters, config files, and command output.
+3. Focused unit tests only for pure logic or external payload parsing that is
+   hard to cover through a realistic workflow.
+
+Avoid tests that only restate private implementation details, such as exact
+terminal row placement, animation cadence, helper argument-array builders, or
+flags that no longer exist and are already rejected by the standard flag parser.
+
 ## Test areas
 
 The Go implementation includes tests for:

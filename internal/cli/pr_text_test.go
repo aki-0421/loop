@@ -13,7 +13,7 @@ func TestFallbackPRTextUsesEnglishWithTemplate(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(templatePath), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	template := "## 概要\n\n## 確認\n\n- [ ] テスト済み\n"
+	template := "## Context\n\n## Verification\n\n- [ ] Tested\n"
 	if err := os.WriteFile(templatePath, []byte(template), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -25,7 +25,7 @@ func TestFallbackPRTextUsesEnglishWithTemplate(t *testing.T) {
 	if title != "Integrate feat/jp-weather" {
 		t.Fatalf("title = %q", title)
 	}
-	for _, want := range []string{"## 概要", "## 確認", "## Loop Notes", "Branch:"} {
+	for _, want := range []string{"## Context", "## Verification", "## Loop Notes", "Branch:"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("body missing %q:\n%s", want, body)
 		}

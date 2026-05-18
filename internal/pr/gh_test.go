@@ -4,36 +4,9 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 )
-
-func TestCreateArgs(t *testing.T) {
-	got := CreateArgs(CreateOptions{
-		Base:     "main",
-		Head:     "feat/add-thing",
-		Title:    "Add thing",
-		BodyFile: "body.md",
-	})
-	want := []string{"pr", "create", "--base", "main", "--head", "feat/add-thing", "--title", "Add thing", "--body-file", "body.md"}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("CreateArgs = %#v, want %#v", got, want)
-	}
-}
-
-func TestMergeArgsUsesPRTitleAsSquashSubject(t *testing.T) {
-	got := MergeArgs(MergeOptions{
-		PR:           "https://example.test/pull/1",
-		Subject:      "日本のお天気アプリの土台を追加",
-		BodyFile:     "pr-body.md",
-		DeleteBranch: true,
-	})
-	want := []string{"pr", "merge", "https://example.test/pull/1", "--squash", "--subject", "日本のお天気アプリの土台を追加", "--body-file", "pr-body.md", "--delete-branch"}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("MergeArgs = %#v, want %#v", got, want)
-	}
-}
 
 func TestGHWrapperCreateChecksMerge(t *testing.T) {
 	ctx := context.Background()
@@ -59,7 +32,7 @@ func TestGHWrapperCreateChecksMerge(t *testing.T) {
 	if _, err := r.Checks(ctx, "1", true); err != nil {
 		t.Fatalf("Checks: %v", err)
 	}
-	if _, err := r.Merge(ctx, MergeOptions{PR: "1", Subject: "Add x", BodyFile: "body.md", DeleteBranch: true}); err != nil {
+	if _, err := r.Merge(ctx, MergeOptions{PR: "1", Subject: "Add weather app foundation", BodyFile: "body.md", DeleteBranch: true}); err != nil {
 		t.Fatalf("Merge: %v", err)
 	}
 
@@ -72,7 +45,7 @@ func TestGHWrapperCreateChecksMerge(t *testing.T) {
 		"--version",
 		"pr create --base main --head feat/x --title Add x --body-file body.md",
 		"pr checks 1 --watch",
-		"pr merge 1 --squash --subject Add x --body-file body.md --delete-branch",
+		"pr merge 1 --squash --subject Add weather app foundation --body-file body.md --delete-branch",
 	} {
 		if !strings.Contains(log, want) {
 			t.Fatalf("log missing %q:\n%s", want, log)

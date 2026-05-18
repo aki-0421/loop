@@ -26,47 +26,7 @@ func TestRunRendererLineModePrintsAuditCommand(t *testing.T) {
 	}
 }
 
-func TestRunRendererDedupesConsecutiveActivity(t *testing.T) {
-	renderer := &runRenderer{
-		enabled:     true,
-		interactive: true,
-		started:     time.Now(),
-		done:        make(chan struct{}),
-	}
-	renderer.addActivity("command: git status --short")
-	renderer.addActivity("command: git status --short")
-	renderer.addActivity("command: make test")
-
-	if len(renderer.activity) != 2 {
-		t.Fatalf("activity = %#v, want consecutive duplicate removed", renderer.activity)
-	}
-}
-
-func TestRunRendererInteractiveUsesScreenRefresh(t *testing.T) {
-	var out bytes.Buffer
-	renderer := &runRenderer{
-		enabled:     true,
-		interactive: true,
-		writer:      &out,
-		started:     time.Now(),
-		runID:       "run",
-		agent:       "codex",
-		base:        "develop",
-		logs:        ".loop/runs/run",
-		stage:       string(runstate.StageAgentRunning),
-		done:        make(chan struct{}),
-	}
-	renderer.render()
-	got := out.String()
-	if !strings.Contains(got, "\x1b[H") {
-		t.Fatalf("interactive renderer should reposition cursor, got %q", got)
-	}
-	if !strings.Contains(got, "╦   ╔═╗ ╔═╗ ╔═╗") || !strings.Contains(got, "Ctrl+C cancel") {
-		t.Fatalf("interactive renderer should draw focused dashboard, got %q", got)
-	}
-}
-
-func TestRunRendererWideDashboardShowsPanelsAndProgress(t *testing.T) {
+func TestRunRendererDashboardKeepsEssentialStateWithinBounds(t *testing.T) {
 	t.Setenv("LOOP_ASCII", "1")
 	todoPath := filepath.Join(t.TempDir(), "todo.txt")
 	if err := os.WriteFile(todoPath, []byte("- [x] Inspect startup path\n- [>] Add lazy loading\n"), 0o644); err != nil {
@@ -104,62 +64,23 @@ func TestRunRendererWideDashboardShowsPanelsAndProgress(t *testing.T) {
 			t.Fatalf("frame missing %q:\n%s", want, frame)
 		}
 	}
-	if !strings.Contains(stripANSISequences(frameLines[len(frameLines)-2]), "Ctrl+C cancel") {
-		t.Fatalf("footer should be fixed on the second-last row:\n%s", frame)
-	}
-	for i := 0; i < 3; i++ {
-		if strings.TrimSpace(stripANSISequences(frameLines[i])) != "" {
-			t.Fatalf("logo should have three blank rows above it:\n%s", frame)
+	assertFrameBounds(t, frameLines, 130, 32)
+
+	shortLines := renderDashboard(rendererSnapshot{
+		Started:      now.Add(-time.Minute),
+		Now:          now,
+		Todos:        []todoItem{{Done: true, Text: "Done"}, {Text: "Open"}},
+		Current:      strings.Repeat("long message ", 20),
+		InputTokens:  100,
+		OutputTokens: 50,
+	}, 70, 8)
+	shortFrame := strings.Join(shortLines, "\n")
+	for _, want := range []string{"loop", "long message", "todo: 1/2 done"} {
+		if !strings.Contains(shortFrame, want) {
+			t.Fatalf("compact frame missing %q:\n%s", want, shortFrame)
 		}
 	}
-	if !strings.Contains(stripANSISequences(frameLines[3]), "╦   ╔═╗") {
-		t.Fatalf("logo should start after three blank rows:\n%s", frame)
-	}
-	metricsLine, latestLine, todoLine := -1, -1, -1
-	for i, line := range frameLines {
-		plain := stripANSISequences(line)
-		switch {
-		case strings.Contains(plain, "2K in"):
-			metricsLine = i
-		case strings.Contains(plain, "Inspecting startup path before editing."):
-			latestLine = i
-		case strings.Contains(plain, "Inspect startup path"):
-			todoLine = i
-		}
-	}
-	if latestLine != metricsLine+2 || strings.TrimSpace(stripANSISequences(frameLines[metricsLine+1])) != "" || todoLine <= latestLine {
-		t.Fatalf("latest message should sit one blank row below metrics and above todos, metrics=%d latest=%d todo=%d:\n%s", metricsLine, latestLine, todoLine, frame)
-	}
-	for _, line := range strings.Split(frame, "\n") {
-		if strings.Contains(line, "╦   ╔═╗") {
-			if strings.Index(line, "╦") < 20 {
-				t.Fatalf("logo should be horizontally centered, got:\n%s", frame)
-			}
-			break
-		}
-	}
-	var todoIndents []int
-	checkedCenter := false
-	for _, line := range strings.Split(frame, "\n") {
-		if strings.Contains(line, "Inspect startup path") || strings.Contains(line, "Add lazy loading") {
-			if idx := strings.Index(line, "Inspect"); idx >= 0 {
-				visible := strings.TrimRight(stripANSISequences(line), " ")
-				left := displayWidth(visible) - displayWidth(strings.TrimLeft(visible, " "))
-				right := 130 - displayWidth(visible)
-				if diff := absInt(left - right); diff > 1 {
-					t.Fatalf("todo block should be horizontally centered, left=%d right=%d:\n%s", left, right, frame)
-				}
-				checkedCenter = true
-			}
-			todoIndents = append(todoIndents, strings.Index(line, strings.Fields(strings.TrimSpace(stripANSISequences(line)))[1]))
-		}
-	}
-	if len(todoIndents) != 2 || todoIndents[0] != todoIndents[1] {
-		t.Fatalf("todo rows should share the same left edge, indents=%v:\n%s", todoIndents, frame)
-	}
-	if !checkedCenter {
-		t.Fatalf("todo block center check did not find expected row:\n%s", frame)
-	}
+	assertFrameFits(t, shortLines, 70, 8)
 }
 
 func TestParseTodoItemsNormalizesCommitTypeColon(t *testing.T) {
@@ -200,40 +121,14 @@ func TestRunRendererDashboardListsMaximumTodosWithHiddenBelow(t *testing.T) {
 	}, 100, 18)
 	frame := strings.Join(lines, "\n")
 
-	if len(lines) != 18 {
-		t.Fatalf("line count = %d, want 18:\n%s", len(lines), frame)
-	}
-	for i := 0; i < 3; i++ {
-		if strings.TrimSpace(stripANSISequences(lines[i])) != "" {
-			t.Fatalf("logo should have three blank rows above it:\n%s", frame)
+	assertFrameBounds(t, lines, 100, 18)
+	for _, want := range []string{"2/8 todo", "Todo 1", "Todo 2", "6 hidden below", "Ctrl+C cancel"} {
+		if !strings.Contains(stripANSISequences(frame), want) {
+			t.Fatalf("frame missing %q:\n%s", want, frame)
 		}
-	}
-	if !strings.Contains(stripANSISequences(lines[9]), "2/8 todo") {
-		t.Fatalf("metrics should include completed TODO progress:\n%s", frame)
-	}
-	if strings.TrimSpace(stripANSISequences(lines[10])) != "" {
-		t.Fatalf("metrics and latest message should be separated by one blank row:\n%s", frame)
-	}
-	if !strings.Contains(stripANSISequences(lines[15]), "6 hidden below") {
-		t.Fatalf("last TODO row should report hidden items:\n%s", frame)
 	}
 	if strings.Contains(frame, "Todo 3") || strings.Contains(frame, "Todo 8") {
 		t.Fatalf("hidden TODOs should not be rendered when hidden-below row is needed:\n%s", frame)
-	}
-	if !strings.Contains(stripANSISequences(lines[16]), "Ctrl+C cancel") {
-		t.Fatalf("footer should be fixed on the second-last row:\n%s", frame)
-	}
-	if strings.TrimSpace(stripANSISequences(lines[17])) != "" {
-		t.Fatalf("last row should remain empty:\n%s", frame)
-	}
-}
-
-func TestPlanningSpinnerAdvancesWithRendererTick(t *testing.T) {
-	started := time.Now()
-	first := spinnerSymbol(rendererSnapshot{Started: started, Now: started})
-	second := spinnerSymbol(rendererSnapshot{Started: started, Now: started.Add(rendererTickInterval)})
-	if first == second {
-		t.Fatalf("spinner should advance on each renderer tick, got %q then %q", first, second)
 	}
 }
 
@@ -265,9 +160,22 @@ func TestRunRendererAppliesTokenUsageEvents(t *testing.T) {
 	}
 }
 
-func absInt(n int) int {
-	if n < 0 {
-		return -n
+func assertFrameBounds(t *testing.T, lines []string, width, height int) {
+	t.Helper()
+	if len(lines) != height {
+		t.Fatalf("line count = %d, want %d:\n%s", len(lines), height, strings.Join(lines, "\n"))
 	}
-	return n
+	assertFrameFits(t, lines, width, height)
+}
+
+func assertFrameFits(t *testing.T, lines []string, width, maxHeight int) {
+	t.Helper()
+	if len(lines) > maxHeight {
+		t.Fatalf("line count = %d, want <= %d:\n%s", len(lines), maxHeight, strings.Join(lines, "\n"))
+	}
+	for i, line := range lines {
+		if displayWidth(line) > width {
+			t.Fatalf("line %d width = %d, want <= %d:\n%s", i, displayWidth(line), width, strings.Join(lines, "\n"))
+		}
+	}
 }
