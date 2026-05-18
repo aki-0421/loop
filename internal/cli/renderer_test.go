@@ -162,6 +162,19 @@ func TestRunRendererWideDashboardShowsPanelsAndProgress(t *testing.T) {
 	}
 }
 
+func TestParseTodoItemsNormalizesCommitTypeColon(t *testing.T) {
+	todos := parseTodoItems(strings.NewReader("- [ ] C scaffold Next.js app tooling\n- [>] F: add dashboard shell\n- [x] D update docs\n- [ ] Check setup\n"))
+
+	if len(todos) != 4 {
+		t.Fatalf("todo count = %d, want 4", len(todos))
+	}
+	got := []string{todos[0].Text, todos[1].Text, todos[2].Text, todos[3].Text}
+	want := []string{"C: scaffold Next.js app tooling", "F: add dashboard shell", "D: update docs", "Check setup"}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("todo text = %#v, want %#v", got, want)
+	}
+}
+
 func TestRunRendererDashboardListsMaximumTodosWithHiddenBelow(t *testing.T) {
 	t.Setenv("LOOP_ASCII", "1")
 	now := time.Now()

@@ -551,10 +551,26 @@ func parseTodoItems(r io.Reader) []todoItem {
 			continue
 		}
 		if line != "" {
-			items = append(items, todoItem{Done: done, Status: status, Text: line})
+			items = append(items, todoItem{Done: done, Status: status, Text: normalizeTodoDisplayText(line)})
 		}
 	}
 	return items
+}
+
+func normalizeTodoDisplayText(text string) string {
+	text = strings.TrimSpace(text)
+	if len(text) < 3 || text[1] != ' ' {
+		return text
+	}
+	prefix := text[:1]
+	if !isLoopCommitPrefix(prefix) {
+		return text
+	}
+	body := strings.TrimSpace(text[2:])
+	if body == "" {
+		return text
+	}
+	return prefix + ": " + body
 }
 
 func firstOpenTodo(todos []todoItem) string {
