@@ -1,0 +1,145 @@
+version: 2
+
+project_name: loop
+
+before:
+  hooks:
+    - go mod tidy
+    - make test
+
+builds:
+  - id: loop-linux-amd64
+    main: ./cmd/loop
+    binary: loop
+    env:
+      - CGO_ENABLED=1
+      - CC=x86_64-linux-gnu-gcc
+      - CXX=x86_64-linux-gnu-g++
+    flags:
+      - -tags=sqlite_fts5
+      - -trimpath
+    goos:
+      - linux
+    goarch:
+      - amd64
+    ldflags:
+      - -s -w -X main.version={{ .Version }} -X main.commit={{ .Commit }} -X main.date={{ .Date }}
+  - id: loop-linux-arm64
+    main: ./cmd/loop
+    binary: loop
+    env:
+      - CGO_ENABLED=1
+      - CC=aarch64-linux-gnu-gcc
+      - CXX=aarch64-linux-gnu-g++
+    flags:
+      - -tags=sqlite_fts5
+      - -trimpath
+    goos:
+      - linux
+    goarch:
+      - arm64
+    ldflags:
+      - -s -w -X main.version={{ .Version }} -X main.commit={{ .Commit }} -X main.date={{ .Date }}
+  - id: loop-darwin-amd64
+    main: ./cmd/loop
+    binary: loop
+    env:
+      - CGO_ENABLED=1
+      - CC=o64-clang
+      - CXX=o64-clang++
+    flags:
+      - -tags=sqlite_fts5
+      - -trimpath
+    goos:
+      - darwin
+    goarch:
+      - amd64
+    ldflags:
+      - -s -w -X main.version={{ .Version }} -X main.commit={{ .Commit }} -X main.date={{ .Date }}
+  - id: loop-darwin-arm64
+    main: ./cmd/loop
+    binary: loop
+    env:
+      - CGO_ENABLED=1
+      - CC=oa64-clang
+      - CXX=oa64-clang++
+    flags:
+      - -tags=sqlite_fts5
+      - -trimpath
+    goos:
+      - darwin
+    goarch:
+      - arm64
+    ldflags:
+      - -s -w -X main.version={{ .Version }} -X main.commit={{ .Commit }} -X main.date={{ .Date }}
+  - id: loop-windows-amd64
+    main: ./cmd/loop
+    binary: loop
+    env:
+      - CGO_ENABLED=1
+      - CC=x86_64-w64-mingw32-gcc
+      - CXX=x86_64-w64-mingw32-g++
+    flags:
+      - -tags=sqlite_fts5
+      - -trimpath
+    goos:
+      - windows
+    goarch:
+      - amd64
+    ldflags:
+      - -s -w -X main.version={{ .Version }} -X main.commit={{ .Commit }} -X main.date={{ .Date }}
+  - id: loop-windows-arm64
+    main: ./cmd/loop
+    binary: loop
+    env:
+      - CGO_ENABLED=1
+      - CC=/llvm-mingw/bin/aarch64-w64-mingw32-gcc
+      - CXX=/llvm-mingw/bin/aarch64-w64-mingw32-g++
+    flags:
+      - -tags=sqlite_fts5
+      - -trimpath
+    goos:
+      - windows
+    goarch:
+      - arm64
+    ldflags:
+      - -s -w -X main.version={{ .Version }} -X main.commit={{ .Commit }} -X main.date={{ .Date }}
+
+archives:
+  - id: loop
+    ids:
+      - loop-linux-amd64
+      - loop-linux-arm64
+      - loop-darwin-amd64
+      - loop-darwin-arm64
+      - loop-windows-amd64
+      - loop-windows-arm64
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+
+release:
+  github:
+    owner: aki-0421
+    name: loop
+  draft: false
+  prerelease: auto

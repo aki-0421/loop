@@ -1,0 +1,168 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://loop.dev/schemas/iteration-result.schema.json",
+  "title": "loop iteration result",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "status",
+    "summary_sentence",
+    "should_fully_stop",
+    "goal_evaluation",
+    "branch",
+    "commits",
+    "validation",
+    "artifacts"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "status": {
+      "enum": [
+        "completed",
+        "no_change",
+        "needs_repair",
+        "blocked",
+        "failed"
+      ]
+    },
+    "summary_sentence": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120
+    },
+    "should_fully_stop": {
+      "type": "boolean"
+    },
+    "goal_evaluation": {
+      "type": "string"
+    },
+    "branch": {
+      "type": "object",
+      "required": [
+        "initial_name"
+      ],
+      "properties": {
+        "initial_name": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "slug": {
+          "type": "string"
+        },
+        "final_name": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "commits": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "message"
+        ],
+        "properties": {
+          "sha": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "validation": {
+      "type": "object",
+      "required": [
+        "status",
+        "commands"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "passed",
+            "failed",
+            "skipped",
+            "partial"
+          ]
+        },
+        "commands": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "name",
+              "command",
+              "exit_code",
+              "required"
+            ],
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "command": {
+                "type": "string"
+              },
+              "exit_code": {
+                "type": "integer"
+              },
+              "required": {
+                "type": "boolean"
+              },
+              "output_path": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "artifacts": {
+      "type": "object",
+      "properties": {
+        "plan": {
+          "type": "string"
+        },
+        "todo": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "worklog": {
+          "type": "string"
+        },
+        "pr_title": {
+          "type": "string"
+        },
+        "pr_body": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "assumptions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    },
+    "blocked_reason": {
+      "type": "string"
+    },
+    "error": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": false
+}

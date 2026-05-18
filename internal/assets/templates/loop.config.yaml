@@ -1,0 +1,68 @@
+version: 1
+
+language:
+  default: en
+  allowSkillOverride: true
+
+agent:
+  default: codex
+  adapters:
+    codex:
+      command: codex
+      args: [exec, --json]
+      prompt: stdin
+      env: {}
+
+run:
+  maxIterations: 0
+  repairAttempts: 2
+  instructionReload: each_iteration
+
+skills:
+  sourceDir: .agents/skills
+  syncOnRun: false
+  targets:
+    codex:
+      mode: off
+      path: .agents/skills
+
+git:
+  baseBranch: develop
+  worktree: true
+  cleanPolicy: require_clean_before_start
+  branch:
+    initialPattern: wip/{iteration}
+    finalPattern: "{kind}/{slug}"
+    conflictSuffix: "-{iteration}"
+    allowedKinds: [feat, fix, refactor, docs, test, style, build, ci, chore]
+  commits:
+    requireAgentCommits: true
+    allowCliFallbackCommit: false
+    enforcePattern: true
+    messageMaxLength: 72
+  integration:
+    mode: local_merge
+    local_merge:
+      squash: true
+      deleteBranch: true
+    pr:
+      create: false
+      push: true
+      waitChecks: true
+      mergeWhenChecksPass: true
+      deleteBranch: true
+
+validation:
+  commands: []
+  agentMayAddCommands: true
+  requireRequiredCommandsToPass: true
+
+memory:
+  recentLimit: 30
+  searchLimit: 12
+  compactEvery: 10
+
+logs:
+  dir: .loop/runs
+  retainRawAgentOutput: true
+  redactEnv: true

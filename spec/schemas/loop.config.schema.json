@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://loop.dev/schemas/loop.config.schema.json",
+  "title": "loop config",
+  "type": "object",
+  "required": [
+    "version"
+  ],
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "language": {
+      "type": "object",
+      "properties": {
+        "default": {
+          "type": "string",
+          "default": "en"
+        },
+        "allowSkillOverride": {
+          "type": "boolean",
+          "default": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "agent": {
+      "type": "object",
+      "properties": {
+        "default": {
+          "type": "string",
+          "default": "codex"
+        },
+        "adapters": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/adapter"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "run": {
+      "type": "object",
+      "properties": {
+        "maxIterations": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 0
+        },
+        "repairAttempts": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 2
+        },
+        "instructionReload": {
+          "enum": [
+            "each_iteration",
+            "once"
+          ],
+          "default": "each_iteration"
+        }
+      },
+      "additionalProperties": false
+    },
+    "skills": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "git": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "validation": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "memory": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "logs": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+  "$defs": {
+    "adapter": {
+      "type": "object",
+      "required": [
+        "command"
+      ],
+      "properties": {
+        "command": {
+          "type": "string"
+        },
+        "args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "prompt": {
+          "enum": [
+            "stdin",
+            "file_arg",
+            "arg"
+          ],
+          "default": "stdin"
+        },
+        "env": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {}
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

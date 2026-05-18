@@ -1,0 +1,722 @@
+package cli
+
+import (
+	"bufio"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/aki-0421/loop/internal/artifactdb"
+	"github.com/aki-0421/loop/internal/runstate"
+)
+
+type runRenderer struct {
+	enabled     bool
+	interactive bool
+	writer      io.Writer
+	started     time.Time
+	runID       string
+	agent       string
+	repo        string
+	instruction string
+	base        string
+	branch      string
+	goal        string
+	logs        string
+	maxIter     int
+	color       bool
+
+	mu                    sync.Mutex
+	stage                 string
+	stageDetail           string
+	iteration             string
+	todoPath              string
+	agentCommand          string
+	agentExit             string
+	current               string
+	activity              []string
+	activityLog           []rendererLogLine
+	events                []rendererEvent
+	commitCount           int
+	mergeCount            int
+	messageCount          int
+	inputTokens           int
+	outputTokens          int
+	tokensEstimated       bool
+	usageBaseInputTokens  int
+	usageBaseOutputTokens int
+	latestMsg             string
+	done                  chan struct{}
+	ticker                *time.Ticker
+	titleEnabled          bool
+	drawMu                sync.Mutex
+}
+
+type todoItem struct {
+	Done   bool
+	Status string
+	Text   string
+}
+
+type rendererLogLine struct {
+	At   time.Time
+	Text string
+}
+
+type rendererEvent struct {
+	At     time.Time
+	Status string
+	Title  string
+	Detail string
+}
+
+func newRunRenderer(g globals, runID, agentName, repoName, instructionFile, baseBranch, goal, logs string, maxIterations int, dryRun bool) *runRenderer {
+	interactive := terminalControlSupported()
+	return &runRenderer{
+		enabled:      !g.JSON && !dryRun,
+		interactive:  interactive,
+		writer:       os.Stderr,
+		started:      time.Now(),
+		runID:        runID,
+		agent:        agentName,
+		repo:         repoName,
+		instruction:  instructionFile,
+		base:         baseBranch,
+		goal:         goal,
+		logs:         logs,
+		maxIter:      maxIterations,
+		color:        interactive && !g.NoColor && os.Getenv("NO_COLOR") == "" && os.Getenv("TERM") != "dumb",
+		done:         make(chan struct{}),
+		titleEnabled: interactive,
+	}
+}
+
+func (r *runRenderer) Start(ctx context.Context) {
+	if !r.enabled {
+		return
+	}
+	r.mu.Lock()
+	r.stage = string(runstate.StageCreated)
+	r.stageDetail = "created"
+	r.mu.Unlock()
+	if r.interactive {
+		fmt.Fprint(r.writer, "\x1b[?1049h\x1b[?25l")
+		r.render()
+	} else {
+		r.line("run", fmt.Sprintf("%s agent=%s base=%s logs=%s", r.runID, r.agent, r.base, r.logs))
+	}
+	r.setTitle()
+	r.ticker = time.NewTicker(rendererTickInterval)
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				r.setCurrent("cancelling")
+				r.render()
+				return
+			case <-r.done:
+				return
+			case <-r.ticker.C:
+				r.render()
+			}
+		}
+	}()
+}
+
+func (r *runRenderer) Stop(status runstate.Stage, summary string) {
+	if !r.enabled {
+		return
+	}
+	if r.ticker != nil {
+		r.ticker.Stop()
+	}
+	select {
+	case <-r.done:
+	default:
+		close(r.done)
+	}
+	r.Stage(status, summary)
+	if r.interactive {
+		r.render()
+		fmt.Fprint(r.writer, "\x1b[?25h\x1b[?1049l")
+	}
+	r.clearTitle()
+}
+
+func (r *runRenderer) Iteration(iterationID string, todoPath string) {
+	if !r.enabled {
+		return
+	}
+	r.mu.Lock()
+	r.iteration = iterationID
+	r.todoPath = todoPath
+	if r.branch == "" || strings.HasPrefix(r.branch, "wip/") {
+		r.branch = "wip/" + iterationID
+	}
+	r.mu.Unlock()
+	r.render()
+}
+
+func (r *runRenderer) Stage(stage runstate.Stage, detail string) {
+	if !r.enabled {
+		return
+	}
+	if detail == "" {
+		detail = strings.ReplaceAll(string(stage), "_", " ")
+	}
+	r.mu.Lock()
+	r.stage = string(stage)
+	r.stageDetail = detail
+	r.current = detail
+	r.addEventLocked(rendererEvent{
+		At:     time.Now(),
+		Status: eventStatusForStage(string(stage)),
+		Title:  phaseLabel(string(stage)),
+		Detail: detail,
+	})
+	r.mu.Unlock()
+	if r.interactive {
+		r.render()
+	} else {
+		r.line("stage", fmt.Sprintf("%s %s", stage, detail))
+	}
+	r.setTitle()
+}
+
+func (r *runRenderer) AgentEvent(event runstate.Event) {
+	if !r.enabled || event == nil {
+		return
+	}
+	r.mu.Lock()
+	r.messageCount++
+	r.mu.Unlock()
+	typ, _ := event["type"].(string)
+	switch typ {
+	case "agent.started":
+		r.startAgentUsageWindow()
+		cmd, _ := event["command"].(string)
+		args := stringifyEventValue(event["args"])
+		r.setAgentCommand(strings.TrimSpace(cmd + " " + args))
+		r.addEvent("active", "Agent Started", "adapter process launched")
+	case "agent.usage":
+		r.applyTokenUsage(event)
+	case "agent.stream":
+		text, _ := event["text"].(string)
+		if text != "" {
+			r.setLatestMessage(text)
+			r.addActivity(text)
+		}
+	case "agent.command":
+		cmd, _ := event["command"].(string)
+		args := stringifyEventValue(event["args"])
+		text := strings.TrimSpace(cmd + " " + args)
+		if text != "" {
+			r.setCurrent("running command: " + text)
+			r.addActivity("command: " + text)
+			r.addEvent("active", "Command", text)
+			if !r.interactive {
+				r.line("command", text)
+			}
+		}
+	case "agent.file_read":
+		path, _ := event["path"].(string)
+		if path != "" {
+			r.setCurrent("reading file: " + path)
+			r.addActivity("read: " + path)
+			r.addEvent("active", "Read", path)
+			if !r.interactive {
+				r.line("read", path)
+			}
+		}
+	case "agent.exited":
+		r.setAgentExit(fmt.Sprintf("exit=%v", event["exit_code"]))
+		r.addEvent("done", "Agent Exited", fmt.Sprintf("exit=%v", event["exit_code"]))
+	case "run.cancelled_cleanup.started", "run.cancelled_cleanup.completed":
+		r.setCurrent(typ)
+		r.addActivity(typ)
+		r.addEvent("blocked", "Cleanup", typ)
+		if !r.interactive {
+			r.line("cleanup", typ)
+		}
+	}
+	r.render()
+}
+
+func (r *runRenderer) Branch(branch string) {
+	if !r.enabled {
+		return
+	}
+	r.mu.Lock()
+	r.branch = branch
+	r.mu.Unlock()
+	r.render()
+}
+
+func (r *runRenderer) Commits(count int) {
+	if !r.enabled {
+		return
+	}
+	r.mu.Lock()
+	r.commitCount = count
+	r.mu.Unlock()
+	r.render()
+}
+
+func (r *runRenderer) Merged(count int) {
+	if !r.enabled {
+		return
+	}
+	r.mu.Lock()
+	r.mergeCount = count
+	r.mu.Unlock()
+	r.render()
+}
+
+func (r *runRenderer) startAgentUsageWindow() {
+	r.mu.Lock()
+	r.usageBaseInputTokens = r.inputTokens
+	r.usageBaseOutputTokens = r.outputTokens
+	r.mu.Unlock()
+}
+
+func (r *runRenderer) applyTokenUsage(event runstate.Event) {
+	input, hasInput := intEventField(event, "input_tokens")
+	output, hasOutput := intEventField(event, "output_tokens")
+	if !hasInput && !hasOutput {
+		return
+	}
+	delta, _ := event["delta"].(bool)
+	estimated, _ := event["estimated"].(bool)
+	r.mu.Lock()
+	if delta {
+		r.inputTokens += maxInt(0, input)
+		r.outputTokens += maxInt(0, output)
+	} else {
+		if hasInput {
+			next := r.usageBaseInputTokens + maxInt(0, input)
+			if next > r.inputTokens {
+				r.inputTokens = next
+			}
+		}
+		if hasOutput {
+			next := r.usageBaseOutputTokens + maxInt(0, output)
+			if next > r.outputTokens {
+				r.outputTokens = next
+			}
+		}
+	}
+	if estimated {
+		r.tokensEstimated = true
+	}
+	r.mu.Unlock()
+}
+
+func (r *runRenderer) setAgentCommand(command string) {
+	r.mu.Lock()
+	r.agentCommand = command
+	r.current = "agent started"
+	r.mu.Unlock()
+	if !r.interactive {
+		r.line("agent", command)
+	}
+}
+
+func (r *runRenderer) setAgentExit(text string) {
+	r.mu.Lock()
+	r.agentExit = text
+	r.current = "agent " + text
+	r.mu.Unlock()
+	if !r.interactive {
+		r.line("agent", text)
+	}
+}
+
+func (r *runRenderer) setCurrent(text string) {
+	r.mu.Lock()
+	r.current = text
+	r.mu.Unlock()
+}
+
+func (r *runRenderer) setLatestMessage(text string) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return
+	}
+	r.mu.Lock()
+	r.latestMsg = text
+	r.mu.Unlock()
+}
+
+func (r *runRenderer) addActivity(text string) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.activity) > 0 && r.activity[len(r.activity)-1] == text {
+		return
+	}
+	r.activity = append(r.activity, text)
+	r.activityLog = append(r.activityLog, rendererLogLine{At: time.Now(), Text: text})
+	if len(r.activity) > 20 {
+		r.activity = append([]string(nil), r.activity[len(r.activity)-20:]...)
+	}
+	if len(r.activityLog) > 20 {
+		r.activityLog = append([]rendererLogLine(nil), r.activityLog[len(r.activityLog)-20:]...)
+	}
+}
+
+func (r *runRenderer) addEvent(status, title, detail string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.addEventLocked(rendererEvent{At: time.Now(), Status: status, Title: title, Detail: detail})
+}
+
+func (r *runRenderer) addEventLocked(event rendererEvent) {
+	if strings.TrimSpace(event.Title) == "" {
+		return
+	}
+	if event.At.IsZero() {
+		event.At = time.Now()
+	}
+	r.events = append(r.events, event)
+	if len(r.events) > 12 {
+		r.events = append([]rendererEvent(nil), r.events[len(r.events)-12:]...)
+	}
+}
+
+func (r *runRenderer) render() {
+	if !r.enabled || !r.interactive {
+		return
+	}
+	r.drawMu.Lock()
+	defer r.drawMu.Unlock()
+	width, height := terminalSize()
+	if width <= 0 {
+		width = 80
+	}
+	if height <= 0 {
+		height = 24
+	}
+	lines := r.frame(width, height)
+	fmt.Fprint(r.writer, "\x1b[H")
+	for i, line := range lines {
+		fmt.Fprint(r.writer, fitLine(line, width), "\x1b[K")
+		if i < len(lines)-1 {
+			fmt.Fprint(r.writer, "\n")
+		}
+	}
+	fmt.Fprint(r.writer, "\x1b[J")
+	r.setTitle()
+}
+
+func (r *runRenderer) frame(width, height int) []string {
+	r.mu.Lock()
+	todoPath := r.todoPath
+	snapshot := rendererSnapshot{
+		Started:         r.started,
+		RunID:           r.runID,
+		Agent:           r.agent,
+		Repo:            r.repo,
+		Instruction:     r.instruction,
+		Base:            r.base,
+		Branch:          r.branch,
+		Goal:            r.goal,
+		Logs:            r.logs,
+		MaxIter:         r.maxIter,
+		Color:           r.color,
+		Stage:           r.stage,
+		StageDetail:     r.stageDetail,
+		Iteration:       r.iteration,
+		AgentCommand:    r.agentCommand,
+		AgentExit:       r.agentExit,
+		Current:         r.current,
+		Activity:        append([]string(nil), r.activity...),
+		ActivityLog:     append([]rendererLogLine(nil), r.activityLog...),
+		Events:          append([]rendererEvent(nil), r.events...),
+		CommitCount:     r.commitCount,
+		MergeCount:      r.mergeCount,
+		MessageCount:    r.messageCount,
+		InputTokens:     r.inputTokens,
+		OutputTokens:    r.outputTokens,
+		TokensEstimated: r.tokensEstimated,
+		LatestMsg:       r.latestMsg,
+		Now:             time.Now(),
+	}
+	r.mu.Unlock()
+
+	todos := readTodoItems(todoPath)
+	if currentTask := firstOpenTodo(todos); currentTask != "" {
+		snapshot.Current = currentTask
+	}
+	snapshot.Todos = todos
+	return renderDashboard(snapshot, width, height)
+}
+
+func todoLines(todos []todoItem, limit int) []string {
+	done, total := 0, len(todos)
+	for _, item := range todos {
+		if item.Done {
+			done++
+		}
+	}
+	if total == 0 {
+		return []string{"todo: waiting for todo artifact"}
+	}
+	lines := []string{fmt.Sprintf("todo: %d/%d done", done, total)}
+	count := 0
+	for _, item := range todos {
+		if count >= limit {
+			break
+		}
+		mark := " "
+		if item.Done {
+			mark = "x"
+		}
+		lines = append(lines, fmt.Sprintf("[%s] %s", mark, item.Text))
+		count++
+	}
+	if total > limit {
+		lines = append(lines, fmt.Sprintf("... %d more", total-limit))
+	}
+	return lines
+}
+
+func activityLines(activity []string, limit int) []string {
+	if limit <= 0 {
+		return nil
+	}
+	lines := []string{"activity:"}
+	if len(activity) == 0 {
+		return append(lines, "waiting for agent activity")
+	}
+	start := 0
+	if len(activity) > limit-1 {
+		start = len(activity) - (limit - 1)
+	}
+	for _, item := range activity[start:] {
+		lines = append(lines, "- "+item)
+	}
+	return lines
+}
+
+func readTodoItems(path string) []todoItem {
+	if path == "" {
+		return nil
+	}
+	if filepath.Base(path) == "todo.md" {
+		if data, err := artifactdb.Read(filepath.Dir(path), "todo"); err == nil {
+			return parseTodoItems(strings.NewReader(data))
+		}
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	return parseTodoItems(f)
+}
+
+func parseTodoItems(r io.Reader) []todoItem {
+	var items []todoItem
+	scanner := bufio.NewScanner(r)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		done := false
+		status := "pending"
+		switch {
+		case strings.HasPrefix(line, "- [ ] "):
+			line = strings.TrimSpace(strings.TrimPrefix(line, "- [ ] "))
+		case strings.HasPrefix(line, "- [>] "):
+			status = "active"
+			line = strings.TrimSpace(strings.TrimPrefix(line, "- [>] "))
+		case strings.HasPrefix(line, "- [!] "):
+			status = "blocked"
+			line = strings.TrimSpace(strings.TrimPrefix(line, "- [!] "))
+		case strings.HasPrefix(line, "- [~] "):
+			status = "retrying"
+			line = strings.TrimSpace(strings.TrimPrefix(line, "- [~] "))
+		case strings.HasPrefix(line, "- [x] "), strings.HasPrefix(line, "- [X] "):
+			done = true
+			status = "done"
+			line = strings.TrimSpace(line[6:])
+		default:
+			continue
+		}
+		if line != "" {
+			items = append(items, todoItem{Done: done, Status: status, Text: line})
+		}
+	}
+	return items
+}
+
+func firstOpenTodo(todos []todoItem) string {
+	for _, item := range todos {
+		if !item.Done {
+			return item.Text
+		}
+	}
+	return ""
+}
+
+func (r *runRenderer) line(label, message string) {
+	r.drawMu.Lock()
+	defer r.drawMu.Unlock()
+	elapsed := formatDuration(time.Since(r.started))
+	fmt.Fprintf(r.writer, "[%s] %-7s %s\n", elapsed, label, message)
+}
+
+func (r *runRenderer) setTitle() {
+	if !r.titleEnabled {
+		return
+	}
+	r.mu.Lock()
+	stage := r.stage
+	iter := r.iteration
+	r.mu.Unlock()
+	fmt.Fprintf(r.writer, "\x1b]2;loop %s | %s | %s | %s\a", stage, iter, r.agent, formatDuration(time.Since(r.started)))
+}
+
+func (r *runRenderer) clearTitle() {
+	if !r.titleEnabled {
+		return
+	}
+	fmt.Fprint(r.writer, "\x1b]2;\a")
+}
+
+func terminalControlSupported() bool {
+	if os.Getenv("TERM") == "dumb" {
+		return false
+	}
+	info, err := os.Stderr.Stat()
+	return err == nil && info.Mode()&os.ModeCharDevice != 0
+}
+
+func stringifyEventValue(v any) string {
+	switch typed := v.(type) {
+	case nil:
+		return ""
+	case []string:
+		return strings.Join(typed, " ")
+	case []any:
+		parts := make([]string, 0, len(typed))
+		for _, item := range typed {
+			parts = append(parts, fmt.Sprint(item))
+		}
+		return strings.Join(parts, " ")
+	default:
+		return fmt.Sprint(typed)
+	}
+}
+
+func intEventField(event runstate.Event, key string) (int, bool) {
+	value, ok := event[key]
+	if !ok {
+		return 0, false
+	}
+	switch typed := value.(type) {
+	case int:
+		return typed, true
+	case int64:
+		return int(typed), true
+	case float64:
+		return int(typed), true
+	case json.Number:
+		if n, err := typed.Int64(); err == nil {
+			return int(n), true
+		}
+	}
+	return 0, false
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func formatDuration(d time.Duration) string {
+	if d < 0 {
+		d = 0
+	}
+	d = d.Round(time.Second)
+	h := int(d / time.Hour)
+	m := int(d%time.Hour) / int(time.Minute)
+	s := int(d%time.Minute) / int(time.Second)
+	if h > 0 {
+		return fmt.Sprintf("%d:%02d:%02d", h, m, s)
+	}
+	return fmt.Sprintf("%02d:%02d", m, s)
+}
+
+func fitLine(s string, width int) string {
+	if width <= 0 {
+		return s
+	}
+	if displayWidth(s) > width {
+		return truncateVisible(s, width, true)
+	}
+	return s
+}
+
+func truncateDisplay(s string, width int) string {
+	if width <= 0 {
+		return s
+	}
+	s = strings.TrimSpace(s)
+	if displayWidth(s) <= width {
+		return s
+	}
+	if width <= 14 {
+		return truncateVisible(s, width, false)
+	}
+	return truncateVisible(s, width-14, false) + "...[truncated]"
+}
+
+func truncateVisible(s string, width int, ellipsis bool) string {
+	if width <= 0 {
+		return ""
+	}
+	suffix := ""
+	limit := width
+	if ellipsis && width > 3 {
+		suffix = "..."
+		limit = width - 3
+	}
+	var b strings.Builder
+	visible := 0
+	hasANSI := false
+	runes := []rune(s)
+	for i := 0; i < len(runes) && visible < limit; i++ {
+		if runes[i] == '\x1b' && i+1 < len(runes) && runes[i+1] == '[' {
+			hasANSI = true
+			start := i
+			i += 2
+			for i < len(runes) {
+				if runes[i] >= '@' && runes[i] <= '~' {
+					break
+				}
+				i++
+			}
+			if i < len(runes) {
+				b.WriteString(string(runes[start : i+1]))
+			}
+			continue
+		}
+		b.WriteRune(runes[i])
+		visible++
+	}
+	if hasANSI {
+		b.WriteString(ansiReset)
+	}
+	b.WriteString(suffix)
+	return b.String()
+}

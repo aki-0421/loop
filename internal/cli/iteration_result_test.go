@@ -1,0 +1,162 @@
+package cli
+
+import (
+	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/aki-0421/loop/internal/artifactdb"
+	"github.com/aki-0421/loop/internal/validation"
+)
+
+func TestIterationResultCommandBuildsAndWritesResult(t *testing.T) {
+	ctx := context.Background()
+	repo := newCleanupRepo(t)
+	git(t, repo, "checkout", "-b", "wip/0001")
+	mustWrite(t, filepath.Join(repo, "result-helper.txt"), "done\n")
+	git(t, repo, "add", "result-helper.txt")
+	git(t, repo, "commit", "-m", "F: add result helper")
+
+	iterDir := filepath.Join(repo, ".loop", "runs", "run-1", "iterations", "0001")
+	writeRuntimeForResultTest(t, iterDir, repo)
+	if err := artifactdb.Write(iterDir, "plan", "plan\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := artifactdb.Write(iterDir, "summary", "summary\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := artifactdb.Write(iterDir, "worklog", "worklog\n"); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := captureStdout(t, func() error {
+		return commandIteration(ctx, globals{}, []string{
+			"result",
+			"--iteration-dir", iterDir,
+			"--write",
+			"--summary", "Add result helper",
+			"--should-stop", "false",
+			"--goal-evaluation", "The selected slice is complete; follow-up work remains.",
+			"--validation-command", "unit|go test ./...|0|true",
+			"--assumption", "Used the configured base branch from runtime.",
+		})
+	})
+	if err != nil {
+		t.Fatalf("iteration result: %v", err)
+	}
+	if strings.TrimSpace(out) != "wrote result" {
+		t.Fatalf("write output = %q", out)
+	}
+
+	data, err := artifactdb.Read(iterDir, "result")
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := validation.ValidateResultJSON([]byte(data))
+	if err != nil {
+		t.Fatalf("generated result should validate: %v\n%s", err, data)
+	}
+	if result.Branch.InitialName != "wip/0001" {
+		t.Fatalf("initial branch = %q", result.Branch.InitialName)
+	}
+	if result.Branch.Kind != "feat" || result.Branch.Slug != "add-result-helper" || result.Branch.FinalName != "" {
+		t.Fatalf("branch proposal = %#v", result.Branch)
+	}
+	if len(result.Commits) != 1 || result.Commits[0].Message != "F: add result helper" {
+		t.Fatalf("commits = %#v", result.Commits)
+	}
+	if result.Validation.Status != "passed" || len(result.Validation.Commands) != 1 {
+		t.Fatalf("validation = %#v", result.Validation)
+	}
+	if result.Artifacts.Plan != "plan" || result.Artifacts.Summary != "summary" || result.Artifacts.Worklog != "worklog" {
+		t.Fatalf("artifacts = %#v", result.Artifacts)
+	}
+	if len(result.Assumptions) != 1 {
+		t.Fatalf("assumptions = %#v", result.Assumptions)
+	}
+}
+
+func TestIterationResultCommandPrintsResultJSON(t *testing.T) {
+	t.Setenv("LOOP_WORKDIR", t.TempDir())
+
+	out, err := captureStdout(t, func() error {
+		return commandIteration(context.Background(), globals{}, []string{
+			"result",
+			"--branch-initial", "wip/0001",
+			"--summary", "Document result helper",
+			"--should-stop", "true",
+			"--goal-evaluation", "The requested documentation is complete.",
+			"--validation-status", "skipped",
+			"--commit", "abc123|D: document result helper",
+		})
+	})
+	if err != nil {
+		t.Fatalf("iteration result: %v", err)
+	}
+	var result validation.IterationResult
+	if err := json.Unmarshal([]byte(out), &result); err != nil {
+		t.Fatalf("output should be raw result JSON: %v\n%s", err, out)
+	}
+	if result.SchemaVersion != 1 || result.Status != "completed" || result.Branch.Kind != "docs" {
+		t.Fatalf("result = %#v", result)
+	}
+	if strings.Contains(out, `"artifact"`) {
+		t.Fatalf("stdout should not be wrapped command JSON:\n%s", out)
+	}
+}
+
+func TestIterationResultCommandRequiresSemanticFields(t *testing.T) {
+	err := commandIteration(context.Background(), globals{}, []string{
+		"result",
+		"--branch-initial", "wip/0001",
+		"--summary", "Missing stop decision",
+		"--goal-evaluation", "Not enough fields.",
+	})
+	if err == nil {
+		t.Fatal("expected missing --should-stop to fail")
+	}
+	if !strings.Contains(err.Error(), "--should-stop") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestIterationResultCommandRejectsCompletedWithoutCommits(t *testing.T) {
+	repo := newCleanupRepo(t)
+	t.Setenv("LOOP_WORKDIR", repo)
+
+	err := commandIteration(context.Background(), globals{}, []string{
+		"result",
+		"--branch-initial", "develop",
+		"--summary", "Finish empty slice",
+		"--should-stop", "true",
+		"--goal-evaluation", "The slice is complete.",
+		"--validation-status", "skipped",
+	})
+	if err == nil {
+		t.Fatal("expected completed result without commits to fail")
+	}
+	if !strings.Contains(err.Error(), "requires at least one commit") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func writeRuntimeForResultTest(t *testing.T, iterDir, repo string) {
+	t.Helper()
+	data, err := json.MarshalIndent(map[string]any{
+		"base_branch":    "develop",
+		"current_branch": "wip/0001",
+		"workdir":        repo,
+	}, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(iterDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := artifactdb.Write(iterDir, "runtime", string(append(data, '\n'))); err != nil {
+		t.Fatal(err)
+	}
+}

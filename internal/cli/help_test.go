@@ -1,0 +1,171 @@
+package cli
+
+import (
+	"context"
+	"encoding/json"
+	"strings"
+	"testing"
+)
+
+func TestHelpCommandListsCommands(t *testing.T) {
+	out, err := captureStdout(t, func() error {
+		return commandHelp(context.Background(), globals{}, nil)
+	})
+	if err != nil {
+		t.Fatalf("loop help: %v", err)
+	}
+	for _, want := range []string{
+		"Loop commands:",
+		"loop run",
+		"loop memory search",
+		"Run `loop help <command>` for details.",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("help output missing %q:\n%s", want, out)
+		}
+	}
+	for _, notWant := range []string{"loop iteration", "loop commit"} {
+		if strings.Contains(out, notWant) {
+			t.Fatalf("human help should hide %q:\n%s", notWant, out)
+		}
+	}
+}
+
+func TestHelpCommandRejectsAgentOnlyDetail(t *testing.T) {
+	err := commandHelp(context.Background(), globals{}, []string{"iteration", "result"})
+	if err == nil {
+		t.Fatal("human help should reject agent-only topics")
+	}
+	if !strings.Contains(err.Error(), "loop help agent iteration result") {
+		t.Fatalf("error should point to agent help: %v", err)
+	}
+}
+
+func TestAgentHelpCommandShowsCompactList(t *testing.T) {
+	out, err := captureStdout(t, func() error {
+		return commandHelp(context.Background(), globals{}, []string{"agent"})
+	})
+	if err != nil {
+		t.Fatalf("loop help agent: %v", err)
+	}
+	for _, want := range []string{
+		"agent-help-v1\n",
+		"cmd:loop commit type message;",
+		"cmd:loop iteration result",
+		"cmd:loop memory search",
+		"artifacts:",
+		"plan:rw:db",
+		"detail:loop help agent <command...>",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("agent help output missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "  ") || strings.Contains(out, "\n\n") {
+		t.Fatalf("agent help should avoid padding and blank lines:\n%s", out)
+	}
+}
+
+func TestAgentHelpCommandShowsIterationResultDetails(t *testing.T) {
+	out, err := captureStdout(t, func() error {
+		return commandHelp(context.Background(), globals{}, []string{"agent", "iteration", "result"})
+	})
+	if err != nil {
+		t.Fatalf("loop help agent iteration result: %v", err)
+	}
+	for _, want := range []string{
+		"cmd:loop iteration result",
+		"--summary text",
+		"--should-stop bool",
+		"--goal-evaluation text",
+		"summary:Build valid iteration result JSON",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("help output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestAgentHelpCommandShowsIterationArtifactsFromRegistry(t *testing.T) {
+	out, err := captureStdout(t, func() error {
+		return commandHelp(context.Background(), globals{}, []string{"agent", "iteration", "read"})
+	})
+	if err != nil {
+		t.Fatalf("loop help agent iteration read: %v", err)
+	}
+	for _, want := range []string{
+		"artifacts:",
+		"runtime:r:db",
+		"plan:rw:db",
+		"pr-template:r:repo",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("help output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestHelpCommandPrintsJSON(t *testing.T) {
+	out, err := captureStdout(t, func() error {
+		return Run([]string{"--json", "help"})
+	})
+	if err != nil {
+		t.Fatalf("loop --json help: %v", err)
+	}
+	var list struct {
+		Commands []helpSummary `json:"commands"`
+	}
+	if err := json.Unmarshal([]byte(out), &list); err != nil {
+		t.Fatalf("help JSON should parse: %v\n%s", err, out)
+	}
+	if len(list.Commands) == 0 {
+		t.Fatalf("commands should not be empty: %#v", list)
+	}
+	for _, command := range list.Commands {
+		if strings.HasPrefix(command.Command, "loop iteration") || command.Command == "loop commit" {
+			t.Fatalf("human JSON help should hide agent-only command: %#v", command)
+		}
+	}
+
+	out, err = captureStdout(t, func() error {
+		return Run([]string{"--json", "help", "agent", "iteration", "read"})
+	})
+	if err != nil {
+		t.Fatalf("loop --json help agent iteration read: %v", err)
+	}
+	var detail struct {
+		Command   string         `json:"command"`
+		Usage     string         `json:"usage"`
+		Artifacts []helpArtifact `json:"artifacts"`
+	}
+	if err := json.Unmarshal([]byte(out), &detail); err != nil {
+		t.Fatalf("help detail JSON should parse: %v\n%s", err, out)
+	}
+	if detail.Command != "loop iteration read" || !strings.Contains(detail.Usage, "loop iteration read") || len(detail.Artifacts) == 0 {
+		t.Fatalf("detail JSON = %#v", detail)
+	}
+}
+
+func TestRunUnknownCommandMentionsHelp(t *testing.T) {
+	err := Run([]string{"nope"})
+	if err == nil {
+		t.Fatal("unknown command should fail")
+	}
+	if !strings.Contains(err.Error(), "loop help") {
+		t.Fatalf("error should mention loop help: %v", err)
+	}
+}
+
+func TestRunHelpAliases(t *testing.T) {
+	for _, args := range [][]string{{"--help"}, {"-h"}} {
+		out, err := captureStdout(t, func() error {
+			return Run(args)
+		})
+		if err != nil {
+			t.Fatalf("Run(%v): %v", args, err)
+		}
+		if !strings.Contains(out, "Loop commands:") {
+			t.Fatalf("Run(%v) output = %q", args, out)
+		}
+	}
+}
