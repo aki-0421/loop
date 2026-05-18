@@ -646,9 +646,9 @@ func allHelpCommands() []helpCommand {
 
 func iterationLocatorFlags() []helpFlag {
 	return []helpFlag{
-		{Name: "--iteration-dir <dir>", Description: "iteration directory", Default: "$LOOP_ITERATION_DIR"},
+		{Name: "--iteration-dir <dir>", Description: "explicit iteration directory"},
 		{Name: "--dir <dir>", Description: "alias for --iteration-dir"},
 		{Name: "--run <run-id>", Description: "resolve an iteration under the configured log directory"},
-		{Name: "--iteration <n>", Description: "iteration id", Default: "latest"},
+		{Name: "--iteration <n>", Description: "iteration id", Default: "$LOOP_ITERATION_ID or latest"},
 	}
 }

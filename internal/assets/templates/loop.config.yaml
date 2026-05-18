@@ -16,7 +16,6 @@ agent:
 run:
   maxIterations: 0
   repairAttempts: 2
-  instructionReload: each_iteration
 
 skills:
   sourceDir: .agents/skills

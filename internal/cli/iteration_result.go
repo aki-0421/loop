@@ -34,10 +34,10 @@ func commandIterationResult(ctx context.Context, g globals, args []string) error
 
 	fs := flag.NewFlagSet("iteration result", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	iterDir := fs.String("iteration-dir", os.Getenv("LOOP_ITERATION_DIR"), "iteration directory")
+	iterDir := fs.String("iteration-dir", "", "iteration directory")
 	dirAlias := fs.String("dir", "", "iteration directory")
-	runID := fs.String("run", "", "run id")
-	iteration := fs.String("iteration", "latest", "iteration id")
+	runID := fs.String("run", os.Getenv("LOOP_RUN_ID"), "run id")
+	iteration := fs.String("iteration", defaultIterationEnv(), "iteration id")
 	writeResult := fs.Bool("write", false, "write the generated JSON to the result artifact")
 	status := fs.String("status", "completed", "result status")
 	summary := fs.String("summary", "", "summary sentence")

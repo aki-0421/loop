@@ -20,9 +20,7 @@ An adapter receives:
 
 - Working directory.
 - Environment variables.
-- Prompt file path.
 - Code-generated skill bootstrap.
-- User instruction file path.
 - Prompt text or prompt stream.
 - Expected result JSON path.
 - Iteration directory path.
@@ -35,7 +33,7 @@ The assembled prompt is a compact, non-user-editable skill bootstrap:
 1. A short instruction to use the `loop` skill.
 2. A short instruction to use `loop iteration`, `loop memory`, and `loop commit` commands.
 
-Detailed loop behavior and CLI usage live in repository skills, especially `loop`. The prompt intentionally does not inline skill instructions, effective config, schema summaries, required file paths, runtime values, recent memory, goal text, or instruction Markdown content.
+Detailed loop behavior and CLI usage live in repository skills, especially `loop`. The prompt intentionally does not inline skill instructions, effective config, schema summaries, required file paths, runtime values, recent memory, goal text, instruction Markdown content, or instruction file paths.
 
 ## Bootstrap requirements
 

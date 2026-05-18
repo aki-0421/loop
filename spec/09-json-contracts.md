@@ -125,7 +125,6 @@ A `completed` result with `validation.status=failed` is not integrated.
 {
   "schema_version": 1,
   "run_id": "20260517-000000-a1b2c3",
-  "instruction_path": "docs/task.md",
   "goal": "The feature is implemented and verified",
   "base_branch": "develop",
   "agent": "codex",

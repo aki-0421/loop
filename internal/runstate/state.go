@@ -30,7 +30,6 @@ const (
 type State struct {
 	SchemaVersion    int               `json:"schema_version"`
 	RunID            string            `json:"run_id"`
-	InstructionPath  string            `json:"instruction_path"`
 	Goal             string            `json:"goal,omitempty"`
 	BaseBranch       string            `json:"base_branch"`
 	Agent            string            `json:"agent"`
@@ -89,11 +88,10 @@ type ValidationCommandResult struct {
 	OutputPath string `json:"output_path,omitempty"`
 }
 
-func New(runID, instructionPath, goal, baseBranch, agent string) State {
+func New(runID, goal, baseBranch, agent string) State {
 	return State{
 		SchemaVersion:    1,
 		RunID:            runID,
-		InstructionPath:  instructionPath,
 		Goal:             goal,
 		BaseBranch:       baseBranch,
 		Agent:            agent,
@@ -146,9 +144,6 @@ func ValidateState(state State) error {
 	}
 	if state.RunID == "" {
 		errs = append(errs, "run_id is required")
-	}
-	if state.InstructionPath == "" {
-		errs = append(errs, "instruction_path is required")
 	}
 	if state.BaseBranch == "" {
 		errs = append(errs, "base_branch is required")

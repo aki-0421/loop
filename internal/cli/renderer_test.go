@@ -78,7 +78,7 @@ func TestRunRendererWideDashboardShowsPanelsAndProgress(t *testing.T) {
 		runID:        "run",
 		agent:        "codex",
 		repo:         "loop",
-		instruction:  "task.md",
+		instruction:  "",
 		base:         "main",
 		branch:       "wip/0001",
 		goal:         "Reduce startup latency without sacrificing functionality.",
@@ -99,7 +99,7 @@ func TestRunRendererWideDashboardShowsPanelsAndProgress(t *testing.T) {
 
 	frameLines := renderer.frame(130, 32)
 	frame := strings.Join(frameLines, "\n")
-	for _, want := range []string{"╦   ╔═╗", "task.md", "2K in", "512 out", "2 merged", "1/2 todo", "Add lazy loading", "Inspecting startup path", "Ctrl+C cancel"} {
+	for _, want := range []string{"╦   ╔═╗", "prompt.md", "2K in", "512 out", "2 merged", "1/2 todo", "Add lazy loading", "Inspecting startup path", "Ctrl+C cancel"} {
 		if !strings.Contains(frame, want) {
 			t.Fatalf("frame missing %q:\n%s", want, frame)
 		}
@@ -178,7 +178,7 @@ func TestRunRendererDashboardListsMaximumTodosWithHiddenBelow(t *testing.T) {
 	lines := renderDashboard(rendererSnapshot{
 		Started:      now.Add(-time.Minute),
 		Now:          now,
-		Instruction:  "task.md",
+		Instruction:  "",
 		Todos:        todos,
 		InputTokens:  100,
 		OutputTokens: 50,

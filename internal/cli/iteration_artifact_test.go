@@ -41,8 +41,6 @@ func TestWriteRuntimeArtifact(t *testing.T) {
 	dir := t.TempDir()
 	paths := pathSet{
 		Runtime:         filepath.Join(dir, "runtime.json"),
-		InstructionPath: filepath.Join(dir, "task.md"),
-		InstructionRel:  "task.md",
 		Goal:            "ship it",
 		Language:        "en",
 		IterationID:     "0001",
@@ -63,8 +61,13 @@ func TestWriteRuntimeArtifact(t *testing.T) {
 	if err := json.Unmarshal([]byte(data), &got); err != nil {
 		t.Fatal(err)
 	}
-	if got["instruction_rel"] != "task.md" || got["goal"] != "ship it" || got["integration_mode"] != "pr" || got["pull_request_mode"] != true {
+	if got["goal"] != "ship it" || got["integration_mode"] != "pr" || got["pull_request_mode"] != true {
 		t.Fatalf("runtime = %#v", got)
+	}
+	for _, key := range []string{"instruction_file", "instruction_path", "instruction_rel"} {
+		if _, ok := got[key]; ok {
+			t.Fatalf("runtime should not include %s: %#v", key, got)
+		}
 	}
 	if _, ok := got["mode"]; ok {
 		t.Fatalf("runtime should not include removed mode: %#v", got)
@@ -144,23 +147,38 @@ func TestIterationCommandReadsFallbackPullRequestTemplate(t *testing.T) {
 	}
 }
 
-func TestIterationCommandReadsInstructionFromEnvironment(t *testing.T) {
+func TestIterationCommandReadsInstructionFromPromptSnapshot(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
-	instruction := filepath.Join(dir, "task.md")
-	if err := os.WriteFile(instruction, []byte("# Task\n\nDo the thing.\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "prompt.md"), []byte("# Task\n\nDo the thing.\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("LOOP_INSTRUCTION_FILE", instruction)
 
 	out, err := captureStdout(t, func() error {
-		return commandIteration(ctx, globals{}, []string{"read", "instruction"})
+		return commandIteration(ctx, globals{}, []string{"read", "instruction", "--iteration-dir", dir})
 	})
 	if err != nil {
 		t.Fatalf("read instruction: %v", err)
 	}
 	if !strings.Contains(out, "Do the thing.") {
 		t.Fatalf("instruction output = %q", out)
+	}
+
+	jsonOut, err := captureStdout(t, func() error {
+		return commandIteration(ctx, globals{JSON: true}, []string{"read", "instruction", "--iteration-dir", dir})
+	})
+	if err != nil {
+		t.Fatalf("read instruction json: %v", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(jsonOut), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := payload["path"]; ok {
+		t.Fatalf("instruction json leaked path: %#v", payload)
+	}
+	if payload["content"] != "# Task\n\nDo the thing.\n" {
+		t.Fatalf("instruction json content = %#v", payload)
 	}
 }
 
@@ -179,11 +197,8 @@ func TestIterationCommandPathUsesArtifactName(t *testing.T) {
 	out, err := captureStdout(t, func() error {
 		return commandIteration(context.Background(), globals{}, []string{"path", "prompt", "--iteration-dir", dir})
 	})
-	if err != nil {
-		t.Fatalf("path prompt: %v", err)
-	}
-	if strings.TrimSpace(out) != filepath.Join(dir, "prompt.md") {
-		t.Fatalf("path output = %q", out)
+	if err == nil || !strings.Contains(err.Error(), "path is not exposed") {
+		t.Fatalf("path prompt error = %v, output = %q", err, out)
 	}
 
 	out, err = captureStdout(t, func() error {

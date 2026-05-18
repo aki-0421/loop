@@ -7,7 +7,7 @@ The specification defines what to implement. It does not include source comparis
 ## Default behavior
 
 - The default agent is `codex`.
-- All generated prompts, plans, summaries, commit messages, memory files, and the default skill use English. Pull request titles and bodies follow the repository pull request template language when a template is present; otherwise they use English.
+- All generated prompts, plans, summaries, commit messages, memory files, default skill text, and CLI-owned pull request fallback text use English.
 - Runs are fully automated. The agent and CLI proceed without user questions or manual user actions.
 - Agents write `plan` and `todo` artifacts before repository edits, then record assumptions or return `blocked` when no safe path exists.
 - Language and workflow details remain customizable through `.loop/config.yaml`, repository skills, and the user-owned Markdown instruction file.

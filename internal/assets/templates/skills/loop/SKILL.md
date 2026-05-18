@@ -13,7 +13,7 @@ You are executing one iteration inside the `loop` harness.
 - Complete one reviewer-sized iteration from the current instruction.
 - One iteration is one pull-request-sized change, not one project or milestone.
 - Integration settings are provided by `loop iteration read runtime`, including `integration_mode` and `pull_request_mode`.
-- Write human-readable output in English unless repository context or PR template language indicates otherwise.
+- Write human-readable output in English unless repository context explicitly requires otherwise.
 - Do not ask the user questions or wait for manual user actions; make explicit assumptions or return `blocked` when no safe path exists.
 - Use repository evidence before assumptions, and record assumptions in the `result` artifact.
 - Stop after the chosen slice is complete, validated, committed, and documented.
@@ -177,7 +177,7 @@ If pull request mode is enabled, get template text with `loop iteration read pr-
 - Follow the template text returned by the CLI; do not assume built-in sections.
 - Write `pr-title` with `loop iteration write pr-title`.
 - Write `pr-body` with `loop iteration write pr-body`.
-- Match PR title and body language to the template language when evident.
+- Write PR title and body content in English by default.
 - Preserve visible template headings and checklist labels.
 - Fill visible template sections with the chosen review slice, validation results, review notes, and intentionally deferred work.
 - Keep the title concise and action-oriented.

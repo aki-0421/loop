@@ -79,7 +79,7 @@ Flags:
 
 | Flag | Default | Behavior |
 | --- | --- | --- |
-| `--goal <text>` | empty | Natural-language stop condition inserted into every iteration prompt |
+| `--goal <text>` | empty | Natural-language stop condition stored in runtime context |
 | `--max-iterations <n>` | config value | Stop after `n` iterations; `0` means unlimited |
 | `--pr` | config value | Use pull request integration instead of local squash merge |
 | `--base <branch>` | config value | Base branch for integration |
@@ -94,7 +94,7 @@ Runtime rules:
 
 - `<instruction.md>` is required and must be supplied by the user.
 - `loop init` does not create an instruction template.
-- The instruction file is read at every iteration, so edits to it affect later iterations.
+- The instruction file is read at every iteration and copied to that iteration's `prompt.md`; edits to the source file affect later iterations only.
 - The instruction file is task input only. Mandatory harness behavior is injected by CLI code, not by user-authored prompt text.
 - If `--goal` is empty, the agent may still set `should_fully_stop=true` when no more useful work remains.
 - The agent must write one `result` artifact per iteration.

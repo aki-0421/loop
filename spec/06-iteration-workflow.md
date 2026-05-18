@@ -84,12 +84,14 @@ The base checkout remains untouched during agent execution. Integration happens 
 
 ## Prompt content
 
-The prompt is rebuilt for every iteration by CLI code. It is intentionally compact and only bootstraps the loop skill workflow. It includes:
+`prompt.md` is an exact copy of the user instruction file as read at the start of that iteration. It is the instruction snapshot for that iteration and must not contain system bootstrap text, goal text, or source file paths.
+
+The agent bootstrap prompt is built in memory for every agent launch. It is intentionally compact and only bootstraps the loop skill workflow. It includes:
 
 - A short instruction to use the `loop` skill.
 - A short instruction to use `loop iteration` and `loop memory` commands.
 
-The prompt does not inline runtime metadata, effective config, schema summaries, full path lists, memory, goal text, or instruction file content. The `loop` skill tells the agent which CLI commands expose runtime context and writable artifacts.
+The agent bootstrap prompt does not inline runtime metadata, effective config, schema summaries, full path lists, memory, goal text, instruction file content, or instruction file paths. The `loop` skill tells the agent which CLI commands expose runtime context and writable artifacts.
 
 ## Agent phase
 

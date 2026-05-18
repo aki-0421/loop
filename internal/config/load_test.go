@@ -183,6 +183,72 @@ run:
 
 	repo = t.TempDir()
 	mustWrite(t, filepath.Join(repo, ".loop", "config.yaml"), `version: 1
+run:
+  instructionReload: once
+`)
+	_, err = Load(LoadOptions{CWD: repo, Env: []string{}, ConfigPath: filepath.Join(repo, ".loop", "config.yaml")})
+	if err == nil || !strings.Contains(err.Error(), "field instructionReload not found") {
+		t.Fatalf("expected removed run.instructionReload error, got %v", err)
+	}
+
+	repo = t.TempDir()
+	mustWrite(t, filepath.Join(repo, ".loop", "config.yaml"), `version: 1
+agent:
+  default: custom
+  adapters:
+    custom:
+      command: custom-agent
+      prompt: file_arg
+`)
+	_, err = Load(LoadOptions{CWD: repo, Env: []string{}, ConfigPath: filepath.Join(repo, ".loop", "config.yaml")})
+	if err == nil || !strings.Contains(err.Error(), "prompt must be stdin or arg") {
+		t.Fatalf("expected removed file_arg error, got %v", err)
+	}
+
+	repo = t.TempDir()
+	mustWrite(t, filepath.Join(repo, ".loop", "config.yaml"), `version: 1
+agent:
+  default: custom
+  adapters:
+    custom:
+      command: custom-agent
+      args: ["{prompt_file}"]
+`)
+	_, err = Load(LoadOptions{CWD: repo, Env: []string{}, ConfigPath: filepath.Join(repo, ".loop", "config.yaml")})
+	if err == nil || !strings.Contains(err.Error(), "must not use {prompt_file}") {
+		t.Fatalf("expected prompt_file placeholder error, got %v", err)
+	}
+
+	repo = t.TempDir()
+	mustWrite(t, filepath.Join(repo, ".loop", "config.yaml"), `version: 1
+agent:
+  default: custom
+  adapters:
+    custom:
+      command: custom-agent
+      args: ["{result_file}"]
+`)
+	_, err = Load(LoadOptions{CWD: repo, Env: []string{}, ConfigPath: filepath.Join(repo, ".loop", "config.yaml")})
+	if err == nil || !strings.Contains(err.Error(), "must not use {result_file}") {
+		t.Fatalf("expected result_file placeholder error, got %v", err)
+	}
+
+	repo = t.TempDir()
+	mustWrite(t, filepath.Join(repo, ".loop", "config.yaml"), `version: 1
+agent:
+  default: custom
+  adapters:
+    custom:
+      command: custom-agent
+      args: ["{iteration_dir}"]
+`)
+	_, err = Load(LoadOptions{CWD: repo, Env: []string{}, ConfigPath: filepath.Join(repo, ".loop", "config.yaml")})
+	if err == nil || !strings.Contains(err.Error(), "must not use {iteration_dir}") {
+		t.Fatalf("expected iteration_dir placeholder error, got %v", err)
+	}
+
+	repo = t.TempDir()
+	mustWrite(t, filepath.Join(repo, ".loop", "config.yaml"), `version: 1
 git:
   integration:
     mode: direct

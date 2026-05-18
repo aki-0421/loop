@@ -6,7 +6,6 @@
   "required": [
     "schema_version",
     "run_id",
-    "instruction_path",
     "base_branch",
     "agent",
     "current_iteration",
@@ -18,9 +17,6 @@
       "const": 1
     },
     "run_id": {
-      "type": "string"
-    },
-    "instruction_path": {
       "type": "string"
     },
     "goal": {

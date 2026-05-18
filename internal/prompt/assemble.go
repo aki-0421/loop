@@ -39,7 +39,6 @@ type Request struct {
 	Paths              Paths
 	RecentSummaries    []MemoryItem
 	SearchResults      []MemoryItem
-	InstructionPath    string
 	InstructionContent string
 	Goal               string
 	EffectiveConfig    string
@@ -69,42 +68,16 @@ func Assemble(req Request) string {
 	}
 	var b strings.Builder
 	writeSection(&b, "Loop Instruction", HarnessContract(req.PullRequestMode))
-	writeVerbatimInstructionSection(&b, req.InstructionPath, req.InstructionContent)
-	if strings.TrimSpace(req.Goal) != "" {
-		writeSection(&b, "Run Goal", req.Goal)
-	}
 	return strings.TrimRight(b.String(), "\n") + "\n"
 }
 
-func WritePrompt(path string, req Request) (string, error) {
-	text := Assemble(req)
+func WritePrompt(path string, content []byte) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return "", err
+		return err
 	}
-	return text, os.WriteFile(path, []byte(text), 0o644)
+	return os.WriteFile(path, content, 0o644)
 }
 
 func writeSection(b *strings.Builder, title, body string) {
 	fmt.Fprintf(b, "## %s\n\n%s\n\n", title, strings.TrimSpace(body))
-}
-
-func writeVerbatimInstructionSection(b *strings.Builder, path, content string) {
-	fmt.Fprint(b, "## User Instruction (Verbatim)\n\n")
-	if strings.TrimSpace(path) != "" {
-		fmt.Fprintf(b, "Source: `%s`\n\n", strings.TrimSpace(path))
-	}
-	if content == "" {
-		fmt.Fprint(b, "(Instruction file is empty.)\n\n")
-		return
-	}
-	fence := "```"
-	if strings.Contains(content, fence) {
-		fence = "````"
-	}
-	fmt.Fprintf(b, "%smarkdown\n", fence)
-	b.WriteString(content)
-	if !strings.HasSuffix(content, "\n") {
-		b.WriteString("\n")
-	}
-	fmt.Fprintf(b, "%s\n\n", fence)
 }

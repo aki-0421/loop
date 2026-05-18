@@ -62,16 +62,14 @@ Prompt passing modes:
 | Mode | Behavior |
 | --- | --- |
 | `stdin` | Pass the assembled prompt to standard input. |
-| `file_arg` | Write the prompt to a file and pass its path as an argument placeholder. |
 | `arg` | Pass the prompt as one command argument. |
 
 Adapter arguments may include placeholders:
 
 - `{prompt}`: prompt text for `arg` mode.
-- `{prompt_file}`: prompt file path for `file_arg` mode.
 - `{cwd}`: working directory.
-- `{result_file}`: expected result JSON path.
-- `{iteration_dir}`: current iteration directory.
+
+Path-bearing prompt placeholders such as `{prompt_file}`, `{result_file}`, and `{iteration_dir}` are rejected. Agents should access iteration content through `loop iteration ...` commands.
 
 ## `skills`
 

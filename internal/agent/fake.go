@@ -12,12 +12,14 @@ import (
 
 func RunFakeAgentFromEnv() int {
 	mode := getenv("LOOP_FAKE_AGENT_MODE", "completed")
-	iterationDir := getenv("LOOP_ITERATION_DIR", ".")
-	_ = os.MkdirAll(iterationDir, 0o755)
+	iterationDir := os.Getenv("LOOP_ITERATION_DIR")
+	if iterationDir != "" {
+		_ = os.MkdirAll(iterationDir, 0o755)
+	}
 
 	switch mode {
 	case "invalid_json":
-		_ = artifactdb.Write(iterationDir, "result", "{invalid json\n")
+		_ = writeFakeArtifact(iterationDir, "result", "{invalid json\n")
 		return 0
 	case "dirty":
 		_ = os.WriteFile(filepath.Join(getenv("LOOP_WORKDIR", "."), "loop-fake-dirty.txt"), []byte("dirty\n"), 0o644)
@@ -35,7 +37,7 @@ func RunFakeAgentFromEnv() int {
 		_ = os.WriteFile(changePath, []byte("fake agent completed at "+time.Now().UTC().Format(time.RFC3339Nano)+"\n"), 0o644)
 		_ = git(workDir, "add", "loop-fake-change.txt")
 		_ = git(workDir, "commit", "-m", "F: run fake agent behavior")
-		_ = artifactdb.Write(iterationDir, "summary", "# Iteration Summary\n\n- Fake agent completed.\n")
+		_ = writeFakeArtifact(iterationDir, "summary", "# Iteration Summary\n\n- Fake agent completed.\n")
 		writeFakeResult(iterationDir, "completed", fakeCommit(workDir))
 		return 0
 	}
@@ -66,7 +68,20 @@ func writeFakeResult(iterationDir, status string, commits ...map[string]any) {
 		result["blocked_reason"] = "Fake agent blocked by requested mode."
 	}
 	b, _ := json.MarshalIndent(result, "", "  ")
-	_ = artifactdb.Write(iterationDir, "result", string(append(b, '\n')))
+	_ = writeFakeArtifact(iterationDir, "result", string(append(b, '\n')))
+}
+
+func writeFakeArtifact(iterationDir, name, content string) error {
+	if iterationDir != "" {
+		return artifactdb.Write(iterationDir, name, content)
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	cmd := exec.Command(exe, "iteration", "write", name, "--value", content)
+	cmd.Env = os.Environ()
+	return cmd.Run()
 }
 
 func git(dir string, args ...string) error {

@@ -24,7 +24,7 @@ func TestNewRunIDFormatAndIterationID(t *testing.T) {
 
 func TestWriteStateAtomicallyAndRead(t *testing.T) {
 	path := filepath.Join(t.TempDir(), ".loop", "runs", "r1", "run-state.json")
-	state := New("r1", "task.md", "done", "develop", "codex")
+	state := New("r1", "done", "develop", "codex")
 	state.CurrentIteration = "0001"
 
 	if err := Write(path, state); err != nil {

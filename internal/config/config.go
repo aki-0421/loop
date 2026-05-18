@@ -49,9 +49,8 @@ type AdapterConfig struct {
 }
 
 type RunConfig struct {
-	MaxIterations     int    `yaml:"maxIterations" json:"maxIterations"`
-	RepairAttempts    int    `yaml:"repairAttempts" json:"repairAttempts"`
-	InstructionReload string `yaml:"instructionReload" json:"instructionReload"`
+	MaxIterations  int `yaml:"maxIterations" json:"maxIterations"`
+	RepairAttempts int `yaml:"repairAttempts" json:"repairAttempts"`
 }
 
 type SkillsConfig struct {
@@ -262,8 +261,22 @@ func Validate(cfg Config) error {
 		if adapter.Command == "" {
 			errs = append(errs, "agent.adapters."+name+".command is required")
 		}
-		if !oneOf(adapter.Prompt, "stdin", "file_arg", "arg") {
-			errs = append(errs, "agent.adapters."+name+".prompt must be stdin, file_arg, or arg")
+		if !oneOf(adapter.Prompt, "stdin", "arg") {
+			errs = append(errs, "agent.adapters."+name+".prompt must be stdin or arg")
+		}
+		for _, arg := range adapter.Args {
+			if strings.Contains(arg, "{prompt_file}") {
+				errs = append(errs, "agent.adapters."+name+".args must not use {prompt_file}")
+				break
+			}
+			if strings.Contains(arg, "{result_file}") {
+				errs = append(errs, "agent.adapters."+name+".args must not use {result_file}")
+				break
+			}
+			if strings.Contains(arg, "{iteration_dir}") {
+				errs = append(errs, "agent.adapters."+name+".args must not use {iteration_dir}")
+				break
+			}
 		}
 	}
 	if cfg.Run.MaxIterations < 0 {
@@ -271,9 +284,6 @@ func Validate(cfg Config) error {
 	}
 	if cfg.Run.RepairAttempts < 0 {
 		errs = append(errs, "run.repairAttempts must be at least 0")
-	}
-	if !oneOf(cfg.Run.InstructionReload, "each_iteration", "once") {
-		errs = append(errs, "run.instructionReload must be each_iteration or once")
 	}
 	if cfg.Skills.SourceDir == "" {
 		errs = append(errs, "skills.sourceDir is required")

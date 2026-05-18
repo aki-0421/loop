@@ -16,7 +16,6 @@ import (
 	"strings"
 	"syscall"
 	"time"
-	"unicode"
 
 	"gopkg.in/yaml.v3"
 
@@ -309,8 +308,8 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 	}
 	runDir := filepath.Join(root, cfg.Logs.Dir, runID)
 	statePath := filepath.Join(runDir, "run-state.json")
-	state := runstate.New(runID, rel(root, instructionPath), *goal, cfg.Git.BaseBranch, cfg.Agent.Default)
-	renderer := newRunRenderer(g, runID, cfg.Agent.Default, filepath.Base(root), filepath.Base(instructionPath), cfg.Git.BaseBranch, *goal, rel(root, runDir), cfg.Run.MaxIterations, *dryRun)
+	state := runstate.New(runID, *goal, cfg.Git.BaseBranch, cfg.Agent.Default)
+	renderer := newRunRenderer(g, runID, cfg.Agent.Default, filepath.Base(root), "", cfg.Git.BaseBranch, *goal, rel(root, runDir), cfg.Run.MaxIterations, *dryRun)
 	renderer.Start(ctx)
 	defer func() {
 		renderer.Stop(state.Stage, "")
@@ -365,10 +364,9 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 			}
 		}
 		paths := promptPaths(iterDir)
-		paths.InstructionPath = instructionPath
-		paths.InstructionRel = rel(root, instructionPath)
 		paths.Goal = *goal
 		paths.Language = cfg.Language.Default
+		paths.RunID = runID
 		paths.IterationID = iterationID
 		paths.BaseBranch = cfg.Git.BaseBranch
 		paths.CurrentBranch = initialBranch
@@ -383,25 +381,14 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 		if err := config.WriteEffective(paths.EffectiveConfig, cfg); err != nil {
 			return codedError{1, err}
 		}
-		if err := writeRuntimeArtifact(paths); err != nil {
-			return codedError{1, err}
-		}
 		instructionContent, err := os.ReadFile(instructionPath)
 		if err != nil {
 			return codedError{1, fmt.Errorf("read instruction file: %w", err)}
 		}
-		req := prompt.Request{
-			Language: paths.Language, IterationID: paths.IterationID,
-			BaseBranch: paths.BaseBranch, CurrentBranch: paths.CurrentBranch, Agent: cfg.Agent.Default,
-			PullRequestMode: paths.PullRequestMode,
-			InstructionPath: paths.InstructionRel, InstructionContent: string(instructionContent), Goal: paths.Goal,
-			Paths: prompt.Paths{
-				IterationDir: iterDir, Prompt: paths.Prompt, Plan: paths.Plan, Todo: paths.Todo,
-				Worklog: paths.Worklog, Validation: paths.Validation, Summary: paths.Summary, Result: paths.Result,
-				EventLog: paths.Events, StdoutLog: paths.Stdout, StderrLog: paths.Stderr, PRTitle: paths.PRTitle, PRBody: paths.PRBody,
-			},
+		if err := prompt.WritePrompt(paths.Prompt, instructionContent); err != nil {
+			return codedError{1, err}
 		}
-		if _, err := prompt.WritePrompt(paths.Prompt, req); err != nil {
+		if err := writeRuntimeArtifact(paths); err != nil {
 			return codedError{1, err}
 		}
 		if *dryRun {
@@ -865,8 +852,8 @@ func commandStatus(ctx context.Context, g globals, args []string) error {
 	if len(state.Iterations) > 0 {
 		lastSummary = state.Iterations[len(state.Iterations)-1].SummarySentence
 	}
-	out := map[string]any{"run_id": state.RunID, "instruction": state.InstructionPath, "base": state.BaseBranch, "iteration": state.CurrentIteration, "stage": state.Stage, "last_summary": lastSummary, "next": next}
-	text := fmt.Sprintf("Run: %s\nInstruction: %s\nBase: %s\nIteration: %s\nStage: %s\nLast summary: %s\nNext: %s\nLogs: %s\n", state.RunID, state.InstructionPath, state.BaseBranch, state.CurrentIteration, state.Stage, lastSummary, next, filepath.Join(cfg.Logs.Dir, runID))
+	out := map[string]any{"run_id": state.RunID, "base": state.BaseBranch, "iteration": state.CurrentIteration, "stage": state.Stage, "last_summary": lastSummary, "next": next}
+	text := fmt.Sprintf("Run: %s\nBase: %s\nIteration: %s\nStage: %s\nLast summary: %s\nNext: %s\nLogs: %s\n", state.RunID, state.BaseBranch, state.CurrentIteration, state.Stage, lastSummary, next, filepath.Join(cfg.Logs.Dir, runID))
 	return printResult(g, out, text)
 }
 
@@ -1119,16 +1106,16 @@ type pathSet struct {
 	PRBody          string
 	Errors          string
 
-	InstructionPath string
-	InstructionRel  string
-	Goal            string
-	Language        string
-	IterationID     string
-	BaseBranch      string
-	CurrentBranch   string
-	IntegrationMode string
-	PullRequestMode bool
-	WorkDir         string
+	Goal             string
+	Language         string
+	RunID            string
+	IterationID      string
+	BaseBranch       string
+	CurrentBranch    string
+	IntegrationMode  string
+	PullRequestMode  bool
+	WorkDir          string
+	AgentPromptExtra string
 }
 
 func promptPaths(iterDir string) pathSet {
@@ -1153,11 +1140,9 @@ func promptPaths(iterDir string) pathSet {
 
 func writeRuntimeArtifact(paths pathSet) error {
 	data, err := json.MarshalIndent(map[string]any{
-		"instruction_file":  paths.InstructionPath,
-		"instruction_path":  paths.InstructionPath,
-		"instruction_rel":   paths.InstructionRel,
 		"goal":              paths.Goal,
 		"output_language":   paths.Language,
+		"run_id":            paths.RunID,
 		"iteration_id":      paths.IterationID,
 		"base_branch":       paths.BaseBranch,
 		"current_branch":    paths.CurrentBranch,
@@ -1184,10 +1169,11 @@ func runAgent(ctx context.Context, cfg config.Config, root string, paths pathSet
 		}
 		adapterCfg.Args = []string{"__fake-agent"}
 	}
-	promptText, err := os.ReadFile(paths.Prompt)
-	if err != nil {
-		return err
+	if agent.PromptMode(adapterCfg.Prompt) == agent.PromptFileArg {
+		return fmt.Errorf("agent adapter %q uses unsupported prompt mode file_arg", cfg.Agent.Default)
 	}
+	promptText := buildAgentPrompt(paths)
+	recordAgentPromptAudit(filepath.Dir(paths.Result), promptText)
 	pa := agent.ProcessAdapter{
 		AdapterName: cfg.Agent.Default,
 		Command:     adapterCfg.Command,
@@ -1196,14 +1182,11 @@ func runAgent(ctx context.Context, cfg config.Config, root string, paths pathSet
 		Env:         adapterCfg.Env,
 	}
 	env := map[string]string{
-		"LOOP_ITERATION_DIR":     filepath.Dir(paths.Result),
 		"LOOP_RESULT_ARTIFACT":   "result",
 		"LOOP_WORKDIR":           root,
-		"LOOP_INSTRUCTION_FILE":  paths.InstructionPath,
-		"LOOP_INSTRUCTION_PATH":  paths.InstructionPath,
-		"LOOP_INSTRUCTION_REL":   paths.InstructionRel,
 		"LOOP_RUN_GOAL":          paths.Goal,
 		"LOOP_OUTPUT_LANGUAGE":   paths.Language,
+		"LOOP_RUN_ID":            paths.RunID,
 		"LOOP_ITERATION_ID":      paths.IterationID,
 		"LOOP_BASE_BRANCH":       paths.BaseBranch,
 		"LOOP_CURRENT_BRANCH":    paths.CurrentBranch,
@@ -1211,12 +1194,25 @@ func runAgent(ctx context.Context, cfg config.Config, root string, paths pathSet
 		"LOOP_PULL_REQUEST_MODE": strconv.FormatBool(paths.PullRequestMode),
 		"LOOP_PR_MODE":           strconv.FormatBool(paths.PullRequestMode),
 	}
-	_, err = pa.Run(ctx, agent.RunRequest{
-		WorkDir: root, Env: env, PromptFile: paths.Prompt, PromptText: string(promptText),
+	_, err := pa.Run(ctx, agent.RunRequest{
+		WorkDir: root, Env: env, PromptText: promptText,
 		IterationDir: filepath.Dir(paths.Result), EventLogPath: paths.Events, ErrorsLogPath: paths.Errors,
 		OnEvent: onEvent,
 	})
 	return err
+}
+
+func buildAgentPrompt(paths pathSet) string {
+	text := prompt.Assemble(prompt.Request{PullRequestMode: paths.PullRequestMode})
+	if strings.TrimSpace(paths.AgentPromptExtra) == "" {
+		return text
+	}
+	return strings.TrimRight(text, "\n") + "\n\n" + strings.TrimLeft(paths.AgentPromptExtra, "\n")
+}
+
+func recordAgentPromptAudit(iterDir, text string) {
+	entry := fmt.Sprintf("\n## Agent Prompt %s\n\n%s\n", time.Now().UTC().Format(time.RFC3339), strings.TrimRight(text, "\n"))
+	_ = artifactdb.Append(iterDir, "agent-prompt-audit", entry)
 }
 
 func runAgentAndReadResult(ctx context.Context, cfg config.Config, workDir string, paths pathSet, onEvent func(runstate.Event)) (*validation.IterationResult, error) {
@@ -1230,8 +1226,9 @@ func runAgentAndReadResult(ctx context.Context, cfg config.Config, workDir strin
 	}
 	for attempt := 1; resultErr != nil && attempt <= cfg.Run.RepairAttempts && ctx.Err() == nil; attempt++ {
 		appendErrorLog(paths.Errors, fmt.Sprintf("result artifact missing or invalid before repair attempt %d: %v", attempt, resultErr))
-		appendRepairNote(paths.Prompt, fmt.Sprintf("Repair attempt %d required because the result artifact was missing or invalid: %v", attempt, resultErr))
-		agentErr = runAgent(ctx, cfg, workDir, paths, onEvent)
+		repairPaths := paths
+		repairPaths.AgentPromptExtra = repairContract(fmt.Sprintf("Repair attempt %d required because the result artifact was missing or invalid: %v", attempt, resultErr))
+		agentErr = runAgent(ctx, cfg, workDir, repairPaths, onEvent)
 		result, resultErr = validateResultArtifact(paths)
 		if ctx.Err() != nil {
 			if agentErr != nil {
@@ -1263,8 +1260,9 @@ func repairValidation(ctx context.Context, cfg config.Config, workDir, root stri
 	var results []validation.CommandResult
 	var err error = cause
 	for attempt := 1; attempt <= cfg.Run.RepairAttempts && ctx.Err() == nil; attempt++ {
-		appendRepairNote(paths.Prompt, fmt.Sprintf("Repair attempt %d required because validation failed: %v", attempt, err))
-		result, err = runAgentAndReadResult(ctx, cfg, workDir, paths, onEvent)
+		repairPaths := paths
+		repairPaths.AgentPromptExtra = repairContract(fmt.Sprintf("Repair attempt %d required because validation failed: %v", attempt, err))
+		result, err = runAgentAndReadResult(ctx, cfg, workDir, repairPaths, onEvent)
 		if err != nil {
 			continue
 		}
@@ -1284,8 +1282,9 @@ func repairDirty(ctx context.Context, cfg config.Config, workDir string, paths p
 	var err error
 	clean := dirty
 	for attempt := 1; attempt <= cfg.Run.RepairAttempts && !clean.Clean && ctx.Err() == nil; attempt++ {
-		appendRepairNote(paths.Prompt, fmt.Sprintf("Repair attempt %d required because the working tree is dirty: %s", attempt, dirtyList(clean.Dirty)))
-		result, err = runAgentAndReadResult(ctx, cfg, workDir, paths, onEvent)
+		repairPaths := paths
+		repairPaths.AgentPromptExtra = repairContract(fmt.Sprintf("Repair attempt %d required because the working tree is dirty: %s", attempt, dirtyList(clean.Dirty)))
+		result, err = runAgentAndReadResult(ctx, cfg, workDir, repairPaths, onEvent)
 		if err != nil {
 			continue
 		}
@@ -1297,13 +1296,8 @@ func repairDirty(ctx context.Context, cfg config.Config, workDir string, paths p
 	return result, clean, err
 }
 
-func appendRepairNote(promptPath, note string) {
-	f, err := os.OpenFile(promptPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
-	if err != nil {
-		return
-	}
-	defer f.Close()
-	_, _ = fmt.Fprintf(f, "\n## Repair Contract\n\n%s\n\nUse the loop skill when available. Restore the iteration contract or produce a valid blocked result.\n", note)
+func repairContract(note string) string {
+	return fmt.Sprintf("## Repair Contract\n\n%s\n\nUse the loop skill when available. Restore the iteration contract or produce a valid blocked result.\n", note)
 }
 
 func runConfiguredValidation(ctx context.Context, root string, paths pathSet, commands []config.ValidationCommand) ([]validation.CommandResult, error) {
@@ -1372,7 +1366,7 @@ func startPRIntegration(ctx context.Context, root string, cfg config.Config, bra
 	iterDir := filepath.Dir(paths.Result)
 	title := strings.TrimSpace(readArtifactOptional(iterDir, "pr-title"))
 	if title == "" {
-		title = fallbackPRTitle(branch, template)
+		title = fallbackPRTitle(branch)
 		_ = artifactdb.Write(iterDir, "pr-title", title+"\n")
 	}
 	body := strings.TrimSpace(readArtifactOptional(iterDir, "pr-body"))
@@ -1418,13 +1412,14 @@ func waitPRChecksWithRepair(ctx context.Context, session *prIntegrationSession, 
 	var repairResult *validation.IterationResult
 	lastErr := err
 	for attempt := 1; attempt <= cfg.Run.RepairAttempts && ctx.Err() == nil; attempt++ {
-		appendPRCheckRepairPrompt(paths.Prompt, session.prID, attempt, cfg.Run.RepairAttempts, checks, lastErr)
-		paths.CurrentBranch = branch
-		paths.WorkDir = workDir
-		_ = writeRuntimeArtifact(paths)
+		repairPaths := paths
+		repairPaths.AgentPromptExtra = prCheckRepairPrompt(session.prID, attempt, cfg.Run.RepairAttempts, checks, lastErr)
+		repairPaths.CurrentBranch = branch
+		repairPaths.WorkDir = workDir
+		_ = writeRuntimeArtifact(repairPaths)
 		appendPREvent(paths, onEvent, runstate.Event{"type": "pr.checks_repair.started", "pr": session.prID, "attempt": attempt})
 
-		result, repairErr := runAgentAndReadResult(ctx, cfg, workDir, paths, onEvent)
+		result, repairErr := runAgentAndReadResult(ctx, cfg, workDir, repairPaths, onEvent)
 		if result != nil {
 			repairResult = result
 		}
@@ -1518,13 +1513,8 @@ func appendPRCheckFailure(paths pathSet, onEvent func(runstate.Event), prID stri
 	appendPREvent(paths, onEvent, runstate.Event{"type": "pr.checks_failed", "pr": prID, "error": err.Error()})
 }
 
-func appendPRCheckRepairPrompt(promptPath, prID string, attempt, total int, result pr.CommandResult, cause error) {
+func prCheckRepairPrompt(prID string, attempt, total int, result pr.CommandResult, cause error) string {
 	details := commandOutputForPrompt(result, cause, 6000)
-	f, err := os.OpenFile(promptPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
-	if err != nil {
-		return
-	}
-	defer f.Close()
 	const repairPrompt = "\n## Pull Request Check Repair Contract\n\n" +
 		"Pull request checks failed after PR creation.\n\n" +
 		"- Pull request: %s\n" +
@@ -1537,7 +1527,7 @@ func appendPRCheckRepairPrompt(promptPath, prID string, attempt, total int, resu
 		"3. Use the local repository evidence together with the web findings to make the smallest fix on the current branch.\n" +
 		"4. Run relevant local validation, commit complete changes through `loop commit`, and leave the working tree clean.\n" +
 		"5. Write an updated result artifact. If web search is unavailable, record that limitation in the worklog and continue from local diagnostics.\n"
-	_, _ = fmt.Fprintf(f, repairPrompt, prID, attempt, total, details)
+	return fmt.Sprintf(repairPrompt, prID, attempt, total, details)
 }
 
 func commandOutputForLog(result pr.CommandResult) string {
@@ -1579,31 +1569,16 @@ func readPullRequestTemplate(root string) string {
 	return content
 }
 
-func fallbackPRTitle(branch, template string) string {
-	if looksJapanese(template) {
-		return branch + " を統合"
-	}
+func fallbackPRTitle(branch string) string {
 	return "Integrate " + branch
 }
 
 func fallbackPRBody(branch, template string) string {
 	if strings.TrimSpace(template) != "" {
 		body := strings.TrimRight(template, "\n")
-		if looksJapanese(template) {
-			return body + "\n\n## loop による補足\n\n- 対象ブランチ: `" + branch + "`\n- 詳細は loop の `summary` と `validation` artifact を参照してください。\n"
-		}
 		return body + "\n\n## Loop Notes\n\n- Branch: `" + branch + "`\n- See loop `summary` and `validation` artifacts for generated details.\n"
 	}
 	return "## Summary\n\nGenerated by loop.\n\n## Verification\n\nSee loop validation logs.\n"
-}
-
-func looksJapanese(text string) bool {
-	for _, r := range text {
-		if unicode.In(r, unicode.Hiragana, unicode.Katakana, unicode.Han) {
-			return true
-		}
-	}
-	return false
 }
 
 func writeUnlessExists(path string, data []byte, force bool) error {

@@ -125,9 +125,9 @@ The implementation stores command outputs in the iteration directory.
 
 ## PR template handling
 
-The agent reads pull request template text through `loop iteration read pr-template`, fills it, and writes the PR title and body artifacts in the template language. If a repository template exists, the command returns it. If no repository template exists, the command returns CLI-owned fallback text.
+The agent reads pull request template text through `loop iteration read pr-template`, fills it, and writes the PR title and body artifacts in English by default. If a repository template exists, the command returns it. If no repository template exists, the command returns CLI-owned fallback text.
 
-If the agent does not write the `pr-body` artifact, the CLI fallback reads the repository template when present and appends a minimal loop note in the same detected language.
+If the agent does not write the `pr-body` artifact, the CLI fallback reads the repository template when present and appends a minimal English loop note.
 
 ## Check waiting
 

@@ -2,14 +2,16 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
-	"github.com/aki-0421/loop/internal/agent"
+	"github.com/aki-0421/loop/internal/artifactdb"
 )
 
 func TestPRChecksFailureLaunchesRepairAgentBeforeRetry(t *testing.T) {
@@ -101,13 +103,20 @@ git:
 		t.Fatal(err)
 	}
 	prompt := string(promptBytes)
+	if prompt != "# Task\n\nMake the fake change.\n" {
+		t.Fatalf("prompt.md should remain the instruction snapshot, got:\n%s", prompt)
+	}
+	audit, err := artifactdb.Read(iterDir, "agent-prompt-audit")
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, want := range []string{
 		"Pull Request Check Repair Contract",
 		"perform a web search",
 		"unit test failed: missing dependency",
 	} {
-		if !strings.Contains(prompt, want) {
-			t.Fatalf("repair prompt missing %q:\n%s", want, prompt)
+		if !strings.Contains(audit, want) {
+			t.Fatalf("repair prompt audit missing %q:\n%s", want, audit)
 		}
 	}
 }
@@ -172,7 +181,96 @@ func TestHelperProcessFakeAgent(t *testing.T) {
 	if os.Getenv("LOOP_TEST_FAKE_AGENT") != "1" {
 		return
 	}
-	os.Exit(agent.RunFakeAgentFromEnv())
+	os.Exit(runTestFakeAgent())
+}
+
+func runTestFakeAgent() int {
+	iterDir, err := resolveIterationDir(context.Background(), globals{}, "", os.Getenv("LOOP_RUN_ID"), os.Getenv("LOOP_ITERATION_ID"))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	mode := os.Getenv("LOOP_FAKE_AGENT_MODE")
+	if mode == "" {
+		mode = "completed"
+	}
+	switch mode {
+	case "invalid_json":
+		_ = artifactdb.Write(iterDir, "result", "{invalid json\n")
+		return 0
+	case "dirty":
+		_ = os.WriteFile(filepath.Join(getenvForTestAgent("LOOP_WORKDIR", "."), "loop-fake-dirty.txt"), []byte("dirty\n"), 0o644)
+		writeTestFakeResult(iterDir, "completed", nil)
+		return 0
+	case "blocked":
+		writeTestFakeResult(iterDir, "blocked", nil)
+		return 1
+	case "no_change":
+		writeTestFakeResult(iterDir, "no_change", nil)
+		return 0
+	default:
+		workDir := getenvForTestAgent("LOOP_WORKDIR", ".")
+		changePath := filepath.Join(workDir, "loop-fake-change.txt")
+		_ = os.WriteFile(changePath, []byte("fake agent completed at "+time.Now().UTC().Format(time.RFC3339Nano)+"\n"), 0o644)
+		_ = gitForTestAgent(workDir, "add", "loop-fake-change.txt")
+		_ = gitForTestAgent(workDir, "commit", "-m", "F: run fake agent behavior")
+		_ = artifactdb.Write(iterDir, "summary", "# Iteration Summary\n\n- Fake agent completed.\n")
+		writeTestFakeResult(iterDir, "completed", testFakeCommit(workDir))
+		return 0
+	}
+}
+
+func writeTestFakeResult(iterDir, status string, commit map[string]any) {
+	validationStatus := "passed"
+	if status == "blocked" {
+		validationStatus = "skipped"
+	}
+	commits := []map[string]any{}
+	if commit != nil {
+		commits = append(commits, commit)
+	}
+	result := map[string]any{
+		"schema_version":    1,
+		"status":            status,
+		"summary_sentence":  "Run fake agent behavior",
+		"should_fully_stop": status != "completed",
+		"goal_evaluation":   "Fake agent produced a deterministic test result.",
+		"branch":            map[string]any{"initial_name": "wip/0001", "kind": "test", "slug": "fake-agent", "final_name": "test/fake-agent"},
+		"commits":           commits,
+		"validation":        map[string]any{"status": validationStatus, "commands": []map[string]any{}},
+		"artifacts":         map[string]any{"summary": "summary"},
+		"assumptions":       []string{},
+		"blocked_reason":    "",
+	}
+	if status == "blocked" {
+		result["blocked_reason"] = "Fake agent blocked by requested mode."
+	}
+	data, _ := json.MarshalIndent(result, "", "  ")
+	_ = artifactdb.Write(iterDir, "result", string(append(data, '\n')))
+}
+
+func gitForTestAgent(dir string, args ...string) error {
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	return cmd.Run()
+}
+
+func testFakeCommit(dir string) map[string]any {
+	cmd := exec.Command("git", "log", "-1", "--format=%H")
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	sha := ""
+	if err == nil {
+		sha = strings.TrimSpace(string(out))
+	}
+	return map[string]any{"sha": sha, "message": "F: run fake agent behavior"}
+}
+
+func getenvForTestAgent(key, fallback string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return fallback
 }
 
 func addBareOrigin(t *testing.T, repo string) {

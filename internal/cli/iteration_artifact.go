@@ -23,12 +23,13 @@ type iterationArtifact struct {
 	Writable   bool
 	Repository bool
 	Database   bool
+	NoPath     bool
 }
 
 var iterationArtifacts = map[string]iterationArtifact{
 	"effective-config": {Name: "effective-config", File: "effective-config.yaml"},
 	"runtime":          {Name: "runtime", File: "runtime.json", Database: true},
-	"prompt":           {Name: "prompt", File: "prompt.md"},
+	"prompt":           {Name: "prompt", File: "prompt.md", NoPath: true},
 	"plan":             {Name: "plan", File: "plan.md", Writable: true, Database: true},
 	"todo":             {Name: "todo", File: "todo.md", Writable: true, Database: true},
 	"worklog":          {Name: "worklog", File: "worklog.md", Writable: true, Database: true},
@@ -40,7 +41,7 @@ var iterationArtifacts = map[string]iterationArtifact{
 	"pr-title":         {Name: "pr-title", File: "pr-title.txt", Writable: true, Database: true},
 	"pr-body":          {Name: "pr-body", File: "pr-body.md", Writable: true, Database: true},
 	"pr-template":      {Name: "pr-template", Repository: true},
-	"instruction":      {Name: "instruction", EnvPath: "LOOP_INSTRUCTION_FILE"},
+	"instruction":      {Name: "instruction", File: "prompt.md", NoPath: true},
 }
 
 var iterationArtifactAliases = map[string]string{
@@ -74,10 +75,10 @@ func commandIteration(ctx context.Context, g globals, args []string) error {
 func commandIterationReadPath(ctx context.Context, g globals, action string, args []string) error {
 	fs := flag.NewFlagSet("iteration "+action, flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	iterDir := fs.String("iteration-dir", os.Getenv("LOOP_ITERATION_DIR"), "iteration directory")
+	iterDir := fs.String("iteration-dir", "", "iteration directory")
 	dirAlias := fs.String("dir", "", "iteration directory")
-	runID := fs.String("run", "", "run id")
-	iteration := fs.String("iteration", "latest", "iteration id")
+	runID := fs.String("run", os.Getenv("LOOP_RUN_ID"), "run id")
+	iteration := fs.String("iteration", defaultIterationEnv(), "iteration id")
 	args = flagsFirst(args, map[string]bool{"iteration-dir": true, "dir": true, "run": true, "iteration": true})
 	if err := fs.Parse(args); err != nil {
 		return codedError{2, err}
@@ -105,6 +106,9 @@ func commandIterationReadPath(ctx context.Context, g globals, action string, arg
 		return codedError{2, err}
 	}
 	if action == "path" {
+		if artifact.NoPath {
+			return codedError{2, fmt.Errorf("artifact %q path is not exposed; use `loop iteration read %s`", artifact.Name, artifact.Name)}
+		}
 		if artifact.Database {
 			return codedError{2, fmt.Errorf("artifact %q is stored in the loop artifact database; use `loop iteration read %s` or `loop iteration write %s`", artifact.Name, artifact.Name, artifact.Name)}
 		}
@@ -126,7 +130,11 @@ func commandIterationReadPath(ctx context.Context, g globals, action string, arg
 		return codedError{1, err}
 	}
 	if g.JSON {
-		return printResult(g, map[string]any{"artifact": artifact.Name, "path": path, "content": string(data)}, "")
+		payload := map[string]any{"artifact": artifact.Name, "content": string(data)}
+		if !artifact.NoPath {
+			payload["path"] = path
+		}
+		return printResult(g, payload, "")
 	}
 	fmt.Print(string(data))
 	return nil
@@ -135,10 +143,10 @@ func commandIterationReadPath(ctx context.Context, g globals, action string, arg
 func commandIterationWriteAppend(ctx context.Context, g globals, action string, args []string) error {
 	fs := flag.NewFlagSet("iteration "+action, flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	iterDir := fs.String("iteration-dir", os.Getenv("LOOP_ITERATION_DIR"), "iteration directory")
+	iterDir := fs.String("iteration-dir", "", "iteration directory")
 	dirAlias := fs.String("dir", "", "iteration directory")
-	runID := fs.String("run", "", "run id")
-	iteration := fs.String("iteration", "latest", "iteration id")
+	runID := fs.String("run", os.Getenv("LOOP_RUN_ID"), "run id")
+	iteration := fs.String("iteration", defaultIterationEnv(), "iteration id")
 	sourceFile := fs.String("file", "", "source file, or - for stdin")
 	value := fs.String("value", "", "literal content")
 	args = flagsFirst(args, map[string]bool{"iteration-dir": true, "dir": true, "run": true, "iteration": true, "file": true, "value": true})
@@ -205,7 +213,7 @@ func resolveIterationDir(ctx context.Context, g globals, iterationDir, runID, it
 	if strings.TrimSpace(runID) == "" {
 		return "", nil
 	}
-	root, err := gitx.RepoRoot(ctx, ".")
+	root, err := loopStorageRoot(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -221,6 +229,35 @@ func resolveIterationDir(ctx context.Context, g globals, iterationDir, runID, it
 		}
 	}
 	return filepath.Join(root, cfg.Logs.Dir, runID, "iterations", iter), nil
+}
+
+func defaultIterationEnv() string {
+	if value := strings.TrimSpace(os.Getenv("LOOP_ITERATION_ID")); value != "" {
+		return value
+	}
+	return "latest"
+}
+
+func loopStorageRoot(ctx context.Context) (string, error) {
+	root, err := gitx.RepoRoot(ctx, ".")
+	if err != nil {
+		return "", err
+	}
+	common, err := (gitx.Runner{Dir: root}).Run(ctx, "rev-parse", "--git-common-dir")
+	if err != nil {
+		return root, nil
+	}
+	common = strings.TrimSpace(common)
+	if common == "" {
+		return root, nil
+	}
+	if !filepath.IsAbs(common) {
+		common = filepath.Join(root, common)
+	}
+	if filepath.Base(common) == ".git" {
+		return filepath.Dir(common), nil
+	}
+	return root, nil
 }
 
 func resolveIterationArtifact(ctx context.Context, iterationDir, name string) (string, iterationArtifact, error) {
