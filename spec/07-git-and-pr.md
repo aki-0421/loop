@@ -112,7 +112,7 @@ Pull request mode uses `gh`:
 3. Create PR.
 4. Wait for checks when configured.
 5. Prepare the local checkout for branch deletion by removing the iteration worktree when present and checking out the base branch.
-6. Merge through squash merge when checks pass and auto-merge is enabled. The squash commit subject is the generated PR title.
+6. Merge through squash merge when checks pass and auto-merge is enabled. The squash commit subject is the generated PR title with the PR number suffix when available, such as `(#123)`.
 7. Pull the base branch.
 8. Delete branch according to cleanup settings.
 
@@ -123,7 +123,7 @@ git push -u origin <branch>
 gh pr create --base <base> --head <branch> --title "<title>" --body-file <body-file>
 gh pr checks <pr> --watch
 git checkout <base>
-gh pr merge <pr> --squash --subject "<title>" --body-file <body-file> --delete-branch
+gh pr merge <pr> --squash --subject "<title> (#123)" --body-file <body-file> --delete-branch
 git pull --ff-only
 ```
 

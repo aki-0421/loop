@@ -200,8 +200,8 @@ func (r Runner) Merge(ctx context.Context, opts MergeOptions) (CommandResult, er
 
 func MergeArgs(opts MergeOptions) []string {
 	args := []string{"pr", "merge", opts.PR, "--squash"}
-	if opts.Subject != "" {
-		args = append(args, "--subject", opts.Subject)
+	if subject := mergeSubject(opts.Subject, opts.PR); subject != "" {
+		args = append(args, "--subject", subject)
 	}
 	if opts.BodyFile != "" {
 		args = append(args, "--body-file", opts.BodyFile)
@@ -210,6 +210,59 @@ func MergeArgs(opts MergeOptions) []string {
 		args = append(args, "--delete-branch")
 	}
 	return args
+}
+
+func mergeSubject(subject, pr string) string {
+	subject = strings.TrimSpace(subject)
+	if subject == "" {
+		return ""
+	}
+	number := prNumber(pr)
+	if number == "" {
+		return subject
+	}
+	suffix := "(#" + number + ")"
+	if strings.HasSuffix(subject, suffix) {
+		return subject
+	}
+	return subject + " " + suffix
+}
+
+func prNumber(pr string) string {
+	pr = strings.TrimSpace(strings.TrimSuffix(pr, "/"))
+	if allDigits(pr) {
+		return pr
+	}
+	for _, marker := range []string{"/pull/", "/pr/"} {
+		if i := strings.LastIndex(pr, marker); i >= 0 {
+			candidate := strings.TrimSuffix(pr[i+len(marker):], "/")
+			if slash := strings.Index(candidate, "/"); slash >= 0 {
+				candidate = candidate[:slash]
+			}
+			if allDigits(candidate) {
+				return candidate
+			}
+		}
+	}
+	if i := strings.LastIndex(pr, "#"); i >= 0 {
+		candidate := pr[i+1:]
+		if allDigits(candidate) {
+			return candidate
+		}
+	}
+	return ""
+}
+
+func allDigits(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, r := range value {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 type MergeOptions struct {

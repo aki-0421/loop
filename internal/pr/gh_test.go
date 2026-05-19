@@ -46,11 +46,65 @@ func TestGHWrapperCreateChecksMerge(t *testing.T) {
 		"--version",
 		"pr create --base main --head feat/x --title Add x --body-file body.md",
 		"pr checks 1 --watch",
-		"pr merge 1 --squash --subject Add weather app foundation --body-file body.md --delete-branch",
+		"pr merge 1 --squash --subject Add weather app foundation (#1) --body-file body.md --delete-branch",
 	} {
 		if !strings.Contains(log, want) {
 			t.Fatalf("log missing %q:\n%s", want, log)
 		}
+	}
+}
+
+func TestMergeArgsPreservesPRLinkInSubject(t *testing.T) {
+	tests := []struct {
+		name    string
+		pr      string
+		subject string
+		want    string
+	}{
+		{
+			name:    "numeric pr",
+			pr:      "42",
+			subject: "Add usage report",
+			want:    "Add usage report (#42)",
+		},
+		{
+			name:    "github pull url",
+			pr:      "https://github.com/acme/app/pull/42",
+			subject: "Add usage report",
+			want:    "Add usage report (#42)",
+		},
+		{
+			name:    "owner repo hash",
+			pr:      "acme/app#42",
+			subject: "Add usage report",
+			want:    "Add usage report (#42)",
+		},
+		{
+			name:    "already linked",
+			pr:      "42",
+			subject: "Add usage report (#42)",
+			want:    "Add usage report (#42)",
+		},
+		{
+			name:    "unparseable pr",
+			pr:      "feat/usage-report",
+			subject: "Add usage report",
+			want:    "Add usage report",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			args := MergeArgs(MergeOptions{PR: tt.pr, Subject: tt.subject})
+			got := ""
+			for i, arg := range args {
+				if arg == "--subject" && i+1 < len(args) {
+					got = args[i+1]
+				}
+			}
+			if got != tt.want {
+				t.Fatalf("subject = %q, want %q; args = %#v", got, tt.want, args)
+			}
+		})
 	}
 }
 
