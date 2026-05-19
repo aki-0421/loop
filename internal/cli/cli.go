@@ -406,6 +406,17 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 		if err != nil {
 			return codedError{4, err}
 		}
+		if result.Status == "needs_repair" {
+			state.Stage = runstate.StageRepairRunning
+			_ = runstate.Write(statePath, state)
+			renderer.Stage(runstate.StageRepairRunning, "agent requested repair")
+			result, err = repairRequested(ctx, cfg, workDir, &paths, result, renderer.AgentEvent)
+			if err != nil {
+				state.Stage = runstate.StageFailed
+				_ = runstate.Write(statePath, state)
+				return codedError{4, err}
+			}
+		}
 		renderer.Branch(paths.CurrentBranch)
 		cleanup.Branch = paths.CurrentBranch
 		state.Iterations[len(state.Iterations)-1].BranchCurrent = paths.CurrentBranch
@@ -449,6 +460,13 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 		if result.Status == "no_change" {
 			state.Iterations[len(state.Iterations)-1].SummarySentence = result.SummarySentence
 			state.Iterations[len(state.Iterations)-1].ShouldFullyStop = result.ShouldFullyStop
+			if cleanup.Active {
+				if issues := cleanup.cleanup(ctx); len(issues) > 0 {
+					appendErrorLog(paths.Errors, "no-change cleanup failed: "+strings.Join(issues, "; "))
+					return codedError{1, fmt.Errorf("no-change cleanup failed: %s", strings.Join(issues, "; "))}
+				}
+				cleanup.Integrated = true
+			}
 			if result.ShouldFullyStop {
 				state.Stage = runstate.StageCompleted
 				_ = runstate.Write(statePath, state)
@@ -1309,6 +1327,38 @@ func repairValidation(ctx context.Context, cfg config.Config, workDir, root stri
 		}
 	}
 	return result, results, err
+}
+
+func repairRequested(ctx context.Context, cfg config.Config, workDir string, paths *pathSet, requested *validation.IterationResult, onEvent func(runstate.Event)) (*validation.IterationResult, error) {
+	if cfg.Run.RepairAttempts == 0 {
+		return requested, errors.New("agent requested repair, but run.repairAttempts is 0")
+	}
+	result := requested
+	var err error
+	for attempt := 1; attempt <= cfg.Run.RepairAttempts && ctx.Err() == nil; attempt++ {
+		reason := "agent returned status needs_repair"
+		if result != nil && strings.TrimSpace(result.GoalEvaluation) != "" {
+			reason += ": " + strings.TrimSpace(result.GoalEvaluation)
+		}
+		appendErrorLog(paths.Errors, fmt.Sprintf("agent requested repair before attempt %d: %s", attempt, reason))
+		previousExtra := paths.AgentPromptExtra
+		paths.AgentPromptExtra = repairContract(fmt.Sprintf("Repair attempt %d required because %s", attempt, reason))
+		result, err = runAgentAndReadResult(ctx, cfg, workDir, paths, onEvent)
+		paths.AgentPromptExtra = previousExtra
+		if err != nil {
+			continue
+		}
+		if result == nil || result.Status != "needs_repair" {
+			return result, nil
+		}
+	}
+	if ctx.Err() != nil {
+		return result, ctx.Err()
+	}
+	if err != nil {
+		return result, err
+	}
+	return result, fmt.Errorf("agent still requested repair after %d attempt(s)", cfg.Run.RepairAttempts)
 }
 
 func repairDirty(ctx context.Context, cfg config.Config, workDir string, paths *pathSet, dirty gitx.CleanResult, onEvent func(runstate.Event)) (*validation.IterationResult, gitx.CleanResult, error) {

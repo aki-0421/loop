@@ -5,13 +5,15 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/aki-0421/loop/internal/artifactdb"
 )
 
 func RunFakeAgentFromEnv() int {
-	mode := getenv("LOOP_FAKE_AGENT_MODE", "completed")
+	mode := fakeModeFromEnv()
 	iterationDir := os.Getenv("LOOP_ITERATION_DIR")
 	if iterationDir != "" {
 		_ = os.MkdirAll(iterationDir, 0o755)
@@ -30,6 +32,19 @@ func RunFakeAgentFromEnv() int {
 		return 1
 	case "no_change":
 		writeFakeResult(iterationDir, "no_change")
+		return 0
+	case "needs_repair":
+		writeFakeResult(iterationDir, "needs_repair")
+		return 0
+	case "validation_fix":
+		workDir := getenv("LOOP_WORKDIR", ".")
+		_ = loopBranchRename(workDir, "test/fake-agent")
+		changePath := filepath.Join(workDir, "validation-ok.txt")
+		_ = os.WriteFile(changePath, []byte("validation repaired at "+time.Now().UTC().Format(time.RFC3339Nano)+"\n"), 0o644)
+		_ = git(workDir, "add", "validation-ok.txt")
+		_ = git(workDir, "commit", "-m", "F: repair validation fixture")
+		_ = writeFakeArtifact(iterationDir, "summary", "# Iteration Summary\n\n- Fake agent repaired validation.\n")
+		writeFakeResult(iterationDir, "completed", fakeCommit(workDir))
 		return 0
 	case "completed_unrenamed":
 		workDir := getenv("LOOP_WORKDIR", ".")
@@ -53,6 +68,42 @@ func RunFakeAgentFromEnv() int {
 	}
 }
 
+func fakeModeFromEnv() string {
+	sequence := strings.TrimSpace(os.Getenv("LOOP_FAKE_AGENT_SEQUENCE"))
+	if sequence == "" {
+		return getenv("LOOP_FAKE_AGENT_MODE", "completed")
+	}
+	var modes []string
+	for _, item := range strings.Split(sequence, ",") {
+		if mode := strings.TrimSpace(item); mode != "" {
+			modes = append(modes, mode)
+		}
+	}
+	if len(modes) == 0 {
+		return getenv("LOOP_FAKE_AGENT_MODE", "completed")
+	}
+	index := nextFakeInvocationIndex()
+	if index >= len(modes) {
+		index = len(modes) - 1
+	}
+	return modes[index]
+}
+
+func nextFakeInvocationIndex() int {
+	path := strings.TrimSpace(os.Getenv("LOOP_FAKE_AGENT_COUNT_FILE"))
+	if path == "" {
+		if n, err := strconv.Atoi(strings.TrimLeft(getenv("LOOP_ITERATION_ID", "1"), "0")); err == nil && n > 0 {
+			return n - 1
+		}
+		return 0
+	}
+	_ = os.MkdirAll(filepath.Dir(path), 0o755)
+	data, _ := os.ReadFile(path)
+	count, _ := strconv.Atoi(strings.TrimSpace(string(data)))
+	_ = os.WriteFile(path, []byte(strconv.Itoa(count+1)+"\n"), 0o644)
+	return count
+}
+
 func loopBranchRename(dir, branch string) error {
 	exe, err := os.Executable()
 	if err != nil {
@@ -72,13 +123,14 @@ func writeFakeResult(iterationDir, status string, commits ...map[string]any) {
 	if commits == nil {
 		commits = []map[string]any{}
 	}
+	branch := fakeBranchResult(status)
 	result := map[string]any{
 		"schema_version":    1,
 		"status":            status,
 		"summary_sentence":  "Run fake agent behavior",
 		"should_fully_stop": status != "completed",
 		"goal_evaluation":   "Fake agent produced a deterministic test result.",
-		"branch":            map[string]any{"initial_name": "wip/0001", "kind": "test", "slug": "fake-agent", "final_name": "test/fake-agent"},
+		"branch":            branch,
 		"commits":           commits,
 		"validation":        map[string]any{"status": validationStatus, "commands": []map[string]any{}},
 		"artifacts":         map[string]any{"summary": "summary"},
@@ -90,6 +142,48 @@ func writeFakeResult(iterationDir, status string, commits ...map[string]any) {
 	}
 	b, _ := json.MarshalIndent(result, "", "  ")
 	_ = writeFakeArtifact(iterationDir, "result", string(append(b, '\n')))
+}
+
+func fakeBranchResult(status string) map[string]any {
+	workDir := getenv("LOOP_WORKDIR", ".")
+	initial := getenv("LOOP_INITIAL_BRANCH", "wip/0001")
+	current := currentBranch(workDir)
+	if current == "" {
+		current = getenv("LOOP_CURRENT_BRANCH", initial)
+	}
+	kind := "test"
+	slug := "fake-agent"
+	final := ""
+	if status == "completed" && current != "" && current != initial {
+		final = current
+		if parsedKind, parsedSlug, ok := splitBranch(current); ok {
+			kind = parsedKind
+			slug = parsedSlug
+		}
+	}
+	branch := map[string]any{"initial_name": initial, "kind": kind, "slug": slug}
+	if final != "" {
+		branch["final_name"] = final
+	}
+	return branch
+}
+
+func currentBranch(dir string) string {
+	cmd := exec.Command("git", "branch", "--show-current")
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func splitBranch(branch string) (string, string, bool) {
+	kind, slug, ok := strings.Cut(strings.TrimSpace(branch), "/")
+	if !ok || strings.TrimSpace(kind) == "" || strings.TrimSpace(slug) == "" {
+		return "", "", false
+	}
+	return strings.TrimSpace(kind), strings.TrimSpace(slug), true
 }
 
 func writeFakeArtifact(iterationDir, name, content string) error {

@@ -32,6 +32,13 @@ The Go implementation includes tests for:
 - Repair retries.
 - Resume stages.
 - Fully automated run contract violations.
+- Value-critical run resilience:
+  - continuing from one completed iteration into the next until
+    `should_fully_stop=true`;
+  - repairing missing or invalid result artifacts before failing the run;
+  - honoring `needs_repair` results with a repair agent invocation;
+  - repairing required validation failures before integration;
+  - cleaning up no-change iteration branches before continuing or returning.
 
 ## Fake agent
 
@@ -45,8 +52,12 @@ Environment controls:
 | `LOOP_FAKE_AGENT_MODE=completed_unrenamed` | Create a completed result without `loop branch rename` for contract-failure tests. |
 | `LOOP_FAKE_AGENT_MODE=no_change` | Write no-change result. |
 | `LOOP_FAKE_AGENT_MODE=invalid_json` | Write invalid result for repair tests. |
+| `LOOP_FAKE_AGENT_MODE=needs_repair` | Write a valid `needs_repair` result. |
 | `LOOP_FAKE_AGENT_MODE=dirty` | Leave uncommitted changes. |
 | `LOOP_FAKE_AGENT_MODE=blocked` | Write blocked result. |
+| `LOOP_FAKE_AGENT_MODE=validation_fix` | Commit a validation marker for validation repair tests. |
+| `LOOP_FAKE_AGENT_SEQUENCE` | Comma-separated modes consumed by successive agent invocations. |
+| `LOOP_FAKE_AGENT_COUNT_FILE` | Counter file used with `LOOP_FAKE_AGENT_SEQUENCE` across process invocations. |
 
 Example:
 
