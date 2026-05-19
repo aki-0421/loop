@@ -118,6 +118,19 @@ Modes:
 
 Pull request mode uses `gh` commands. The CLI writes the generated title and body to files before invoking `gh`.
 
+Pull request check timing:
+
+| Field | Built-in value | Behavior |
+| --- | ---: | --- |
+| `git.integration.pr.waitChecks` | `true` | Run `gh pr checks <pr> --watch` before merge. |
+| `git.integration.pr.checksRequiredOnly` | `false` | Pass `--required` so only required checks affect the wait. |
+| `git.integration.pr.checksStartupDelaySeconds` | `5` | Wait after PR creation or repair push before asking GitHub for checks. |
+| `git.integration.pr.checksDiscoveryTimeoutSeconds` | `60` | Keep polling when GitHub reports no checks for the PR branch. |
+| `git.integration.pr.checksPollIntervalSeconds` | `5` | Delay between no-checks discovery polls and the `gh pr checks --watch --interval` value. |
+| `git.integration.pr.checksWatchTimeoutSeconds` | `3600` | Maximum time for a reported pending check set to complete before the run fails without launching repair. |
+
+If no checks are reported after the discovery timeout, the check wait is treated as skipped.
+
 ## `validation`
 
 Configured validation commands run after the agent phase and before integration. They run from the iteration work directory, which is the iteration worktree when `git.worktree=true`.

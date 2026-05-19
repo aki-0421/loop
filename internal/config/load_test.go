@@ -56,6 +56,21 @@ run:
 	if cfg.Git.Integration.Mode != "local_merge" {
 		t.Fatalf("default integration mode = %q, want local_merge", cfg.Git.Integration.Mode)
 	}
+	if cfg.Git.Integration.PR.ChecksStartupDelaySeconds != 5 {
+		t.Fatalf("default checks startup delay = %d, want 5", cfg.Git.Integration.PR.ChecksStartupDelaySeconds)
+	}
+	if cfg.Git.Integration.PR.ChecksRequiredOnly {
+		t.Fatal("default checks required-only should be false")
+	}
+	if cfg.Git.Integration.PR.ChecksDiscoveryTimeoutSeconds != 60 {
+		t.Fatalf("default checks discovery timeout = %d, want 60", cfg.Git.Integration.PR.ChecksDiscoveryTimeoutSeconds)
+	}
+	if cfg.Git.Integration.PR.ChecksPollIntervalSeconds != 5 {
+		t.Fatalf("default checks poll interval = %d, want 5", cfg.Git.Integration.PR.ChecksPollIntervalSeconds)
+	}
+	if cfg.Git.Integration.PR.ChecksWatchTimeoutSeconds != 3600 {
+		t.Fatalf("default checks watch timeout = %d, want 3600", cfg.Git.Integration.PR.ChecksWatchTimeoutSeconds)
+	}
 }
 
 func TestLoopConfigEnvOverridesUserPath(t *testing.T) {

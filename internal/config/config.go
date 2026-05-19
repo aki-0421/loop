@@ -98,11 +98,16 @@ type LocalMergeConfig struct {
 }
 
 type PRConfig struct {
-	Create              bool `yaml:"create" json:"create"`
-	Push                bool `yaml:"push" json:"push"`
-	WaitChecks          bool `yaml:"waitChecks" json:"waitChecks"`
-	MergeWhenChecksPass bool `yaml:"mergeWhenChecksPass" json:"mergeWhenChecksPass"`
-	DeleteBranch        bool `yaml:"deleteBranch" json:"deleteBranch"`
+	Create                        bool `yaml:"create" json:"create"`
+	Push                          bool `yaml:"push" json:"push"`
+	WaitChecks                    bool `yaml:"waitChecks" json:"waitChecks"`
+	ChecksRequiredOnly            bool `yaml:"checksRequiredOnly" json:"checksRequiredOnly"`
+	ChecksStartupDelaySeconds     int  `yaml:"checksStartupDelaySeconds" json:"checksStartupDelaySeconds"`
+	ChecksDiscoveryTimeoutSeconds int  `yaml:"checksDiscoveryTimeoutSeconds" json:"checksDiscoveryTimeoutSeconds"`
+	ChecksPollIntervalSeconds     int  `yaml:"checksPollIntervalSeconds" json:"checksPollIntervalSeconds"`
+	ChecksWatchTimeoutSeconds     int  `yaml:"checksWatchTimeoutSeconds" json:"checksWatchTimeoutSeconds"`
+	MergeWhenChecksPass           bool `yaml:"mergeWhenChecksPass" json:"mergeWhenChecksPass"`
+	DeleteBranch                  bool `yaml:"deleteBranch" json:"deleteBranch"`
 }
 
 type ValidationConfig struct {
@@ -300,6 +305,18 @@ func Validate(cfg Config) error {
 	}
 	if !oneOf(cfg.Git.Integration.Mode, "local_merge", "pr") {
 		errs = append(errs, "git.integration.mode must be local_merge or pr")
+	}
+	if cfg.Git.Integration.PR.ChecksStartupDelaySeconds < 0 {
+		errs = append(errs, "git.integration.pr.checksStartupDelaySeconds must be non-negative")
+	}
+	if cfg.Git.Integration.PR.ChecksDiscoveryTimeoutSeconds < 0 {
+		errs = append(errs, "git.integration.pr.checksDiscoveryTimeoutSeconds must be non-negative")
+	}
+	if cfg.Git.Integration.PR.ChecksPollIntervalSeconds < 0 {
+		errs = append(errs, "git.integration.pr.checksPollIntervalSeconds must be non-negative")
+	}
+	if cfg.Git.Integration.PR.ChecksWatchTimeoutSeconds <= 0 {
+		errs = append(errs, "git.integration.pr.checksWatchTimeoutSeconds must be positive")
 	}
 	if cfg.Memory.RecentLimit < 0 || cfg.Memory.SearchLimit < 0 {
 		errs = append(errs, "memory limits must be non-negative")

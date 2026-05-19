@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestGHWrapperCreateChecksMerge(t *testing.T) {
@@ -53,6 +54,24 @@ func TestGHWrapperCreateChecksMerge(t *testing.T) {
 	}
 }
 
+func TestGHWrapperChecksUsesWatchOptions(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "gh.log")
+	r := Runner{Dir: dir, GHPath: fakeGH(t, logPath, 0), ChecksIntervalSeconds: 3, ChecksRequiredOnly: true, ChecksTimeout: time.Minute}
+
+	if _, err := r.Checks(ctx, "1", true); err != nil {
+		t.Fatalf("Checks: %v", err)
+	}
+	logBytes, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(logBytes), "pr checks 1 --required --watch --interval 3") {
+		t.Fatalf("checks command did not include required/watch options:\n%s", logBytes)
+	}
+}
+
 func TestGHWrapperChecksFailure(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
@@ -73,8 +92,30 @@ exit 1
 	if err != nil {
 		t.Fatalf("Checks returned error for no checks reported: %v", err)
 	}
+	if !result.NoChecks {
+		t.Fatal("Checks should mark no checks as a skipped check discovery result")
+	}
 	if !strings.Contains(result.Stderr, "no checks reported") {
 		t.Fatalf("stderr = %q", result.Stderr)
+	}
+}
+
+func TestGHWrapperChecksPendingExitCodeIsNotFailure(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	r := Runner{Dir: dir, GHPath: fakeScript(t, `#!/bin/sh
+echo "checks pending" >&2
+exit 8
+`)}
+	result, err := r.Checks(ctx, "1", true)
+	if err != nil {
+		t.Fatalf("Checks returned error for pending checks: %v", err)
+	}
+	if !result.Pending {
+		t.Fatal("Checks should mark exit code 8 as pending")
+	}
+	if result.ExitCode != 8 {
+		t.Fatalf("exit code = %d, want 8", result.ExitCode)
 	}
 }
 

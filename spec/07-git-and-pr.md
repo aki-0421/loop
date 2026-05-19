@@ -137,7 +137,7 @@ If the agent does not write the `pr-body` artifact, the CLI fallback reads the r
 
 ## Check waiting
 
-When pull request mode has `waitChecks=true`, the CLI waits for provider checks through `gh`. If GitHub reports no checks for the PR branch, the wait step is treated as skipped rather than failed. If checks fail:
+When pull request mode has `waitChecks=true`, the CLI waits for provider checks through `gh`. After PR creation or a repair push, the CLI waits `checksStartupDelaySeconds` before the first check query. If GitHub reports no checks for the PR branch, the CLI polls until `checksDiscoveryTimeoutSeconds` expires, using `checksPollIntervalSeconds` between attempts. Reported pending checks are watched until they pass, fail, are canceled, or `checksWatchTimeoutSeconds` expires. GitHub CLI pending exit code 8 is treated as pending rather than failure. If no checks are reported after the discovery timeout, the wait step is treated as skipped rather than failed. If checks fail:
 
 - The CLI records the failing checks.
 - The CLI starts a new repair iteration on the same branch when configured.

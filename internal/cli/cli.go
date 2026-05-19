@@ -36,6 +36,10 @@ type codedError struct {
 	err  error
 }
 
+var prChecksSleep = sleepContext
+
+var errPRChecksTimedOut = errors.New("pull request checks timed out")
+
 func (e codedError) Error() string {
 	if e.err == nil {
 		return ""
@@ -1463,7 +1467,12 @@ func startPRIntegration(ctx context.Context, root string, cfg config.Config, bra
 	if err != nil {
 		return nil, err
 	}
-	runner := pr.Runner{Dir: root}
+	runner := pr.Runner{
+		Dir:                   root,
+		ChecksTimeout:         prChecksWatchTimeout(cfg),
+		ChecksIntervalSeconds: prChecksPollIntervalSeconds(cfg),
+		ChecksRequiredOnly:    cfg.Git.Integration.PR.ChecksRequiredOnly,
+	}
 	if cfg.Git.Integration.PR.Push {
 		if _, err := runner.Push(ctx, branch); err != nil {
 			cleanupBody()
@@ -1487,12 +1496,19 @@ func waitPRChecksWithRepair(ctx context.Context, session *prIntegrationSession, 
 		return nil, nil
 	}
 
-	checks, err := session.runner.Checks(ctx, session.prID, true)
+	checks, skipped, err := waitForPRChecks(ctx, session, cfg)
 	if err == nil {
-		appendPREvent(paths, onEvent, runstate.Event{"type": "pr.checks_passed", "pr": session.prID})
+		eventType := "pr.checks_passed"
+		if skipped {
+			eventType = "pr.checks_skipped"
+		}
+		appendPREvent(paths, onEvent, runstate.Event{"type": eventType, "pr": session.prID})
 		return nil, nil
 	}
 	appendPRCheckFailure(paths, onEvent, session.prID, checks, err)
+	if errors.Is(err, errPRChecksTimedOut) {
+		return nil, err
+	}
 
 	var repairResult *validation.IterationResult
 	lastErr := err
@@ -1529,18 +1545,109 @@ func waitPRChecksWithRepair(ctx context.Context, session *prIntegrationSession, 
 				return repairResult, err
 			}
 		}
-		checks, err = session.runner.Checks(ctx, session.prID, true)
+		checks, skipped, err = waitForPRChecks(ctx, session, cfg)
 		if err == nil {
-			appendPREvent(paths, onEvent, runstate.Event{"type": "pr.checks_passed", "pr": session.prID, "after_repair_attempt": attempt})
+			eventType := "pr.checks_passed"
+			if skipped {
+				eventType = "pr.checks_skipped"
+			}
+			appendPREvent(paths, onEvent, runstate.Event{"type": eventType, "pr": session.prID, "after_repair_attempt": attempt})
 			return repairResult, nil
 		}
 		lastErr = err
 		appendPRCheckFailure(paths, onEvent, session.prID, checks, err)
+		if errors.Is(err, errPRChecksTimedOut) {
+			return repairResult, err
+		}
 	}
 	if ctx.Err() != nil {
 		return repairResult, ctx.Err()
 	}
 	return repairResult, lastErr
+}
+
+func waitForPRChecks(ctx context.Context, session *prIntegrationSession, cfg config.Config) (pr.CommandResult, bool, error) {
+	if delay := prChecksStartupDelay(cfg); delay > 0 {
+		if err := prChecksSleep(ctx, delay); err != nil {
+			return pr.CommandResult{}, false, err
+		}
+	}
+	discoveryTimeout := prChecksDiscoveryTimeout(cfg)
+	discoveryDeadline := time.Now().Add(discoveryTimeout)
+	watchTimeout := prChecksWatchTimeout(cfg)
+	watchDeadline := time.Now().Add(watchTimeout)
+	for {
+		checks, err := session.runner.Checks(ctx, session.prID, true)
+		if err != nil {
+			if errors.Is(err, context.DeadlineExceeded) {
+				return checks, false, fmt.Errorf("%w after %s", errPRChecksTimedOut, watchTimeout)
+			}
+			return checks, false, err
+		}
+		if !checks.NoChecks && !checks.Pending {
+			return checks, false, nil
+		}
+		now := time.Now()
+		if checks.NoChecks && discoveryTimeout <= 0 {
+			return checks, true, nil
+		}
+		if checks.NoChecks && !now.Before(discoveryDeadline) {
+			return checks, true, nil
+		}
+		if !now.Before(watchDeadline) {
+			return checks, false, fmt.Errorf("%w after %s", errPRChecksTimedOut, watchTimeout)
+		}
+		sleep := prChecksPollInterval(cfg)
+		if checks.NoChecks && discoveryTimeout > 0 {
+			if remaining := time.Until(discoveryDeadline); remaining < sleep {
+				sleep = remaining
+			}
+		}
+		if remaining := time.Until(watchDeadline); remaining < sleep {
+			sleep = remaining
+		}
+		if err := prChecksSleep(ctx, sleep); err != nil {
+			return checks, false, err
+		}
+	}
+}
+
+func prChecksStartupDelay(cfg config.Config) time.Duration {
+	return time.Duration(cfg.Git.Integration.PR.ChecksStartupDelaySeconds) * time.Second
+}
+
+func prChecksDiscoveryTimeout(cfg config.Config) time.Duration {
+	return time.Duration(cfg.Git.Integration.PR.ChecksDiscoveryTimeoutSeconds) * time.Second
+}
+
+func prChecksPollInterval(cfg config.Config) time.Duration {
+	return time.Duration(prChecksPollIntervalSeconds(cfg)) * time.Second
+}
+
+func prChecksPollIntervalSeconds(cfg config.Config) int {
+	seconds := cfg.Git.Integration.PR.ChecksPollIntervalSeconds
+	if seconds <= 0 {
+		seconds = 1
+	}
+	return seconds
+}
+
+func prChecksWatchTimeout(cfg config.Config) time.Duration {
+	return time.Duration(cfg.Git.Integration.PR.ChecksWatchTimeoutSeconds) * time.Second
+}
+
+func sleepContext(ctx context.Context, d time.Duration) error {
+	if d <= 0 {
+		return nil
+	}
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func validatePRRepairResult(result *validation.IterationResult) error {

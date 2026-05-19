@@ -46,6 +46,9 @@ git:
     pr:
       push: true
       waitChecks: true
+      checksStartupDelaySeconds: 0
+      checksDiscoveryTimeoutSeconds: 0
+      checksPollIntervalSeconds: 1
       mergeWhenChecksPass: false
       deleteBranch: false
 `, yamlSingleQuote(agentCommand)))
@@ -118,6 +121,93 @@ git:
 	} {
 		if !strings.Contains(audit, want) {
 			t.Fatalf("repair prompt audit missing %q:\n%s", want, audit)
+		}
+	}
+}
+
+func TestPRPollsUntilChecksAppearBeforeMerge(t *testing.T) {
+	ctx := context.Background()
+	repo := newCleanupRepo(t)
+	addBareOrigin(t, repo)
+	mustWrite(t, filepath.Join(repo, "task.md"), "# Task\n\nMake the fake change.\n")
+	agentCommand, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, filepath.Join(repo, ".loop", "config.yaml"), fmt.Sprintf(`version: 1
+
+agent:
+  default: prpolltest
+  adapters:
+    prpolltest:
+      command: %s
+      args: [-test.run=TestHelperProcessFakeAgent, --]
+      prompt: stdin
+      env:
+        LOOP_TEST_FAKE_AGENT: "1"
+
+run:
+  repairAttempts: 0
+
+git:
+  baseBranch: develop
+  integration:
+    mode: pr
+    pr:
+      push: true
+      waitChecks: true
+      checksStartupDelaySeconds: 1
+      checksDiscoveryTimeoutSeconds: 10
+      checksPollIntervalSeconds: 1
+      mergeWhenChecksPass: true
+      deleteBranch: false
+`, yamlSingleQuote(agentCommand)))
+	git(t, repo, "add", "task.md", ".loop/config.yaml")
+	git(t, repo, "commit", "-m", "T: add loop pr polling fixture")
+	git(t, repo, "push", "origin", "develop")
+	ghDir := t.TempDir()
+	ghLog := filepath.Join(ghDir, "gh.log")
+	ghChecks := filepath.Join(ghDir, "checks.count")
+	writeDelayedChecksFakeGH(t, ghDir, ghLog, ghChecks)
+	t.Setenv("PATH", ghDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	oldSleep := prChecksSleep
+	var sleeps []time.Duration
+	prChecksSleep = func(ctx context.Context, d time.Duration) error {
+		sleeps = append(sleeps, d)
+		return ctx.Err()
+	}
+	t.Cleanup(func() {
+		prChecksSleep = oldSleep
+	})
+	withWorkingDir(t, repo)
+
+	if _, err := captureStdout(t, func() error {
+		return commandRun(ctx, globals{Agent: "prpolltest", JSON: true, NoColor: true}, []string{"task.md", "--max-iterations", "1"})
+	}); err != nil {
+		t.Fatalf("loop run: %v", err)
+	}
+
+	logBytes, err := os.ReadFile(ghLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gh := string(logBytes)
+	if got := strings.Count(gh, "pr checks 1 --watch"); got != 3 {
+		t.Fatalf("pr checks count = %d, log:\n%s", got, gh)
+	}
+	if got := strings.Count(gh, "pr merge 1 --squash"); got != 1 {
+		t.Fatalf("pr merge count = %d, log:\n%s", got, gh)
+	}
+	if strings.Index(gh, "pr merge 1 --squash") < strings.LastIndex(gh, "pr checks 1 --watch") {
+		t.Fatalf("merge ran before final checks poll:\n%s", gh)
+	}
+	if got := len(sleeps); got != 3 {
+		t.Fatalf("sleep count = %d, want startup delay plus two polls: %#v", got, sleeps)
+	}
+	for _, sleep := range sleeps {
+		if sleep != time.Second {
+			t.Fatalf("sleep duration = %s, want 1s: %#v", sleep, sleeps)
 		}
 	}
 }
@@ -451,6 +541,48 @@ if [ "$1" = "pr" ] && [ "$2" = "checks" ]; then
   echo "$count" > ` + shellQuote(checksPath) + `
   if [ "$count" -eq 1 ]; then
     echo "unit test failed: missing dependency" >&2
+    exit 1
+  fi
+  echo "checks passed"
+  exit 0
+fi
+
+if [ "$1" = "pr" ] && [ "$2" = "merge" ]; then
+  exit 0
+fi
+
+exit 0
+`
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeDelayedChecksFakeGH(t *testing.T, dir, logPath, checksPath string) {
+	t.Helper()
+	path := filepath.Join(dir, "gh")
+	script := `#!/bin/sh
+echo "$@" >> ` + shellQuote(logPath) + `
+
+if [ "$1" = "--version" ]; then
+  echo "gh version fake"
+  exit 0
+fi
+
+if [ "$1" = "pr" ] && [ "$2" = "create" ]; then
+  echo "1"
+  exit 0
+fi
+
+if [ "$1" = "pr" ] && [ "$2" = "checks" ]; then
+  count=0
+  if [ -f ` + shellQuote(checksPath) + ` ]; then
+    count=$(cat ` + shellQuote(checksPath) + `)
+  fi
+  count=$((count + 1))
+  echo "$count" > ` + shellQuote(checksPath) + `
+  if [ "$count" -lt 3 ]; then
+    echo "no checks reported on the 'test/fake-agent' branch" >&2
     exit 1
   fi
   echo "checks passed"

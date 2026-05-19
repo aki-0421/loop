@@ -7,33 +7,42 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 )
 
 const defaultTimeout = 2 * time.Minute
+const checksPendingExitCode = 8
 
 type Runner struct {
-	Dir     string
-	GHPath  string
-	GitPath string
-	Env     []string
-	Timeout time.Duration
+	Dir                   string
+	GHPath                string
+	GitPath               string
+	Env                   []string
+	Timeout               time.Duration
+	ChecksTimeout         time.Duration
+	ChecksIntervalSeconds int
+	ChecksRequiredOnly    bool
 }
 
 type CommandResult struct {
-	Args   []string
-	Stdout string
-	Stderr string
+	Args     []string
+	Stdout   string
+	Stderr   string
+	ExitCode int
+	NoChecks bool
+	Pending  bool
 }
 
 type CommandError struct {
-	Tool   string
-	Dir    string
-	Args   []string
-	Stdout string
-	Stderr string
-	Err    error
+	Tool     string
+	Dir      string
+	Args     []string
+	Stdout   string
+	Stderr   string
+	ExitCode int
+	Err      error
 }
 
 func (e *CommandError) Error() string {
@@ -70,6 +79,13 @@ func (r Runner) timeout() time.Duration {
 		return r.Timeout
 	}
 	return defaultTimeout
+}
+
+func (r Runner) checksTimeout() time.Duration {
+	if r.ChecksTimeout > 0 {
+		return r.ChecksTimeout
+	}
+	return r.timeout()
 }
 
 func (r Runner) Verify(ctx context.Context) error {
@@ -139,11 +155,22 @@ func (r Runner) Checks(ctx context.Context, pr string, watch bool) (CommandResul
 		return CommandResult{}, errors.New("pr identifier is required")
 	}
 	args := []string{"pr", "checks", pr}
+	if r.ChecksRequiredOnly {
+		args = append(args, "--required")
+	}
 	if watch {
 		args = append(args, "--watch")
+		if r.ChecksIntervalSeconds > 0 {
+			args = append(args, "--interval", strconv.Itoa(r.ChecksIntervalSeconds))
+		}
 	}
-	result, err := r.run(ctx, r.ghPath(), "gh", args...)
+	result, err := r.runWithTimeout(ctx, r.checksTimeout(), r.ghPath(), "gh", args...)
 	if err != nil && isNoChecksReported(err) {
+		result.NoChecks = true
+		return result, nil
+	}
+	if err != nil && isChecksPending(err) {
+		result.Pending = true
 		return result, nil
 	}
 	return result, err
@@ -156,6 +183,11 @@ func isNoChecksReported(err error) bool {
 	}
 	output := strings.ToLower(commandErr.Stdout + "\n" + commandErr.Stderr)
 	return strings.Contains(output, "no checks reported")
+}
+
+func isChecksPending(err error) bool {
+	var commandErr *CommandError
+	return errors.As(err, &commandErr) && commandErr.ExitCode == checksPendingExitCode
 }
 
 func (r Runner) Merge(ctx context.Context, opts MergeOptions) (CommandResult, error) {
@@ -199,10 +231,14 @@ func (r Runner) PullBase(ctx context.Context, base string) error {
 }
 
 func (r Runner) run(ctx context.Context, path, tool string, args ...string) (CommandResult, error) {
+	return r.runWithTimeout(ctx, r.timeout(), path, tool, args...)
+}
+
+func (r Runner) runWithTimeout(ctx context.Context, timeout time.Duration, path, tool string, args ...string) (CommandResult, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	cctx, cancel := context.WithTimeout(ctx, r.timeout())
+	cctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	cmd := exec.CommandContext(cctx, path, args...)
@@ -214,12 +250,22 @@ func (r Runner) run(ctx context.Context, path, tool string, args ...string) (Com
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	err := cmd.Run()
-	result := CommandResult{Args: append([]string(nil), args...), Stdout: stdout.String(), Stderr: stderr.String()}
+	exitCode := 0
+	if err != nil {
+		exitCode = -1
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			exitCode = exitErr.ExitCode()
+		}
+	}
+	result := CommandResult{Args: append([]string(nil), args...), Stdout: stdout.String(), Stderr: stderr.String(), ExitCode: exitCode}
 	if cctx.Err() != nil {
 		err = cctx.Err()
+		exitCode = -1
+		result.ExitCode = exitCode
 	}
 	if err != nil {
-		return result, &CommandError{Tool: tool, Dir: r.Dir, Args: result.Args, Stdout: result.Stdout, Stderr: result.Stderr, Err: err}
+		return result, &CommandError{Tool: tool, Dir: r.Dir, Args: result.Args, Stdout: result.Stdout, Stderr: result.Stderr, ExitCode: exitCode, Err: err}
 	}
 	return result, nil
 }

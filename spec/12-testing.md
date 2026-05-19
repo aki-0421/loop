@@ -73,6 +73,8 @@ Scenarios:
 
 - PR creation command receives title and body files.
 - Checks pass and merge command runs.
+- Checks are polled when GitHub initially reports no checks.
+- Pending check exit codes are not treated as check failures.
 - Checks fail and merge command does not run.
 - Push failure stops integration.
 - PR template handling is covered by iteration artifact and prompt assembly tests.

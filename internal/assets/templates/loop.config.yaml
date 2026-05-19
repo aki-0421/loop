@@ -47,6 +47,11 @@ git:
       create: false
       push: true
       waitChecks: true
+      checksRequiredOnly: false
+      checksStartupDelaySeconds: 5
+      checksDiscoveryTimeoutSeconds: 60
+      checksPollIntervalSeconds: 5
+      checksWatchTimeoutSeconds: 3600
       mergeWhenChecksPass: true
       deleteBranch: true
 
