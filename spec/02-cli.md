@@ -112,7 +112,7 @@ loop run docs/task.md \
 
 ## `loop commit`
 
-Create an iteration commit through the CLI. This is agent-facing and is shown by `loop help agent`, not by human-facing `loop help`.
+Create an iteration commit through the CLI. This is agent-facing and is shown by `loop help agent`, not by human-facing `loop help`. `loop help agent commit` is the compact source of truth for commit types, aliases, and message rules.
 
 ```bash
 loop commit <type> <message>

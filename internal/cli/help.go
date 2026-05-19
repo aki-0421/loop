@@ -468,7 +468,7 @@ func allHelpCommands() []helpCommand {
 			Path:        []string{"commit"},
 			Usage:       "loop commit <type> <message>",
 			Summary:     "Create a validated iteration commit",
-			Description: "`<type>` is F, T, R, D, S, V, or C, with common lowercase aliases accepted. The CLI stages repository changes and creates `<TYPE>: <message>`.",
+			Description: commitContractHelpText(),
 			Agent:       true,
 			AgentOnly:   true,
 		},
@@ -677,6 +677,15 @@ func branchKindsHelpText() string {
 		return kinds[0]
 	}
 	return strings.Join(kinds[:len(kinds)-1], ", ") + ", or " + kinds[len(kinds)-1]
+}
+
+func commitContractHelpText() string {
+	return strings.Join([]string{
+		"`<type>` is one of F, T, R, D, S, V, or C, with common lowercase aliases accepted.",
+		"Types: F=features, fixes, or user-visible behavior; T=tests or test utilities; R=refactors; D=documentation; S=style or presentation; V=versioning, dependencies, or licensing; C=config, build, lint, CI, or tooling.",
+		"Pass the type separately, for example `loop commit F add weather app shell`; the CLI stages repository changes, validates the message, creates `<TYPE>: <message>`, and returns the SHA and subject.",
+		"Use an English imperative lowercase message, keep it short, omit the trailing period, commit only complete reviewable work, and do not run `git add` or `git commit` directly.",
+	}, " ")
 }
 
 func iterationLocatorFlags() []helpFlag {

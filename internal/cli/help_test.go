@@ -105,6 +105,26 @@ func TestAgentHelpCommandShowsBranchRenameKinds(t *testing.T) {
 	}
 }
 
+func TestAgentHelpCommandShowsCommitContract(t *testing.T) {
+	out, err := captureStdout(t, func() error {
+		return commandHelp(context.Background(), globals{}, []string{"agent", "commit"})
+	})
+	if err != nil {
+		t.Fatalf("loop help agent commit: %v", err)
+	}
+	for _, want := range []string{
+		"cmd:loop commit type message",
+		"desc:`<type>` is one of F, T, R, D, S, V, or C",
+		"F=features, fixes, or user-visible behavior",
+		"loop commit F add weather app shell",
+		"do not run `git add` or `git commit` directly",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("help output missing %q:\n%s", want, out)
+		}
+	}
+}
+
 func TestAgentHelpCommandShowsIterationArtifactsFromRegistry(t *testing.T) {
 	out, err := captureStdout(t, func() error {
 		return commandHelp(context.Background(), globals{}, []string{"agent", "iteration", "read"})

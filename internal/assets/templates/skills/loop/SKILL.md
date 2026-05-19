@@ -94,7 +94,7 @@ Plan sections:
 
 `Review Slice` must name exactly one selected slice.
 
-Before writing TODOs, draft the commit shape for the selected slice. Use the commit prefix taxonomy above as the partitioning checklist: decide which kinds of work are truly required, and split work whenever it needs a different prefix or a different clear commit subject.
+Before writing TODOs, draft the commit shape for the selected slice. Use `loop help agent commit` as the commit prefix reference: decide which kinds of work are truly required, and split work whenever it needs a different prefix or a different clear commit subject.
 
 `TODO` must contain only the current slice. Each checkbox must represent exactly one future `loop commit` invocation, except no-change confirmations. Write each checkbox with the intended commit type and short imperative subject, for example `- [ ] D: update loop planning guidance`. If implementation proves the type or subject wrong, update the TODO before committing.
 
@@ -114,36 +114,14 @@ Validation commands must terminate. Do not run a persistent development server a
 
 ## Commit contract
 
-Use `loop commit` for commits. Do not run `git add` or `git commit` directly. The CLI stages repository changes, validates the message, creates the commit, and prints the resulting subject and SHA.
-
-`loop commit` arguments:
+Before the first commit in an iteration, inspect the commit help:
 
 ```bash
-loop commit <type> <short imperative message>
+loop help agent commit
+loop commit F add password reset flow
 ```
 
-The CLI turns those arguments into this commit subject:
-
-`<PREFIX>: <short imperative message>`
-
-Prefixes:
-
-- `F` feature or user-visible behavior change
-- `T` tests or test utilities
-- `R` refactor without intended behavior change
-- `D` documentation
-- `S` style or presentation
-- `V` versioning, dependencies, licensing
-- `C` configuration, build, lint, CI, tooling
-
-Commit rules:
-
-- Use English imperative mood.
-- Keep the subject short and clear.
-- Pass the prefix/type separately, for example `loop commit F add weather app shell`.
-- Do not add a trailing period.
-- Commit only complete, reviewable work.
-- If `loop commit` rejects the message, read the error, fix the type or message immediately, and retry before continuing.
+Use `loop commit` for commits. Do not run `git add` or `git commit` directly. If `loop commit` rejects the type or message, read the error, fix it immediately, and retry before continuing.
 
 Commit immediately after a TODO is complete and sufficiently validated. Mark a TODO complete only after the matching commit exists, unless it required no repository change. Do not accumulate independent TODOs and commit them at the end.
 

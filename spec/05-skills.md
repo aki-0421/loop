@@ -36,7 +36,7 @@ The built-in `loop` skill consolidates the default iteration, memory, commit, pu
 - Write runtime artifacts with `loop iteration write` or `loop iteration append`.
 - Keep one iteration to a reviewer-sized slice.
 - Size TODO items so one completed TODO maps to one `loop commit` invocation, except no-change confirmations.
-- Create commits with `loop commit <type> <message>` instead of direct Git commit commands.
+- Inspect `loop help agent commit`, then create commits with `loop commit <type> <message>` instead of direct Git commit commands.
 - Rename completed-work branches with `loop branch rename` instead of direct Git branch commands.
 - Write PR title and body artifacts from repository context and CLI-provided template text.
 - Repair incomplete iterations without hiding unresolved failures.
