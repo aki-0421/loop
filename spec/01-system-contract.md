@@ -49,7 +49,7 @@ The CLI owns:
 - Iteration directories.
 - JSON validation.
 - Git, commit, and pull request commands.
-- Branch creation, final branch rename, push, PR creation, merge, and cleanup.
+- Branch creation, branch rename command validation/tracking, push, PR creation, merge, and cleanup.
 - Repair retries.
 - Resume state.
 - Exit codes.
@@ -62,7 +62,7 @@ The agent owns:
 - Deciding when a TODO-sized unit is ready to commit.
 - Validation command selection when not configured.
 - Result JSON creation.
-- Branch name proposal through `branch.kind`, `branch.slug`, and optional `branch.final_name`.
+- Branch rename requests through `loop branch rename`.
 - Pull request text generation.
 
 ## Skill-based customization

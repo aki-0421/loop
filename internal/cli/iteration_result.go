@@ -172,11 +172,15 @@ func buildIterationResult(ctx context.Context, iterationDir string, opts iterati
 	runtime := readResultRuntime(iterationDir)
 	workDir := firstNonEmpty(runtime["workdir"], os.Getenv("LOOP_WORKDIR"), ".")
 	baseBranch := firstNonEmpty(runtime["base_branch"], os.Getenv("LOOP_BASE_BRANCH"))
-	initialBranch := firstNonEmpty(opts.BranchInitial, runtime["current_branch"], os.Getenv("LOOP_CURRENT_BRANCH"))
-	if initialBranch == "" && gitx.IsRepository(ctx, workDir) {
+	initialBranch := firstNonEmpty(opts.BranchInitial, runtime["initial_branch"], os.Getenv("LOOP_INITIAL_BRANCH"), runtime["current_branch"], os.Getenv("LOOP_CURRENT_BRANCH"))
+	currentBranch := firstNonEmpty(runtime["current_branch"], os.Getenv("LOOP_CURRENT_BRANCH"))
+	if currentBranch == "" && gitx.IsRepository(ctx, workDir) {
 		if branch, err := (gitx.Runner{Dir: workDir}).CurrentBranch(ctx); err == nil {
-			initialBranch = branch
+			currentBranch = branch
 		}
+	}
+	if initialBranch == "" {
+		initialBranch = currentBranch
 	}
 	if initialBranch == "" {
 		return validation.IterationResult{}, errors.New("could not infer branch.initial_name; pass --branch-initial")
@@ -192,7 +196,60 @@ func buildIterationResult(ctx context.Context, iterationDir string, opts iterati
 			return validation.IterationResult{}, err
 		}
 	}
-	if err := validateResultCommandState(ctx, workDir, initialBranch, opts.Status, commits); err != nil {
+	kind := strings.TrimSpace(opts.BranchKind)
+	slug := strings.TrimSpace(opts.BranchSlug)
+	finalName := strings.TrimSpace(opts.BranchFinal)
+	branchRenamed, _ := strconv.ParseBool(strings.TrimSpace(runtime["branch_renamed"]))
+	if currentBranch != "" && initialBranch != "" && currentBranch != initialBranch {
+		branchRenamed = true
+	}
+	if finalName != "" {
+		candidate, err := gitx.FinalBranchName(kind, finalName)
+		if err != nil {
+			return validation.IterationResult{}, err
+		}
+		if currentBranch != "" && candidate != currentBranch {
+			return validation.IterationResult{}, fmt.Errorf("--branch-final %q does not match tracked branch %q", candidate, currentBranch)
+		}
+		currentBranch = candidate
+		branchRenamed = initialBranch != "" && currentBranch != initialBranch
+	}
+	if kind != "" || slug != "" {
+		proposal := slug
+		if proposal == "" {
+			proposal = opts.SummarySentence
+		}
+		candidate, err := gitx.FinalBranchName(kind, proposal)
+		if err != nil {
+			return validation.IterationResult{}, err
+		}
+		if branchRenamed && currentBranch != "" && candidate != currentBranch {
+			return validation.IterationResult{}, fmt.Errorf("branch override %q does not match tracked branch %q", candidate, currentBranch)
+		}
+	}
+	if branchRenamed && currentBranch != "" {
+		if parsedKind, parsedSlug, ok := splitBranchName(currentBranch); ok {
+			if kind == "" {
+				kind = parsedKind
+			}
+			if slug == "" {
+				slug = parsedSlug
+			}
+		}
+	}
+	if kind == "" {
+		kind = inferBranchKind(commits)
+	}
+	if slug == "" {
+		slug = gitx.Slug(opts.SummarySentence)
+	}
+	if branchRenamed {
+		finalName = currentBranch
+	} else {
+		finalName = ""
+	}
+
+	if err := validateResultCommandState(ctx, workDir, initialBranch, currentBranch, opts.Status, commits); err != nil {
 		return validation.IterationResult{}, err
 	}
 
@@ -204,16 +261,6 @@ func buildIterationResult(ctx context.Context, iterationDir string, opts iterati
 	if vStatus == "" {
 		vStatus = validationStatusFromCommandLogs(commands)
 	}
-
-	kind := strings.TrimSpace(opts.BranchKind)
-	if kind == "" {
-		kind = inferBranchKind(commits)
-	}
-	slug := strings.TrimSpace(opts.BranchSlug)
-	if slug == "" {
-		slug = gitx.Slug(opts.SummarySentence)
-	}
-	finalName := strings.TrimSpace(opts.BranchFinal)
 
 	return validation.IterationResult{
 		SchemaVersion:   1,
@@ -239,12 +286,12 @@ func buildIterationResult(ctx context.Context, iterationDir string, opts iterati
 	}, nil
 }
 
-func validateResultCommandState(ctx context.Context, workDir, initialBranch, status string, commits []validation.CommitResult) error {
+func validateResultCommandState(ctx context.Context, workDir, initialBranch, currentBranch, status string, commits []validation.CommitResult) error {
 	status = strings.TrimSpace(status)
 	if gitx.IsRepository(ctx, workDir) {
 		runner := gitx.Runner{Dir: workDir}
-		if current, err := runner.CurrentBranch(ctx); err == nil && initialBranch != "" && current != initialBranch {
-			return fmt.Errorf("current branch is %q, but result branch.initial_name would be %q; branch lifecycle belongs to the loop CLI", current, initialBranch)
+		if current, err := runner.CurrentBranch(ctx); err == nil && currentBranch != "" && current != currentBranch {
+			return fmt.Errorf("current branch is %q, but loop runtime tracks %q; use `loop branch rename ...` instead of direct Git branch changes", current, currentBranch)
 		}
 		clean, err := runner.CheckClean(ctx, gitx.CleanOptions{IgnoreRuntime: true})
 		if err != nil {
@@ -256,6 +303,9 @@ func validateResultCommandState(ctx context.Context, workDir, initialBranch, sta
 	}
 	switch status {
 	case "completed":
+		if strings.TrimSpace(currentBranch) == "" || strings.TrimSpace(currentBranch) == strings.TrimSpace(initialBranch) {
+			return errors.New("completed result requires a renamed branch; run `loop branch rename <kind>/<slug>` before `loop iteration result --write`")
+		}
 		if len(commits) == 0 {
 			return errors.New("completed result requires at least one commit; use `loop commit` for completed work or `--status no_change` when nothing changed")
 		}
@@ -265,6 +315,14 @@ func validateResultCommandState(ctx context.Context, workDir, initialBranch, sta
 		}
 	}
 	return nil
+}
+
+func splitBranchName(branch string) (string, string, bool) {
+	kind, slug, ok := strings.Cut(strings.TrimSpace(branch), "/")
+	if !ok || strings.TrimSpace(kind) == "" || strings.TrimSpace(slug) == "" {
+		return "", "", false
+	}
+	return strings.TrimSpace(kind), strings.TrimSpace(slug), true
 }
 
 func readResultRuntime(iterationDir string) map[string]string {

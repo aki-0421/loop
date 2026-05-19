@@ -74,10 +74,9 @@ type GitConfig struct {
 }
 
 type BranchConfig struct {
-	InitialPattern string   `yaml:"initialPattern" json:"initialPattern"`
-	FinalPattern   string   `yaml:"finalPattern" json:"finalPattern"`
-	ConflictSuffix string   `yaml:"conflictSuffix" json:"conflictSuffix"`
-	AllowedKinds   []string `yaml:"allowedKinds" json:"allowedKinds"`
+	InitialPattern string `yaml:"initialPattern" json:"initialPattern"`
+	FinalPattern   string `yaml:"finalPattern" json:"finalPattern"`
+	ConflictSuffix string `yaml:"conflictSuffix" json:"conflictSuffix"`
 }
 
 type CommitConfig struct {
@@ -469,9 +468,6 @@ func normalize(c *Config) {
 	}
 	if c.Skills.Targets == nil {
 		c.Skills.Targets = map[string]SkillTarget{}
-	}
-	if c.Git.Branch.AllowedKinds == nil {
-		c.Git.Branch.AllowedKinds = []string{"feat", "fix", "refactor", "docs", "test", "style", "build", "ci", "chore"}
 	}
 	if c.Validation.Commands == nil {
 		c.Validation.Commands = []ValidationCommand{}

@@ -42,7 +42,8 @@
         "integrating",
         "completed",
         "blocked",
-        "failed"
+        "failed",
+        "cancelled"
       ]
     },
     "iterations": {
@@ -59,6 +60,9 @@
             "type": "string"
           },
           "branch_initial": {
+            "type": "string"
+          },
+          "branch_current": {
             "type": "string"
           },
           "branch_final": {

@@ -41,6 +41,7 @@ type State struct {
 type IterationRecord struct {
 	IterationID     string `json:"iteration_id"`
 	BranchInitial   string `json:"branch_initial"`
+	BranchCurrent   string `json:"branch_current,omitempty"`
 	BranchFinal     string `json:"branch_final,omitempty"`
 	Stage           string `json:"stage"`
 	ResultPath      string `json:"result_path,omitempty"`

@@ -42,6 +42,7 @@ Environment controls:
 | Variable | Behavior |
 | --- | --- |
 | `LOOP_FAKE_AGENT_MODE=completed` | Create a change, commit, and write completed result. |
+| `LOOP_FAKE_AGENT_MODE=completed_unrenamed` | Create a completed result without `loop branch rename` for contract-failure tests. |
 | `LOOP_FAKE_AGENT_MODE=no_change` | Write no-change result. |
 | `LOOP_FAKE_AGENT_MODE=invalid_json` | Write invalid result for repair tests. |
 | `LOOP_FAKE_AGENT_MODE=dirty` | Leave uncommitted changes. |

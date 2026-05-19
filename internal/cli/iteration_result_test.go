@@ -16,12 +16,13 @@ func TestIterationResultCommandBuildsAndWritesResult(t *testing.T) {
 	ctx := context.Background()
 	repo := newCleanupRepo(t)
 	git(t, repo, "checkout", "-b", "wip/0001")
+	git(t, repo, "branch", "-m", "wip/0001", "feat/add-result-helper")
 	mustWrite(t, filepath.Join(repo, "result-helper.txt"), "done\n")
 	git(t, repo, "add", "result-helper.txt")
 	git(t, repo, "commit", "-m", "F: add result helper")
 
 	iterDir := filepath.Join(repo, ".loop", "runs", "run-1", "iterations", "0001")
-	writeRuntimeForResultTest(t, iterDir, repo)
+	writeRuntimeForResultTest(t, iterDir, repo, "wip/0001", "feat/add-result-helper")
 	if err := artifactdb.Write(iterDir, "plan", "plan\n"); err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +63,7 @@ func TestIterationResultCommandBuildsAndWritesResult(t *testing.T) {
 	if result.Branch.InitialName != "wip/0001" {
 		t.Fatalf("initial branch = %q", result.Branch.InitialName)
 	}
-	if result.Branch.Kind != "feat" || result.Branch.Slug != "add-result-helper" || result.Branch.FinalName != "" {
+	if result.Branch.Kind != "feat" || result.Branch.Slug != "add-result-helper" || result.Branch.FinalName != "feat/add-result-helper" {
 		t.Fatalf("branch proposal = %#v", result.Branch)
 	}
 	if len(result.Commits) != 1 || result.Commits[0].Message != "F: add result helper" {
@@ -90,6 +91,7 @@ func TestIterationResultCommandPrintsResultJSON(t *testing.T) {
 			"--should-stop", "true",
 			"--goal-evaluation", "The requested documentation is complete.",
 			"--validation-status", "skipped",
+			"--branch-final", "docs/document-result-helper",
 			"--commit", "abc123|D: document result helper",
 		})
 	})
@@ -125,11 +127,13 @@ func TestIterationResultCommandRequiresSemanticFields(t *testing.T) {
 
 func TestIterationResultCommandRejectsCompletedWithoutCommits(t *testing.T) {
 	repo := newCleanupRepo(t)
+	git(t, repo, "checkout", "-b", "feat/finish-empty-slice", "develop")
 	t.Setenv("LOOP_WORKDIR", repo)
 
 	err := commandIteration(context.Background(), globals{}, []string{
 		"result",
 		"--branch-initial", "develop",
+		"--branch-final", "feat/finish-empty-slice",
 		"--summary", "Finish empty slice",
 		"--should-stop", "true",
 		"--goal-evaluation", "The slice is complete.",
@@ -143,11 +147,67 @@ func TestIterationResultCommandRejectsCompletedWithoutCommits(t *testing.T) {
 	}
 }
 
-func writeRuntimeForResultTest(t *testing.T, iterDir, repo string) {
+func TestIterationResultCommandRejectsCompletedWithoutBranchRename(t *testing.T) {
+	repo := newCleanupRepo(t)
+	git(t, repo, "checkout", "-b", "wip/0001", "develop")
+	mustWrite(t, filepath.Join(repo, "result-helper.txt"), "done\n")
+	git(t, repo, "add", "result-helper.txt")
+	git(t, repo, "commit", "-m", "F: add result helper")
+	iterDir := filepath.Join(repo, ".loop", "runs", "run-1", "iterations", "0001")
+	writeRuntimeForResultTest(t, iterDir, repo, "wip/0001", "wip/0001")
+
+	err := commandIteration(context.Background(), globals{}, []string{
+		"result",
+		"--iteration-dir", iterDir,
+		"--summary", "Add result helper",
+		"--should-stop", "false",
+		"--goal-evaluation", "The selected slice is complete; follow-up work remains.",
+		"--validation-status", "skipped",
+	})
+	if err == nil {
+		t.Fatal("expected completed result without branch rename to fail")
+	}
+	if !strings.Contains(err.Error(), "loop branch rename") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestIterationResultCommandAllowsNoChangeWithoutBranchRename(t *testing.T) {
+	repo := newCleanupRepo(t)
+	git(t, repo, "checkout", "-b", "wip/0001", "develop")
+	iterDir := filepath.Join(repo, ".loop", "runs", "run-1", "iterations", "0001")
+	writeRuntimeForResultTest(t, iterDir, repo, "wip/0001", "wip/0001")
+
+	out, err := captureStdout(t, func() error {
+		return commandIteration(context.Background(), globals{}, []string{
+			"result",
+			"--iteration-dir", iterDir,
+			"--status", "no_change",
+			"--summary", "Confirm no repository change is needed",
+			"--should-stop", "true",
+			"--goal-evaluation", "The requested behavior already exists.",
+			"--validation-status", "skipped",
+		})
+	})
+	if err != nil {
+		t.Fatalf("no_change result: %v", err)
+	}
+	var result validation.IterationResult
+	if err := json.Unmarshal([]byte(out), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Branch.FinalName != "" {
+		t.Fatalf("final branch for no_change = %q", result.Branch.FinalName)
+	}
+}
+
+func writeRuntimeForResultTest(t *testing.T, iterDir, repo, initialBranch, currentBranch string) {
 	t.Helper()
 	data, err := json.MarshalIndent(map[string]any{
 		"base_branch":    "develop",
-		"current_branch": "wip/0001",
+		"initial_branch": initialBranch,
+		"current_branch": currentBranch,
+		"branch_renamed": initialBranch != "" && currentBranch != "" && initialBranch != currentBranch,
 		"workdir":        repo,
 	}, "", "  ")
 	if err != nil {

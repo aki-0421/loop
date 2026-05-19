@@ -193,6 +193,17 @@ run:
 
 	repo = t.TempDir()
 	mustWrite(t, filepath.Join(repo, ".loop", "config.yaml"), `version: 1
+git:
+  branch:
+    allowedKinds: [feat, hotfix]
+`)
+	_, err = Load(LoadOptions{CWD: repo, Env: []string{}, ConfigPath: filepath.Join(repo, ".loop", "config.yaml")})
+	if err == nil || !strings.Contains(err.Error(), "field allowedKinds not found") {
+		t.Fatalf("expected removed git.branch.allowedKinds error, got %v", err)
+	}
+
+	repo = t.TempDir()
+	mustWrite(t, filepath.Join(repo, ".loop", "config.yaml"), `version: 1
 agent:
   default: custom
   adapters:

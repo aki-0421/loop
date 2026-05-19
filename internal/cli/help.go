@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/aki-0421/loop/internal/gitx"
 )
 
 type helpFlag struct {
@@ -348,6 +350,9 @@ func renderAgentCommandHelp(cmd helpCommand, subcommands []helpSummary, artifact
 	var b strings.Builder
 	fmt.Fprintf(&b, "cmd:%s\n", compactUsage(cmd.Usage))
 	fmt.Fprintf(&b, "summary:%s\n", compactText(cmd.Summary))
+	if strings.TrimSpace(cmd.Description) != "" {
+		fmt.Fprintf(&b, "desc:%s\n", compactText(cmd.Description))
+	}
 	if len(cmd.Flags) > 0 {
 		fmt.Fprintf(&b, "flags:%s\n", compactFlags(cmd.Flags))
 	}
@@ -468,6 +473,25 @@ func allHelpCommands() []helpCommand {
 			AgentOnly:   true,
 		},
 		{
+			Path:        []string{"branch"},
+			Usage:       "loop branch <rename> ...",
+			Summary:     "Manage the current iteration branch",
+			Description: "Agent-facing branch lifecycle commands.",
+			Agent:       true,
+			AgentOnly:   true,
+		},
+		{
+			Path:        []string{"branch", "rename"},
+			Usage:       "loop branch rename [--kind <kind>] <kind>/<slug>|<slug words...>",
+			Summary:     "Rename and track the current iteration branch",
+			Description: fmt.Sprintf("`<kind>` is one of %s. The CLI slugifies the branch subject, applies collision suffixes, updates runtime context, and returns the actual tracked branch.", branchKindsHelpText()),
+			Flags: append(iterationLocatorFlags(),
+				helpFlag{Name: "--kind <kind>", Description: "branch kind for slug-only names"},
+			),
+			Agent:     true,
+			AgentOnly: true,
+		},
+		{
 			Path:    []string{"resume"},
 			Usage:   "loop resume <run-id> [flags]",
 			Summary: "Resume a stored run",
@@ -559,7 +583,7 @@ func allHelpCommands() []helpCommand {
 				helpFlag{Name: "--error <text>", Description: "required when --status failed"},
 				helpFlag{Name: "--branch-kind <kind>", Description: "override inferred branch kind"},
 				helpFlag{Name: "--branch-slug <slug>", Description: "override inferred branch slug"},
-				helpFlag{Name: "--branch-final <name>", Description: "override proposed final branch name"},
+				helpFlag{Name: "--branch-final <name>", Description: "override tracked final branch name"},
 			),
 			Agent:     true,
 			AgentOnly: true,
@@ -642,6 +666,17 @@ func allHelpCommands() []helpCommand {
 			Description: "`loop --version` and `loop -v` are aliases.",
 		},
 	}
+}
+
+func branchKindsHelpText() string {
+	kinds := gitx.BranchKinds()
+	if len(kinds) == 0 {
+		return ""
+	}
+	if len(kinds) == 1 {
+		return kinds[0]
+	}
+	return strings.Join(kinds[:len(kinds)-1], ", ") + ", or " + kinds[len(kinds)-1]
 }
 
 func iterationLocatorFlags() []helpFlag {

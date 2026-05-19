@@ -87,7 +87,7 @@ Sync modes:
 
 `initialPattern` creates a numbered branch before the agent plans. The default is `wip/{iteration}`, for example `wip/0001`.
 
-After plan creation, the agent proposes a final branch name in the `result` artifact. The agent keeps working on the initial branch; the CLI applies `finalPattern` and renames the branch before integration, for example:
+After plan creation, the agent chooses a review branch name and runs `loop branch rename`. The CLI validates the kind against its fixed preset, slugifies the branch subject, and tracks the renamed branch for integration, for example:
 
 ```text
 feat/add-token-refresh-tests

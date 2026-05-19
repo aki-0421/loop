@@ -19,7 +19,14 @@ wip/0001
 wip/0002
 ```
 
-The final branch is renamed by the CLI using the agent proposal:
+The agent renames the branch through the CLI before reporting `completed`:
+
+```bash
+loop branch rename feat/add-usage-report-command
+loop branch rename --kind fix normalize-empty-config-values
+```
+
+The CLI validates the requested kind against loop's fixed preset, slugifies the branch subject, applies collision suffixes, updates runtime context, and prints the actual tracked branch:
 
 ```text
 feat/add-usage-report-command
@@ -27,9 +34,9 @@ fix/normalize-empty-config-values
 refactor/extract-git-runner
 ```
 
-The agent only proposes `kind`, `slug`, and optional `final_name` in the `result` artifact. It must keep working on the initial branch. The CLI performs the final rename after validation passes and immediately before local merge integration or PR creation.
+The agent must not use direct Git branch switching or renaming. Completed results are rejected until `loop branch rename` has moved the branch away from the initial `wip/<iteration>` name. After integration starts, branch renames are rejected; pull request check repair continues on the already tracked PR branch.
 
-Allowed branch kinds by default:
+Branch kinds are fixed by the loop CLI:
 
 - `feat`
 - `fix`
@@ -100,15 +107,14 @@ After commit, the CLI may delete the iteration branch according to cleanup setti
 
 Pull request mode uses `gh`:
 
-1. Rename the completed iteration branch to the agent-proposed final branch name.
-2. Push branch.
-3. Generate PR title and body through the agent.
-4. Create PR.
-5. Wait for checks when configured.
-6. Prepare the local checkout for branch deletion by removing the iteration worktree when present and checking out the base branch.
-7. Merge through squash merge when checks pass and auto-merge is enabled. The squash commit subject is the generated PR title.
-8. Pull the base branch.
-9. Delete branch according to cleanup settings.
+1. Push the tracked iteration branch.
+2. Generate PR title and body through the agent.
+3. Create PR.
+4. Wait for checks when configured.
+5. Prepare the local checkout for branch deletion by removing the iteration worktree when present and checking out the base branch.
+6. Merge through squash merge when checks pass and auto-merge is enabled. The squash commit subject is the generated PR title.
+7. Pull the base branch.
+8. Delete branch according to cleanup settings.
 
 Command shape:
 

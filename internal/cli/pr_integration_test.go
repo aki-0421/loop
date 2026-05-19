@@ -177,6 +177,51 @@ git:
 	assertBranchMissing(t, repo, "test/fake-agent")
 }
 
+func TestRunRejectsCompletedResultWithoutBranchRename(t *testing.T) {
+	ctx := context.Background()
+	repo := newCleanupRepo(t)
+	mustWrite(t, filepath.Join(repo, "task.md"), "# Task\n\nMake the fake change.\n")
+	agentCommand, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, filepath.Join(repo, ".loop", "config.yaml"), fmt.Sprintf(`version: 1
+
+agent:
+  default: localtest
+  adapters:
+    localtest:
+      command: %s
+      args: [-test.run=TestHelperProcessFakeAgent, --]
+      prompt: stdin
+      env:
+        LOOP_TEST_FAKE_AGENT: "1"
+        LOOP_FAKE_AGENT_MODE: completed_unrenamed
+
+run:
+  repairAttempts: 0
+
+git:
+  baseBranch: develop
+  worktree: false
+  integration:
+    mode: local_merge
+`, yamlSingleQuote(agentCommand)))
+	git(t, repo, "add", "task.md", ".loop/config.yaml")
+	git(t, repo, "commit", "-m", "T: add unrenamed branch fixture")
+	withWorkingDir(t, repo)
+
+	_, err = captureStdout(t, func() error {
+		return commandRun(ctx, globals{Agent: "localtest", JSON: true, NoColor: true}, []string{"task.md", "--max-iterations", "1"})
+	})
+	if err == nil {
+		t.Fatal("expected run to reject completed result without branch rename")
+	}
+	if !strings.Contains(err.Error(), "loop branch rename") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 func TestHelperProcessFakeAgent(t *testing.T) {
 	if os.Getenv("LOOP_TEST_FAKE_AGENT") != "1" {
 		return
@@ -208,8 +253,18 @@ func runTestFakeAgent() int {
 	case "no_change":
 		writeTestFakeResult(iterDir, "no_change", nil)
 		return 0
+	case "completed_unrenamed":
+		workDir := getenvForTestAgent("LOOP_WORKDIR", ".")
+		changePath := filepath.Join(workDir, "loop-fake-change.txt")
+		_ = os.WriteFile(changePath, []byte("fake agent completed without branch rename at "+time.Now().UTC().Format(time.RFC3339Nano)+"\n"), 0o644)
+		_ = gitForTestAgent(workDir, "add", "loop-fake-change.txt")
+		_ = gitForTestAgent(workDir, "commit", "-m", "F: run fake agent behavior")
+		_ = artifactdb.Write(iterDir, "summary", "# Iteration Summary\n\n- Fake agent completed without renaming.\n")
+		writeTestFakeResult(iterDir, "completed", testFakeCommit(workDir))
+		return 0
 	default:
 		workDir := getenvForTestAgent("LOOP_WORKDIR", ".")
+		_ = commandBranch(context.Background(), globals{}, []string{"rename", "test/fake-agent"})
 		changePath := filepath.Join(workDir, "loop-fake-change.txt")
 		_ = os.WriteFile(changePath, []byte("fake agent completed at "+time.Now().UTC().Format(time.RFC3339Nano)+"\n"), 0o644)
 		_ = gitForTestAgent(workDir, "add", "loop-fake-change.txt")

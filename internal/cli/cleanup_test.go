@@ -101,26 +101,6 @@ func TestIterationCleanupResetsUncommittedSquashMerge(t *testing.T) {
 	assertBranchMissing(t, repo, "wip/0001")
 }
 
-func TestRenameBranchForIntegrationUsesAgentProposal(t *testing.T) {
-	ctx := context.Background()
-	repo := newCleanupRepo(t)
-	runner := gitx.Runner{Dir: repo}
-	git(t, repo, "checkout", "-b", "wip/0001", "develop")
-
-	final, err := renameBranchForIntegration(ctx, runner, runner, "wip/0001", "feat/jp-weather-mvp-foundation", "0001")
-	if err != nil {
-		t.Fatalf("renameBranchForIntegration: %v", err)
-	}
-	if final != "feat/jp-weather-mvp-foundation" {
-		t.Fatalf("final branch = %q", final)
-	}
-	if got := strings.TrimSpace(git(t, repo, "branch", "--show-current")); got != final {
-		t.Fatalf("current branch = %q, want %q", got, final)
-	}
-	assertBranchMissing(t, repo, "wip/0001")
-	assertBranchExists(t, repo, final)
-}
-
 func TestRemoveWorktreeBeforePRIntegrationLeavesBranchDeletable(t *testing.T) {
 	ctx := context.Background()
 	repo := newCleanupRepo(t)
@@ -180,7 +160,7 @@ func TestEnsureIterationBranchRejectsAgentBranchSwitch(t *testing.T) {
 	if err == nil {
 		t.Fatal("ensureIterationBranch should reject branch switches")
 	}
-	if !strings.Contains(err.Error(), "branch lifecycle belongs to the loop CLI") {
+	if !strings.Contains(err.Error(), "loop branch rename") {
 		t.Fatalf("error = %q", err)
 	}
 }

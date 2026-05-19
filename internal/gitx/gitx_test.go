@@ -62,12 +62,16 @@ func TestBranchNamesAndCollisions(t *testing.T) {
 	if got := InitialBranchName(7); got != "wip/0007" {
 		t.Fatalf("InitialBranchName = %q", got)
 	}
-	final, err := FinalBranchName("", "Feat/Add Usage Report Command!", nil)
+	final, err := FinalBranchName("feat", "Add Usage Report Command!")
 	if err != nil {
 		t.Fatalf("FinalBranchName: %v", err)
 	}
 	if final != "feat/add-usage-report-command" {
 		t.Fatalf("final = %q", final)
+	}
+
+	if _, err := FinalBranchName("", "feature/add usage report command"); err == nil {
+		t.Fatal("feature alias should not be accepted")
 	}
 
 	if err := r.CreateBranch(ctx, final, "HEAD"); err != nil {

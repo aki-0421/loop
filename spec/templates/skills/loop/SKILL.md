@@ -35,9 +35,10 @@ Use this section as the working order and section map for one loop iteration:
 5. Commit each completed TODO immediately with `loop commit` before moving to unrelated work. See [Commit contract](#commit-contract).
 6. Stop after the chosen slice is complete; do not begin a follow-up slice.
 7. Write `worklog` and `summary`. See [Handoff artifacts](#handoff-artifacts).
-8. If pull request mode is enabled, write PR artifacts. See [PR artifacts](#pr-artifacts).
-9. Before writing `result`, confirm commits are complete and `git status --short` shows no changed files; commit complete work with `loop commit` or revert incomplete work.
-10. Write the final `result` artifact. See [Repair and result JSON](#repair-and-result-json).
+8. If the result will be `completed`, rename the branch with `loop branch rename`. See [Branch naming](#branch-naming).
+9. If pull request mode is enabled, write PR artifacts. See [PR artifacts](#pr-artifacts).
+10. Before writing `result`, confirm commits are complete and `git status --short` shows no changed files; commit complete work with `loop commit` or revert incomplete work.
+11. Write the final `result` artifact. See [Repair and result JSON](#repair-and-result-json).
 
 ## Getting oriented
 
@@ -184,11 +185,25 @@ If pull request mode is enabled, get template text with `loop iteration read pr-
 - Describe only what this PR changes.
 - Mention deferred work briefly when the original instruction is broader than the chosen slice.
 
+## Branch naming
+
+For completed work, inspect the branch rename help first, then rename the iteration branch before writing the result:
+
+```bash
+loop help agent branch rename
+loop branch rename feat/add-password-reset-tests
+loop branch rename --kind fix handle-empty-search-query
+```
+
+Use one of the kinds shown by the help output. If the rename command prints a collision-adjusted branch, keep using that printed branch. Do not run direct Git branch switch, rename, push, PR, or merge commands.
+
+Skip branch rename only for `no_change`, `blocked`, or `failed` results.
+
 ## Repair and result JSON
 
 Repair narrowly without broadening the slice. Use `blocked` when no safe path exists.
 
-Propose branch `kind` and `slug` in `result`. `branch.final_name` is only a proposed final name; the CLI may normalize it, add collision suffixes, and perform the actual branch rename. Do not rename, switch, push, create PRs, or merge branches.
+For `completed`, the branch must already be renamed with `loop branch rename`; otherwise the result command will fail and tell you to rename it. `branch.final_name` is filled from tracked runtime context.
 
 Generate the final result through the CLI:
 

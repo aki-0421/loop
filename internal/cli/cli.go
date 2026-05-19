@@ -95,6 +95,8 @@ func Run(args []string) error {
 		return commandLogs(ctx, g, rest[1:])
 	case "commit":
 		return commandCommit(ctx, g, rest[1:])
+	case "branch":
+		return commandBranch(ctx, g, rest[1:])
 	case "iteration":
 		return commandIteration(ctx, g, rest[1:])
 	case "skills":
@@ -327,7 +329,7 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 		renderer.Branch(initialBranch)
 		state.CurrentIteration = iterationID
 		state.Stage = runstate.StageBranchCreated
-		state.Iterations = append(state.Iterations, runstate.IterationRecord{IterationID: iterationID, BranchInitial: initialBranch, Stage: string(state.Stage)})
+		state.Iterations = append(state.Iterations, runstate.IterationRecord{IterationID: iterationID, BranchInitial: initialBranch, BranchCurrent: initialBranch, Stage: string(state.Stage)})
 		_ = runstate.Write(statePath, state)
 		workDir := root
 		branchRunner := runner
@@ -369,6 +371,7 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 		paths.RunID = runID
 		paths.IterationID = iterationID
 		paths.BaseBranch = cfg.Git.BaseBranch
+		paths.InitialBranch = initialBranch
 		paths.CurrentBranch = initialBranch
 		paths.IntegrationMode = cfg.Git.Integration.Mode
 		paths.PullRequestMode = cfg.Git.Integration.Mode == "pr"
@@ -399,22 +402,28 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 		state.Stage = runstate.StageAgentRunning
 		_ = runstate.Write(statePath, state)
 		renderer.Stage(runstate.StageAgentRunning, "agent running")
-		result, err := runAgentAndReadResult(ctx, cfg, workDir, paths, renderer.AgentEvent)
+		result, err := runAgentAndReadResult(ctx, cfg, workDir, &paths, renderer.AgentEvent)
 		if err != nil {
 			return codedError{4, err}
 		}
+		renderer.Branch(paths.CurrentBranch)
+		cleanup.Branch = paths.CurrentBranch
+		state.Iterations[len(state.Iterations)-1].BranchCurrent = paths.CurrentBranch
 		lastResult = result
 		state.Stage = runstate.StageValidating
 		_ = runstate.Write(statePath, state)
 		renderer.Stage(runstate.StageValidating, "running validation")
-		if err := ensureIterationBranch(ctx, branchRunner, initialBranch); err != nil {
+		if err := ensureIterationBranch(ctx, branchRunner, paths.CurrentBranch); err != nil {
 			return codedError{4, err}
 		}
 		validationResults, validationErr := runConfiguredValidation(ctx, workDir, paths, cfg.Validation.Commands)
 		if validationErr != nil && cfg.Run.RepairAttempts > 0 {
-			result, validationResults, validationErr = repairValidation(ctx, cfg, workDir, root, paths, validationErr, renderer.AgentEvent)
+			result, validationResults, validationErr = repairValidation(ctx, cfg, workDir, root, &paths, validationErr, renderer.AgentEvent)
 			if result != nil {
 				lastResult = result
+				renderer.Branch(paths.CurrentBranch)
+				cleanup.Branch = paths.CurrentBranch
+				state.Iterations[len(state.Iterations)-1].BranchCurrent = paths.CurrentBranch
 			}
 		}
 		if validationErr != nil {
@@ -449,7 +458,7 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 		}
 		state.Iterations[len(state.Iterations)-1].SummarySentence = result.SummarySentence
 		state.Iterations[len(state.Iterations)-1].ShouldFullyStop = result.ShouldFullyStop
-		commits, err := runner.ListCommits(ctx, cfg.Git.BaseBranch, initialBranch)
+		commits, err := runner.ListCommits(ctx, cfg.Git.BaseBranch, paths.CurrentBranch)
 		if err != nil {
 			return codedError{1, err}
 		}
@@ -465,9 +474,12 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 			return codedError{1, err}
 		}
 		if !clean.Clean && cfg.Run.RepairAttempts > 0 {
-			result, clean, err = repairDirty(ctx, cfg, workDir, paths, clean, renderer.AgentEvent)
+			result, clean, err = repairDirty(ctx, cfg, workDir, &paths, clean, renderer.AgentEvent)
 			if err == nil && result != nil {
 				lastResult = result
+				renderer.Branch(paths.CurrentBranch)
+				cleanup.Branch = paths.CurrentBranch
+				state.Iterations[len(state.Iterations)-1].BranchCurrent = paths.CurrentBranch
 				state.Iterations[len(state.Iterations)-1].SummarySentence = result.SummarySentence
 				state.Iterations[len(state.Iterations)-1].ShouldFullyStop = result.ShouldFullyStop
 			}
@@ -475,17 +487,10 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 		if !clean.Clean {
 			return codedError{4, fmt.Errorf("working tree is dirty after agent: %s", dirtyList(clean.Dirty))}
 		}
-		if err := ensureIterationBranch(ctx, branchRunner, initialBranch); err != nil {
+		if err := ensureIterationBranch(ctx, branchRunner, paths.CurrentBranch); err != nil {
 			return codedError{4, err}
 		}
-		desiredBranch, err := finalBranchNameFromResult(result, cfg)
-		if err != nil {
-			return codedError{4, err}
-		}
-		finalBranch, err := renameBranchForIntegration(ctx, runner, branchRunner, initialBranch, desiredBranch, iterationID)
-		if err != nil {
-			return codedError{1, err}
-		}
+		finalBranch := paths.CurrentBranch
 		renderer.Branch(finalBranch)
 		cleanup.Branch = finalBranch
 		state.Iterations[len(state.Iterations)-1].BranchFinal = finalBranch
@@ -741,37 +746,9 @@ func ensureIterationBranch(ctx context.Context, runner gitx.Runner, expected str
 		return fmt.Errorf("inspect iteration branch: %w", err)
 	}
 	if current != expected {
-		return fmt.Errorf("agent changed the iteration branch from %q to %q; branch lifecycle belongs to the loop CLI, so agents must not rename or switch branches", expected, current)
+		return fmt.Errorf("current branch is %q, but loop runtime tracks %q; use `loop branch rename ...` for branch changes and do not switch branches directly", current, expected)
 	}
 	return nil
-}
-
-func finalBranchNameFromResult(result *validation.IterationResult, cfg config.Config) (string, error) {
-	if result == nil {
-		return "", errors.New("iteration result is missing")
-	}
-	if result.Branch.FinalName != "" {
-		return result.Branch.FinalName, nil
-	}
-	proposal := result.Branch.Slug
-	if proposal == "" {
-		proposal = result.SummarySentence
-	}
-	return gitx.FinalBranchName(result.Branch.Kind, proposal, cfg.Git.Branch.AllowedKinds)
-}
-
-func renameBranchForIntegration(ctx context.Context, rootRunner, branchRunner gitx.Runner, initialBranch, desiredBranch, iterationID string) (string, error) {
-	unique, err := rootRunner.UniqueBranchName(ctx, desiredBranch, iterationID)
-	if err != nil {
-		return "", err
-	}
-	if unique == initialBranch {
-		return unique, nil
-	}
-	if err := branchRunner.RenameBranch(ctx, initialBranch, unique); err != nil {
-		return "", err
-	}
-	return unique, nil
 }
 
 func removeWorktreeBeforePRIntegration(ctx context.Context, runner gitx.Runner, cleanup *iterationCleanup, worktreePath, root string) error {
@@ -1111,7 +1088,9 @@ type pathSet struct {
 	RunID            string
 	IterationID      string
 	BaseBranch       string
+	InitialBranch    string
 	CurrentBranch    string
+	BranchRenamed    bool
 	IntegrationMode  string
 	PullRequestMode  bool
 	WorkDir          string
@@ -1139,13 +1118,20 @@ func promptPaths(iterDir string) pathSet {
 }
 
 func writeRuntimeArtifact(paths pathSet) error {
+	initialBranch := firstNonEmpty(paths.InitialBranch, paths.CurrentBranch)
+	branchRenamed := paths.BranchRenamed
+	if initialBranch != "" && paths.CurrentBranch != "" && initialBranch != paths.CurrentBranch {
+		branchRenamed = true
+	}
 	data, err := json.MarshalIndent(map[string]any{
 		"goal":              paths.Goal,
 		"output_language":   paths.Language,
 		"run_id":            paths.RunID,
 		"iteration_id":      paths.IterationID,
 		"base_branch":       paths.BaseBranch,
+		"initial_branch":    initialBranch,
 		"current_branch":    paths.CurrentBranch,
+		"branch_renamed":    branchRenamed,
 		"integration_mode":  paths.IntegrationMode,
 		"pull_request_mode": paths.PullRequestMode,
 		"workdir":           paths.WorkDir,
@@ -1189,7 +1175,9 @@ func runAgent(ctx context.Context, cfg config.Config, root string, paths pathSet
 		"LOOP_RUN_ID":            paths.RunID,
 		"LOOP_ITERATION_ID":      paths.IterationID,
 		"LOOP_BASE_BRANCH":       paths.BaseBranch,
+		"LOOP_INITIAL_BRANCH":    firstNonEmpty(paths.InitialBranch, paths.CurrentBranch),
 		"LOOP_CURRENT_BRANCH":    paths.CurrentBranch,
+		"LOOP_BRANCH_RENAMED":    strconv.FormatBool(paths.BranchRenamed),
 		"LOOP_INTEGRATION_MODE":  paths.IntegrationMode,
 		"LOOP_PULL_REQUEST_MODE": strconv.FormatBool(paths.PullRequestMode),
 		"LOOP_PR_MODE":           strconv.FormatBool(paths.PullRequestMode),
@@ -1215,9 +1203,16 @@ func recordAgentPromptAudit(iterDir, text string) {
 	_ = artifactdb.Append(iterDir, "agent-prompt-audit", entry)
 }
 
-func runAgentAndReadResult(ctx context.Context, cfg config.Config, workDir string, paths pathSet, onEvent func(runstate.Event)) (*validation.IterationResult, error) {
-	agentErr := runAgent(ctx, cfg, workDir, paths, onEvent)
-	result, resultErr := validateResultArtifact(paths)
+func runAgentAndReadResult(ctx context.Context, cfg config.Config, workDir string, paths *pathSet, onEvent func(runstate.Event)) (*validation.IterationResult, error) {
+	if paths == nil {
+		return nil, errors.New("path set is required")
+	}
+	agentErr := runAgent(ctx, cfg, workDir, *paths, onEvent)
+	if err := refreshTrackedBranch(ctx, workDir, paths); err != nil {
+		appendErrorLog(paths.Errors, fmt.Sprintf("branch tracking validation failed: %v", err))
+		return nil, err
+	}
+	result, resultErr := validateResultArtifact(*paths)
 	if ctx.Err() != nil {
 		if agentErr != nil {
 			return nil, fmt.Errorf("agent cancelled: %w", agentErr)
@@ -1226,10 +1221,15 @@ func runAgentAndReadResult(ctx context.Context, cfg config.Config, workDir strin
 	}
 	for attempt := 1; resultErr != nil && attempt <= cfg.Run.RepairAttempts && ctx.Err() == nil; attempt++ {
 		appendErrorLog(paths.Errors, fmt.Sprintf("result artifact missing or invalid before repair attempt %d: %v", attempt, resultErr))
-		repairPaths := paths
-		repairPaths.AgentPromptExtra = repairContract(fmt.Sprintf("Repair attempt %d required because the result artifact was missing or invalid: %v", attempt, resultErr))
-		agentErr = runAgent(ctx, cfg, workDir, repairPaths, onEvent)
-		result, resultErr = validateResultArtifact(paths)
+		previousExtra := paths.AgentPromptExtra
+		paths.AgentPromptExtra = repairContract(fmt.Sprintf("Repair attempt %d required because the result artifact was missing or invalid: %v", attempt, resultErr))
+		agentErr = runAgent(ctx, cfg, workDir, *paths, onEvent)
+		paths.AgentPromptExtra = previousExtra
+		if err := refreshTrackedBranch(ctx, workDir, paths); err != nil {
+			appendErrorLog(paths.Errors, fmt.Sprintf("branch tracking validation failed before repair attempt %d completed: %v", attempt, err))
+			return nil, err
+		}
+		result, resultErr = validateResultArtifact(*paths)
 		if ctx.Err() != nil {
 			if agentErr != nil {
 				return nil, fmt.Errorf("agent cancelled: %w", agentErr)
@@ -1252,21 +1252,55 @@ func validateResultArtifact(paths pathSet) (*validation.IterationResult, error) 
 	if err != nil {
 		return nil, err
 	}
-	return validation.ValidateResultJSON([]byte(data))
+	result, err := validation.ValidateResultJSON([]byte(data))
+	if err != nil {
+		return nil, err
+	}
+	if err := validateResultBranchContract(result, paths); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
-func repairValidation(ctx context.Context, cfg config.Config, workDir, root string, paths pathSet, cause error, onEvent func(runstate.Event)) (*validation.IterationResult, []validation.CommandResult, error) {
+func validateResultBranchContract(result *validation.IterationResult, paths pathSet) error {
+	if result == nil {
+		return errors.New("iteration result is missing")
+	}
+	initialBranch := firstNonEmpty(paths.InitialBranch, paths.CurrentBranch)
+	currentBranch := paths.CurrentBranch
+	if result.Branch.InitialName != "" && initialBranch != "" && result.Branch.InitialName != initialBranch {
+		return fmt.Errorf("result branch.initial_name is %q, but loop created %q", result.Branch.InitialName, initialBranch)
+	}
+	if result.Status == "completed" {
+		if initialBranch == "" || currentBranch == "" || initialBranch == currentBranch {
+			return fmt.Errorf("completed result requires a renamed branch; run `loop branch rename <kind>/<slug>` before `loop iteration result --write`")
+		}
+		if result.Branch.FinalName == "" {
+			return fmt.Errorf("completed result branch.final_name must match tracked branch %q; use `loop iteration result --write` to generate it", currentBranch)
+		}
+		if result.Branch.FinalName != "" && result.Branch.FinalName != currentBranch {
+			return fmt.Errorf("result branch.final_name is %q, but loop runtime tracks %q", result.Branch.FinalName, currentBranch)
+		}
+	}
+	if paths.BranchRenamed && result.Branch.FinalName != "" && currentBranch != "" && result.Branch.FinalName != currentBranch {
+		return fmt.Errorf("result branch.final_name is %q, but loop runtime tracks %q", result.Branch.FinalName, currentBranch)
+	}
+	return nil
+}
+
+func repairValidation(ctx context.Context, cfg config.Config, workDir, root string, paths *pathSet, cause error, onEvent func(runstate.Event)) (*validation.IterationResult, []validation.CommandResult, error) {
 	var result *validation.IterationResult
 	var results []validation.CommandResult
 	var err error = cause
 	for attempt := 1; attempt <= cfg.Run.RepairAttempts && ctx.Err() == nil; attempt++ {
-		repairPaths := paths
-		repairPaths.AgentPromptExtra = repairContract(fmt.Sprintf("Repair attempt %d required because validation failed: %v", attempt, err))
-		result, err = runAgentAndReadResult(ctx, cfg, workDir, repairPaths, onEvent)
+		previousExtra := paths.AgentPromptExtra
+		paths.AgentPromptExtra = repairContract(fmt.Sprintf("Repair attempt %d required because validation failed: %v", attempt, err))
+		result, err = runAgentAndReadResult(ctx, cfg, workDir, paths, onEvent)
+		paths.AgentPromptExtra = previousExtra
 		if err != nil {
 			continue
 		}
-		results, err = runConfiguredValidation(ctx, workDir, paths, cfg.Validation.Commands)
+		results, err = runConfiguredValidation(ctx, workDir, *paths, cfg.Validation.Commands)
 		if err == nil && validation.StatusFromResults(results) != "failed" {
 			return result, results, nil
 		}
@@ -1277,14 +1311,15 @@ func repairValidation(ctx context.Context, cfg config.Config, workDir, root stri
 	return result, results, err
 }
 
-func repairDirty(ctx context.Context, cfg config.Config, workDir string, paths pathSet, dirty gitx.CleanResult, onEvent func(runstate.Event)) (*validation.IterationResult, gitx.CleanResult, error) {
+func repairDirty(ctx context.Context, cfg config.Config, workDir string, paths *pathSet, dirty gitx.CleanResult, onEvent func(runstate.Event)) (*validation.IterationResult, gitx.CleanResult, error) {
 	var result *validation.IterationResult
 	var err error
 	clean := dirty
 	for attempt := 1; attempt <= cfg.Run.RepairAttempts && !clean.Clean && ctx.Err() == nil; attempt++ {
-		repairPaths := paths
-		repairPaths.AgentPromptExtra = repairContract(fmt.Sprintf("Repair attempt %d required because the working tree is dirty: %s", attempt, dirtyList(clean.Dirty)))
-		result, err = runAgentAndReadResult(ctx, cfg, workDir, repairPaths, onEvent)
+		previousExtra := paths.AgentPromptExtra
+		paths.AgentPromptExtra = repairContract(fmt.Sprintf("Repair attempt %d required because the working tree is dirty: %s", attempt, dirtyList(clean.Dirty)))
+		result, err = runAgentAndReadResult(ctx, cfg, workDir, paths, onEvent)
+		paths.AgentPromptExtra = previousExtra
 		if err != nil {
 			continue
 		}
@@ -1415,11 +1450,12 @@ func waitPRChecksWithRepair(ctx context.Context, session *prIntegrationSession, 
 		repairPaths := paths
 		repairPaths.AgentPromptExtra = prCheckRepairPrompt(session.prID, attempt, cfg.Run.RepairAttempts, checks, lastErr)
 		repairPaths.CurrentBranch = branch
+		repairPaths.BranchRenamed = true
 		repairPaths.WorkDir = workDir
 		_ = writeRuntimeArtifact(repairPaths)
 		appendPREvent(paths, onEvent, runstate.Event{"type": "pr.checks_repair.started", "pr": session.prID, "attempt": attempt})
 
-		result, repairErr := runAgentAndReadResult(ctx, cfg, workDir, repairPaths, onEvent)
+		result, repairErr := runAgentAndReadResult(ctx, cfg, workDir, &repairPaths, onEvent)
 		if result != nil {
 			repairResult = result
 		}

@@ -13,7 +13,7 @@ Required fields:
 | `summary_sentence` | string | One English sentence used for squash commit or merge subject. |
 | `should_fully_stop` | boolean | Whether the run goal is fully satisfied after this iteration. |
 | `goal_evaluation` | string | Short explanation of the stop decision. |
-| `branch` | object | Branch proposal used by the CLI for the final branch rename. |
+| `branch` | object | Initial and tracked branch metadata for the iteration. |
 | `commits` | array | Commits created through `loop commit` during the iteration. |
 | `validation` | object | Validation commands and results. |
 | `artifacts` | object | Paths to plan, TODO, summary, PR files, and logs. |
@@ -63,7 +63,7 @@ Example:
 }
 ```
 
-`branch.final_name` is a proposal or expected final name. The agent must not rename or switch branches. The CLI may normalize the proposal, append a collision suffix, and perform the actual branch rename before integration.
+`branch.initial_name` is the numbered branch created by loop. `branch.final_name` is the tracked branch after the agent has run `loop branch rename`. Completed results are rejected when the tracked branch still equals the initial branch. `no_change` results may leave `branch.final_name` empty.
 
 Commit message validation happens when `loop commit` creates the commit. The result artifact reports commit SHAs and subjects; it must not be used as the first place a malformed commit message is discovered.
 
@@ -74,10 +74,11 @@ Commit message validation happens when `loop commit` creates the commit. The res
 The command fills fields the CLI can determine safely:
 
 - `schema_version=1`
-- `branch.initial_name` from runtime context or the current Git branch
+- `branch.initial_name` from runtime context
+- `branch.final_name` from the tracked current branch after `loop branch rename`
 - `commits` from the runtime base branch to `HEAD`
 - `artifacts` for existing logical artifacts
-- `branch.kind` and `branch.slug` from commit intent and summary when not supplied
+- `branch.kind` and `branch.slug` from the tracked branch, commit intent, and summary when not supplied
 
 The agent must provide semantic fields:
 
@@ -92,7 +93,7 @@ loop iteration result --write \
 
 `--validation-command` is repeatable and accepts `name|command|exit_code|required` or a JSON command object. If no validation command is supplied, `--validation-status` should be set explicitly, usually to `skipped`.
 
-Before writing, the builder rejects mechanical contract problems it can detect, including completed results with no commits, completed/no-change results with a dirty working tree, branch mismatches, blocked results without `--blocked-reason`, and failed results without `--error`.
+Before writing, the builder rejects mechanical contract problems it can detect, including completed results with no commits, completed results still on the initial branch, completed/no-change results with a dirty working tree, branch mismatches, blocked results without `--blocked-reason`, and failed results without `--error`.
 
 ## Stop decision
 

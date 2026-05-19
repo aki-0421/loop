@@ -33,7 +33,6 @@ git:
     initialPattern: wip/{iteration}
     finalPattern: "{kind}/{slug}"
     conflictSuffix: "-{iteration}"
-    allowedKinds: [feat, fix, refactor, docs, test, style, build, ci, chore]
   commits:
     requireAgentCommits: true
     allowCliFallbackCommit: false

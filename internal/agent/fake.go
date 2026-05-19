@@ -31,8 +31,18 @@ func RunFakeAgentFromEnv() int {
 	case "no_change":
 		writeFakeResult(iterationDir, "no_change")
 		return 0
+	case "completed_unrenamed":
+		workDir := getenv("LOOP_WORKDIR", ".")
+		changePath := filepath.Join(workDir, "loop-fake-change.txt")
+		_ = os.WriteFile(changePath, []byte("fake agent completed without branch rename at "+time.Now().UTC().Format(time.RFC3339Nano)+"\n"), 0o644)
+		_ = git(workDir, "add", "loop-fake-change.txt")
+		_ = git(workDir, "commit", "-m", "F: run fake agent behavior")
+		_ = writeFakeArtifact(iterationDir, "summary", "# Iteration Summary\n\n- Fake agent completed without renaming.\n")
+		writeFakeResult(iterationDir, "completed", fakeCommit(workDir))
+		return 0
 	default:
 		workDir := getenv("LOOP_WORKDIR", ".")
+		_ = loopBranchRename(workDir, "test/fake-agent")
 		changePath := filepath.Join(workDir, "loop-fake-change.txt")
 		_ = os.WriteFile(changePath, []byte("fake agent completed at "+time.Now().UTC().Format(time.RFC3339Nano)+"\n"), 0o644)
 		_ = git(workDir, "add", "loop-fake-change.txt")
@@ -41,6 +51,17 @@ func RunFakeAgentFromEnv() int {
 		writeFakeResult(iterationDir, "completed", fakeCommit(workDir))
 		return 0
 	}
+}
+
+func loopBranchRename(dir, branch string) error {
+	exe, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	cmd := exec.Command(exe, "branch", "rename", branch)
+	cmd.Dir = dir
+	cmd.Env = os.Environ()
+	return cmd.Run()
 }
 
 func writeFakeResult(iterationDir, status string, commits ...map[string]any) {

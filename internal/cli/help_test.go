@@ -24,7 +24,7 @@ func TestHelpCommandListsCommands(t *testing.T) {
 			t.Fatalf("help output missing %q:\n%s", want, out)
 		}
 	}
-	for _, notWant := range []string{"loop iteration", "loop commit"} {
+	for _, notWant := range []string{"loop iteration", "loop commit", "loop branch"} {
 		if strings.Contains(out, notWant) {
 			t.Fatalf("human help should hide %q:\n%s", notWant, out)
 		}
@@ -50,6 +50,7 @@ func TestAgentHelpCommandShowsCompactList(t *testing.T) {
 	}
 	for _, want := range []string{
 		"agent-help-v1\n",
+		"cmd:loop branch rename",
 		"cmd:loop commit type message;",
 		"cmd:loop iteration result",
 		"cmd:loop memory search",
@@ -79,6 +80,24 @@ func TestAgentHelpCommandShowsIterationResultDetails(t *testing.T) {
 		"--should-stop bool",
 		"--goal-evaluation text",
 		"summary:Build valid iteration result JSON",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("help output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestAgentHelpCommandShowsBranchRenameKinds(t *testing.T) {
+	out, err := captureStdout(t, func() error {
+		return commandHelp(context.Background(), globals{}, []string{"agent", "branch", "rename"})
+	})
+	if err != nil {
+		t.Fatalf("loop help agent branch rename: %v", err)
+	}
+	for _, want := range []string{
+		"cmd:loop branch rename",
+		"desc:`<kind>` is one of feat, fix, refactor, docs, test, style, build, ci, or chore.",
+		"--kind kind",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("help output missing %q:\n%s", want, out)

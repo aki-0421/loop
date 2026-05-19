@@ -9,7 +9,11 @@ import (
 	"strings"
 )
 
-var defaultBranchKinds = []string{"feat", "fix", "refactor", "docs", "test", "style", "build", "ci", "chore"}
+var loopBranchKinds = []string{"feat", "fix", "refactor", "docs", "test", "style", "build", "ci", "chore"}
+
+func BranchKinds() []string {
+	return append([]string(nil), loopBranchKinds...)
+}
 
 // InitialBranchName formats the temporary numbered branch name for an iteration.
 func InitialBranchName(iteration int) string {
@@ -19,18 +23,18 @@ func InitialBranchName(iteration int) string {
 	return fmt.Sprintf("wip/%04d", iteration)
 }
 
-// FinalBranchName builds a normalized branch name from an agent proposal.
-func FinalBranchName(kind, proposal string, allowedKinds []string) (string, error) {
-	kind = strings.ToLower(strings.TrimSpace(kind))
+// FinalBranchName builds a branch name from a fixed loop kind and a slug source.
+func FinalBranchName(kind, proposal string) (string, error) {
+	kind = strings.TrimSpace(kind)
 	proposal = strings.TrimSpace(proposal)
 	if slash := strings.Index(proposal, "/"); kind == "" && slash > 0 {
-		kind = strings.ToLower(strings.TrimSpace(proposal[:slash]))
+		kind = strings.TrimSpace(proposal[:slash])
 		proposal = proposal[slash+1:]
 	}
 	if kind == "" {
 		kind = "chore"
 	}
-	if !allowedKind(kind, allowedKinds) {
+	if !allowedKind(kind) {
 		return "", fmt.Errorf("branch kind %q is not allowed", kind)
 	}
 	slug := Slug(proposal)
@@ -63,11 +67,8 @@ func Slug(s string) string {
 	return strings.Trim(b.String(), "-")
 }
 
-func allowedKind(kind string, allowed []string) bool {
-	if len(allowed) == 0 {
-		allowed = defaultBranchKinds
-	}
-	for _, candidate := range allowed {
+func allowedKind(kind string) bool {
+	for _, candidate := range loopBranchKinds {
 		if kind == candidate {
 			return true
 		}

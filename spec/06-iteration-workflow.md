@@ -60,17 +60,24 @@ The CLI creates a numbered initial branch before launching the agent:
 wip/0001
 ```
 
-The agent works on the initial branch for the entire agent, validation, and repair phase. It proposes a final branch kind and slug in the `result` artifact; it must not rename, switch, push, create PRs, or merge branches itself.
+The agent starts on the initial branch and must rename it through the CLI before reporting completed work:
 
-After validation passes and before integration, the CLI renames the branch to the proposed final name:
+```bash
+loop branch rename feat/add-password-reset-tests
+loop branch rename --kind fix handle-empty-search-query
+```
+
+The command accepts only loop's fixed branch kind preset, slugifies the branch subject, applies collision suffixes, and stores the current branch in runtime context. Aliases such as `feature` are not accepted. Direct Git branch switches or renames are rejected as lifecycle mismatches.
+
+Completed results are rejected while the tracked branch still equals the numbered initial branch. `no_change` results do not require a branch rename.
+
+Example final branch names:
 
 ```text
 feat/add-password-reset-tests
 fix/handle-empty-search-query
 refactor/split-auth-service
 ```
-
-If the branch already exists, the CLI appends the configured conflict suffix.
 
 ## Worktree execution
 
