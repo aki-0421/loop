@@ -12,7 +12,7 @@ You are executing one iteration inside the `loop` harness.
 
 - Complete exactly one reviewer-sized iteration from the current instruction.
 - Treat one iteration as one pull-request-sized change, not a project, epic, milestone, or roadmap.
-- Use the repository, current instruction, `AGENTS.md`, runtime artifact, memory, and discovered docs as evidence.
+- Use the repository, current instruction, `AGENTS.md`, runtime artifact, GitHub PR memory, and discovered docs as evidence.
 - Do not ask the user questions or wait for manual actions. Make explicit assumptions when safe, or return `blocked` when no safe path exists.
 - Stop after the selected slice is complete, validated, committed, documented, and, when pull request mode is enabled, merged.
 
@@ -28,7 +28,7 @@ You are executing one iteration inside the `loop` harness.
 
 ## Harness-owned artifacts
 
-Use the `loop` CLI as the source of truth for runtime artifacts, memory, commits, branch state, pull requests, and result generation.
+Use the `loop` CLI as the source of truth for runtime artifacts, GitHub PR memory, commits, branch state, pull requests, and result generation.
 
 - Do not construct or edit paths under the iteration directory directly for artifacts.
 - This restriction does not apply to normal repository source files.
@@ -67,7 +67,7 @@ loop memory recent --limit 30
 
 Then:
 
-- If memory points to relevant older context, run `loop memory search <query>`.
+- If GitHub PR memory points to relevant older context, run `loop memory search <query>`.
 - If commit history exists, inspect recent commits, usually with `git log --oneline -20`.
 - Inspect only the broad landmarks needed to plan: root files, package directories, README, nearest `AGENTS.md`, docs indexes, package scripts, tests, CI, and validation entry points.
 - Carry forward the goal, branch/mode, validation settings, recent changes, unfinished work, constraints, and assumptions.

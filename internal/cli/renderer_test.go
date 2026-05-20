@@ -26,6 +26,31 @@ func TestRunRendererLineModePrintsAuditCommand(t *testing.T) {
 	}
 }
 
+func TestRunRendererShowsInitialMemoryFetch(t *testing.T) {
+	t.Setenv("LOOP_ASCII", "1")
+	var out bytes.Buffer
+	now := time.Now()
+	renderer := &runRenderer{
+		enabled:     true,
+		interactive: false,
+		writer:      &out,
+		started:     now,
+		done:        make(chan struct{}),
+		stage:       string(runstate.StageCreated),
+	}
+
+	renderer.MemorySync("acme/app", true)
+
+	want := "fetching initial GitHub PR memory for acme/app"
+	if !strings.Contains(out.String(), want) {
+		t.Fatalf("line renderer should print initial memory fetch: %q", out.String())
+	}
+	frame := strings.Join(renderer.frame(100, 24), "\n")
+	if !strings.Contains(stripANSISequences(frame), want) {
+		t.Fatalf("dashboard frame missing initial memory fetch message:\n%s", frame)
+	}
+}
+
 func TestRunRendererDashboardKeepsEssentialStateWithinBounds(t *testing.T) {
 	t.Setenv("LOOP_ASCII", "1")
 	todoPath := filepath.Join(t.TempDir(), "todo.txt")

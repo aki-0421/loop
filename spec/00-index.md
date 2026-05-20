@@ -24,7 +24,7 @@ The specification defines what to implement. It does not include source comparis
 | `05-skills.md` | Skill format and default skill |
 | `06-iteration-workflow.md` | Runtime loop and iteration lifecycle |
 | `07-git-and-pr.md` | Branch, commit, squash merge, and PR behavior |
-| `08-memory-and-logs.md` | `.loop/` storage, SQLite artifact memory, and logs |
+| `08-memory-and-logs.md` | `.loop/` storage, GitHub PR memory, runtime artifacts, and logs |
 | `09-json-contracts.md` | Result JSON and state files |
 | `10-security.md` | Permission, shell, file, and merge controls |
 | `11-error-resume.md` | Repair, resume, and failure states |

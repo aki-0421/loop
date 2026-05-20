@@ -42,6 +42,29 @@ type SearchHit struct {
 	Rank        float64
 }
 
+type PRMemoryRecord struct {
+	Repo      string
+	Number    int
+	URL       string
+	State     string
+	Title     string
+	Body      string
+	UpdatedAt string
+	MergedAt  string
+	FetchedAt string
+}
+
+type PRMemorySearchOptions struct {
+	Query string
+	Repo  string
+	Limit int
+}
+
+type PRMemorySearchHit struct {
+	Record PRMemoryRecord
+	Rank   float64
+}
+
 func LocalDBPath(iterationDir string) string {
 	return filepath.Join(iterationDir, LocalDBName)
 }
@@ -333,67 +356,17 @@ func RebuildGlobalFromRuns(runsDir string) (int, error) {
 	if err := ensureGlobal(db); err != nil {
 		return 0, err
 	}
-	if _, err := os.Stat(runsDir); err != nil {
-		if os.IsNotExist(err) {
-			return 0, nil
-		}
-		return 0, err
-	}
-	runFilter := ""
-	if filepath.Base(filepath.Dir(filepath.Clean(runsDir))) == "runs" {
-		runFilter = filepath.Base(filepath.Clean(runsDir))
-	}
-	if runFilter != "" {
-		for _, stmt := range []string{
-			`DELETE FROM artifact_index WHERE run_id = ?`,
-			`DELETE FROM artifact_index_fts WHERE run_id = ?`,
-			`DELETE FROM iterations WHERE run_id = ?`,
-			`DELETE FROM runs WHERE run_id = ?`,
-		} {
-			if _, err := db.Exec(stmt, runFilter); err != nil {
-				return 0, err
-			}
-		}
-	} else {
-		for _, stmt := range []string{
-			`DELETE FROM artifact_index`,
-			`DELETE FROM artifact_index_fts`,
-			`DELETE FROM iterations`,
-			`DELETE FROM runs`,
-		} {
-			if _, err := db.Exec(stmt); err != nil {
-				return 0, err
-			}
+	for _, stmt := range []string{
+		`DELETE FROM artifact_index`,
+		`DELETE FROM artifact_index_fts`,
+		`DELETE FROM iterations`,
+		`DELETE FROM runs`,
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			return 0, err
 		}
 	}
-	count := 0
-	err = filepath.WalkDir(runsDir, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if !d.IsDir() || filepath.Base(filepath.Dir(path)) != "iterations" {
-			return nil
-		}
-		runID, iterationID := ParseIterationDir(path)
-		if _, err := os.Stat(LocalDBPath(path)); err != nil {
-			if os.IsNotExist(err) {
-				return nil
-			}
-			return err
-		}
-		items, err := List(path)
-		if err != nil {
-			return err
-		}
-		for _, item := range items {
-			if err := MirrorGlobal(globalPath, runID, iterationID, item.Name, item.Content); err != nil {
-				return err
-			}
-			count++
-		}
-		return nil
-	})
-	return count, err
+	return 0, nil
 }
 
 func write(iterationDir, name, content string, appendMode bool) error {
@@ -437,8 +410,329 @@ ON CONFLICT(name) DO UPDATE SET content = excluded.content, updated_at = exclude
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	runID, iterationID := ParseIterationDir(iterationDir)
-	return MirrorGlobal(GlobalDBPathForIteration(iterationDir), runID, iterationID, name, stored)
+	return nil
+}
+
+func UpsertPRMemory(globalDBPath string, record PRMemoryRecord) error {
+	if record.Repo == "" || record.Number <= 0 {
+		return errors.New("repo and positive pull request number are required")
+	}
+	db, err := openGlobal(globalDBPath)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	if err := ensureGlobal(db); err != nil {
+		return err
+	}
+	return upsertPRMemory(db, record)
+}
+
+func ReplacePRMemory(globalDBPath, repo string, records []PRMemoryRecord, syncedAt string) error {
+	if repo == "" {
+		return errors.New("repo is required")
+	}
+	if syncedAt == "" {
+		syncedAt = now()
+	}
+	db, err := openGlobal(globalDBPath)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	if err := ensureGlobal(db); err != nil {
+		return err
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`DELETE FROM pr_memory WHERE repo = ?`, repo); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM pr_memory_fts WHERE repo = ?`, repo); err != nil {
+		return err
+	}
+	for _, record := range records {
+		record.Repo = repo
+		if !includePRMemory(record) {
+			continue
+		}
+		if err := upsertPRMemoryTx(tx, record); err != nil {
+			return err
+		}
+	}
+	if err := setGlobalMetadataTx(tx, "pr_memory.last_sync."+repo, syncedAt); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func ApplyPRMemorySync(globalDBPath, repo string, records []PRMemoryRecord, syncedAt string) (upserted, deleted int, err error) {
+	if repo == "" {
+		return 0, 0, errors.New("repo is required")
+	}
+	if syncedAt == "" {
+		syncedAt = now()
+	}
+	db, err := openGlobal(globalDBPath)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer db.Close()
+	if err := ensureGlobal(db); err != nil {
+		return 0, 0, err
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return 0, 0, err
+	}
+	defer tx.Rollback()
+	for _, record := range records {
+		record.Repo = repo
+		if includePRMemory(record) {
+			if err := upsertPRMemoryTx(tx, record); err != nil {
+				return 0, 0, err
+			}
+			upserted++
+			continue
+		}
+		if record.Number > 0 {
+			if err := deletePRMemoryTx(tx, repo, record.Number); err != nil {
+				return 0, 0, err
+			}
+			deleted++
+		}
+	}
+	if err := setGlobalMetadataTx(tx, "pr_memory.last_sync."+repo, syncedAt); err != nil {
+		return 0, 0, err
+	}
+	return upserted, deleted, tx.Commit()
+}
+
+func DeletePRMemory(globalDBPath, repo string, number int) error {
+	if repo == "" || number <= 0 {
+		return errors.New("repo and positive pull request number are required")
+	}
+	db, err := openGlobal(globalDBPath)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	if err := ensureGlobal(db); err != nil {
+		return err
+	}
+	return deletePRMemory(db, repo, number)
+}
+
+func RecentPRMemory(globalDBPath, repo string, limit int) ([]PRMemoryRecord, error) {
+	db, err := openGlobal(globalDBPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	defer db.Close()
+	if err := ensureGlobal(db); err != nil {
+		return nil, err
+	}
+	query := `SELECT repo, number, url, state, title, body, updated_at, merged_at, fetched_at FROM pr_memory`
+	args := []any{}
+	if repo != "" {
+		query += ` WHERE repo = ?`
+		args = append(args, repo)
+	}
+	query += ` ORDER BY COALESCE(NULLIF(merged_at, ''), updated_at) DESC, number DESC`
+	if limit > 0 {
+		query += ` LIMIT ?`
+		args = append(args, limit)
+	}
+	rows, err := db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []PRMemoryRecord
+	for rows.Next() {
+		var record PRMemoryRecord
+		if err := rows.Scan(&record.Repo, &record.Number, &record.URL, &record.State, &record.Title, &record.Body, &record.UpdatedAt, &record.MergedAt, &record.FetchedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, record)
+	}
+	return out, rows.Err()
+}
+
+func SearchPRMemory(globalDBPath string, opts PRMemorySearchOptions) ([]PRMemorySearchHit, error) {
+	query := ftsQuery(opts.Query)
+	if query == "" {
+		return nil, nil
+	}
+	db, err := openGlobal(globalDBPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	defer db.Close()
+	if err := ensureGlobal(db); err != nil {
+		return nil, err
+	}
+	sqlText := `SELECT repo, number, url, state, title, body, updated_at, merged_at, fetched_at, bm25(pr_memory_fts) AS rank
+FROM pr_memory_fts WHERE pr_memory_fts MATCH ?`
+	args := []any{query}
+	if opts.Repo != "" {
+		sqlText += ` AND repo = ?`
+		args = append(args, opts.Repo)
+	}
+	sqlText += ` ORDER BY rank, COALESCE(NULLIF(merged_at, ''), updated_at) DESC, number DESC`
+	if opts.Limit > 0 {
+		sqlText += ` LIMIT ?`
+		args = append(args, opts.Limit)
+	}
+	rows, err := db.Query(sqlText, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []PRMemorySearchHit
+	for rows.Next() {
+		var hit PRMemorySearchHit
+		if err := rows.Scan(&hit.Record.Repo, &hit.Record.Number, &hit.Record.URL, &hit.Record.State, &hit.Record.Title, &hit.Record.Body, &hit.Record.UpdatedAt, &hit.Record.MergedAt, &hit.Record.FetchedAt, &hit.Rank); err != nil {
+			return nil, err
+		}
+		out = append(out, hit)
+	}
+	return out, rows.Err()
+}
+
+func CountPRMemory(globalDBPath, repo string) (int, error) {
+	db, err := openGlobal(globalDBPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	defer db.Close()
+	if err := ensureGlobal(db); err != nil {
+		return 0, err
+	}
+	query := `SELECT COUNT(*) FROM pr_memory`
+	args := []any{}
+	if repo != "" {
+		query += ` WHERE repo = ?`
+		args = append(args, repo)
+	}
+	var count int
+	if err := db.QueryRow(query, args...).Scan(&count); err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+func PRMemoryLastSync(globalDBPath, repo string) (string, error) {
+	if repo == "" {
+		return "", nil
+	}
+	db, err := openGlobal(globalDBPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", err
+	}
+	defer db.Close()
+	if err := ensureGlobal(db); err != nil {
+		return "", err
+	}
+	var value string
+	err = db.QueryRow(`SELECT value FROM global_metadata WHERE key = ?`, "pr_memory.last_sync."+repo).Scan(&value)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return value, err
+}
+
+func upsertPRMemory(db *sql.DB, record PRMemoryRecord) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := upsertPRMemoryTx(tx, record); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func upsertPRMemoryTx(tx *sql.Tx, record PRMemoryRecord) error {
+	record.State = normalizePRMemoryState(record.State)
+	if record.FetchedAt == "" {
+		record.FetchedAt = now()
+	}
+	if _, err := tx.Exec(`INSERT INTO pr_memory(repo, number, url, state, title, body, updated_at, merged_at, fetched_at)
+VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(repo, number) DO UPDATE SET
+	url = excluded.url,
+	state = excluded.state,
+	title = excluded.title,
+	body = excluded.body,
+	updated_at = excluded.updated_at,
+	merged_at = excluded.merged_at,
+	fetched_at = excluded.fetched_at`,
+		record.Repo, record.Number, record.URL, record.State, record.Title, record.Body, record.UpdatedAt, record.MergedAt, record.FetchedAt); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM pr_memory_fts WHERE repo = ? AND number = ?`, record.Repo, record.Number); err != nil {
+		return err
+	}
+	if strings.TrimSpace(record.Title+"\n"+record.Body) != "" {
+		if _, err := tx.Exec(`INSERT INTO pr_memory_fts(repo, number, url, state, title, body, updated_at, merged_at, fetched_at)
+VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			record.Repo, record.Number, record.URL, record.State, record.Title, record.Body, record.UpdatedAt, record.MergedAt, record.FetchedAt); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func deletePRMemory(db *sql.DB, repo string, number int) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := deletePRMemoryTx(tx, repo, number); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func deletePRMemoryTx(tx *sql.Tx, repo string, number int) error {
+	if _, err := tx.Exec(`DELETE FROM pr_memory WHERE repo = ? AND number = ?`, repo, number); err != nil {
+		return err
+	}
+	_, err := tx.Exec(`DELETE FROM pr_memory_fts WHERE repo = ? AND number = ?`, repo, number)
+	return err
+}
+
+func setGlobalMetadataTx(tx *sql.Tx, key, value string) error {
+	_, err := tx.Exec(`INSERT INTO global_metadata(key, value) VALUES(?, ?)
+ON CONFLICT(key) DO UPDATE SET value = excluded.value`, key, value)
+	return err
+}
+
+func includePRMemory(record PRMemoryRecord) bool {
+	state := normalizePRMemoryState(record.State)
+	return state == "open" || state == "merged"
+}
+
+func normalizePRMemoryState(state string) string {
+	return strings.ToLower(strings.TrimSpace(state))
 }
 
 func openLocal(path string) (*sql.DB, error) {
@@ -487,6 +781,9 @@ func ensureGlobal(db *sql.DB) error {
 		`CREATE TABLE IF NOT EXISTS iterations(run_id TEXT NOT NULL, iteration_id TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY(run_id, iteration_id))`,
 		`CREATE TABLE IF NOT EXISTS artifact_index(run_id TEXT NOT NULL, iteration_id TEXT NOT NULL, artifact TEXT NOT NULL, content TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY(run_id, iteration_id, artifact))`,
 		`CREATE VIRTUAL TABLE IF NOT EXISTS artifact_index_fts USING fts5(run_id UNINDEXED, iteration_id UNINDEXED, artifact UNINDEXED, content, tokenize = 'unicode61')`,
+		`CREATE TABLE IF NOT EXISTS global_metadata(key TEXT PRIMARY KEY, value TEXT NOT NULL)`,
+		`CREATE TABLE IF NOT EXISTS pr_memory(repo TEXT NOT NULL, number INTEGER NOT NULL, url TEXT NOT NULL, state TEXT NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL, updated_at TEXT NOT NULL, merged_at TEXT NOT NULL, fetched_at TEXT NOT NULL, PRIMARY KEY(repo, number))`,
+		`CREATE VIRTUAL TABLE IF NOT EXISTS pr_memory_fts USING fts5(repo UNINDEXED, number UNINDEXED, url UNINDEXED, state UNINDEXED, title, body, updated_at UNINDEXED, merged_at UNINDEXED, fetched_at UNINDEXED, tokenize = 'unicode61')`,
 	}
 	for _, stmt := range stmts {
 		if _, err := db.Exec(stmt); err != nil {

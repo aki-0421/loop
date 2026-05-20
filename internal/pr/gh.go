@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -193,6 +194,25 @@ func (r Runner) Logs(ctx context.Context, ref string) (CommandResult, error) {
 		args = append(args, runID)
 	}
 	args = append(args, "--job", jobID, "--log")
+	return r.run(ctx, r.ghPath(), "gh", args...)
+}
+
+func (r Runner) GraphQL(ctx context.Context, query string, variables map[string]string) (CommandResult, error) {
+	if strings.TrimSpace(query) == "" {
+		return CommandResult{}, errors.New("graphql query is required")
+	}
+	args := []string{"api", "graphql", "-f", "query=" + query}
+	keys := make([]string, 0, len(variables))
+	for key, value := range variables {
+		if strings.TrimSpace(key) == "" || value == "" {
+			continue
+		}
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		args = append(args, "-F", key+"="+variables[key])
+	}
 	return r.run(ctx, r.ghPath(), "gh", args...)
 }
 

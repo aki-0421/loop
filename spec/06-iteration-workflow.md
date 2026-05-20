@@ -98,7 +98,7 @@ The agent bootstrap prompt is built in memory for every agent launch. It is inte
 - A short instruction to use the `loop` skill.
 - A short instruction to use `loop iteration` and `loop memory` commands.
 
-The agent bootstrap prompt does not inline runtime metadata, effective config, schema summaries, full path lists, memory, goal text, instruction file content, or instruction file paths. The `loop` skill tells the agent which CLI commands expose runtime context and writable artifacts.
+The agent bootstrap prompt does not inline runtime metadata, effective config, schema summaries, full path lists, GitHub PR memory, goal text, instruction file content, or instruction file paths. The `loop` skill tells the agent which CLI commands expose runtime context and writable artifacts.
 
 ## Agent phase
 

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/aki-0421/loop/internal/artifactdb"
 	"github.com/aki-0421/loop/internal/runstate"
 )
 
@@ -46,6 +47,78 @@ func TestRunContinuesAcrossIterationsUntilAgentStops(t *testing.T) {
 	}
 	assertBranchMissing(t, repo, "wip/0002")
 	assertBranchMissing(t, repo, "test/fake-agent")
+}
+
+func TestRunInitialSyncsGitHubPRMemoryBeforeFirstIteration(t *testing.T) {
+	ctx := context.Background()
+	repo := newCleanupRepo(t)
+	git(t, repo, "remote", "add", "origin", "https://github.com/acme/app.git")
+	writeResilienceFixture(t, repo, resilienceOptions{
+		Sequence:       "no_change",
+		MaxIterations:  1,
+		RepairAttempts: 0,
+	})
+	commitLoopRuntimeIgnore(t, repo)
+	ghDir := t.TempDir()
+	ghLog := filepath.Join(ghDir, "gh.log")
+	writeInitialMemorySyncFakeGH(t, ghDir, ghLog)
+	t.Setenv("PATH", ghDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	withWorkingDir(t, repo)
+
+	if _, err := captureStdout(t, func() error {
+		return commandRun(ctx, globals{Agent: "resilience", JSON: true, NoColor: true}, []string{"task.md"})
+	}); err != nil {
+		t.Fatalf("loop run: %v", err)
+	}
+
+	log := readText(t, ghLog)
+	if got := strings.Count(log, "api graphql"); got != 2 {
+		t.Fatalf("initial memory sync GraphQL calls = %d, want 2:\n%s", got, log)
+	}
+	hits, err := artifactdb.SearchPRMemory(filepath.Join(repo, ".loop", "loop.db"), artifactdb.PRMemorySearchOptions{Query: "bootstrap memory", Repo: "acme/app", Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) != 1 || hits[0].Record.Number != 4 {
+		recent, _ := artifactdb.RecentPRMemory(filepath.Join(repo, ".loop", "loop.db"), "acme/app", 10)
+		t.Fatalf("initial sync did not store PR memory: hits=%+v recent=%+v log=%s", hits, recent, log)
+	}
+}
+
+func TestRunContinuesWhenIterationMemorySyncFailsAfterInitialSync(t *testing.T) {
+	ctx := context.Background()
+	repo := newCleanupRepo(t)
+	git(t, repo, "remote", "add", "origin", "https://github.com/acme/app.git")
+	writeResilienceFixture(t, repo, resilienceOptions{
+		Sequence:       "completed,no_change",
+		MaxIterations:  2,
+		RepairAttempts: 0,
+	})
+	commitLoopRuntimeIgnore(t, repo)
+	ghDir := t.TempDir()
+	ghLog := filepath.Join(ghDir, "gh.log")
+	writeFailingIncrementalMemorySyncFakeGH(t, ghDir, ghLog)
+	t.Setenv("PATH", ghDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	withWorkingDir(t, repo)
+
+	if _, err := captureStdout(t, func() error {
+		return commandRun(ctx, globals{Agent: "resilience", JSON: true, NoColor: true}, []string{"task.md"})
+	}); err != nil {
+		t.Fatalf("loop run should continue after incremental memory sync failure: %v", err)
+	}
+
+	state := readLatestRunState(t, repo)
+	if state.Stage != runstate.StageCompleted || len(state.Iterations) != 2 {
+		t.Fatalf("state = %#v, want completed two-iteration run", state)
+	}
+	iterDir := latestIterationDir(t, repo, "0002")
+	errorsLog := readText(t, filepath.Join(iterDir, "errors.log"))
+	if !strings.Contains(errorsLog, "GitHub PR memory sync failed; using cached memory") {
+		t.Fatalf("iteration 2 errors.log missing memory sync warning:\n%s", errorsLog)
+	}
+	if got := countEventType(t, iterDir, "agent.started"); got != 1 {
+		t.Fatalf("agent should still run in iteration 2, started count = %d", got)
+	}
 }
 
 func TestRunRepairsInvalidResultAndIntegrates(t *testing.T) {
@@ -216,4 +289,63 @@ func countEventType(t *testing.T, iterDir, eventType string) int {
 	t.Helper()
 	events := readText(t, filepath.Join(iterDir, "agent-events.jsonl"))
 	return strings.Count(events, `"type":"`+eventType+`"`)
+}
+
+func commitLoopRuntimeIgnore(t *testing.T, repo string) {
+	t.Helper()
+	mustWrite(t, filepath.Join(repo, ".loop", ".gitignore"), "runs/\nworktrees/\ntmp/\nlocks/\nloop.db\n*.db\n*.db-wal\n*.db-shm\n*.log\n")
+	git(t, repo, "add", ".loop/.gitignore")
+	git(t, repo, "commit", "-m", "T: ignore loop runtime files")
+}
+
+func writeInitialMemorySyncFakeGH(t *testing.T, dir, logPath string) {
+	t.Helper()
+	mustWrite(t, filepath.Join(dir, "gh"), `#!/bin/sh
+echo "$@" >> "`+logPath+`"
+args="$*"
+if echo "$args" | grep -q 'is:open'; then
+cat <<'JSON'
+{"data":{"search":{"pageInfo":{"hasNextPage":false,"endCursor":""},"nodes":[{"number":4,"url":"https://github.com/acme/app/pull/4","state":"OPEN","title":"Add bootstrap memory","body":"Bootstrap memory from GitHub PRs.","updatedAt":"2026-05-20T00:00:00Z","mergedAt":null,"repository":{"nameWithOwner":"acme/app"}}]},"rateLimit":{"remaining":10,"resetAt":"2026-05-20T02:00:00Z","cost":1}}}
+JSON
+exit 0
+fi
+if echo "$args" | grep -q 'is:merged'; then
+cat <<'JSON'
+{"data":{"search":{"pageInfo":{"hasNextPage":false,"endCursor":""},"nodes":[]},"rateLimit":{"remaining":10,"resetAt":"2026-05-20T02:00:00Z","cost":1}}}
+JSON
+exit 0
+fi
+exit 1
+`)
+	if err := os.Chmod(filepath.Join(dir, "gh"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeFailingIncrementalMemorySyncFakeGH(t *testing.T, dir, logPath string) {
+	t.Helper()
+	mustWrite(t, filepath.Join(dir, "gh"), `#!/bin/sh
+echo "$@" >> "`+logPath+`"
+args="$*"
+if echo "$args" | grep -q 'updated:>='; then
+  echo "temporary GraphQL failure" >&2
+  exit 1
+fi
+if echo "$args" | grep -q 'is:open'; then
+cat <<'JSON'
+{"data":{"search":{"pageInfo":{"hasNextPage":false,"endCursor":""},"nodes":[{"number":4,"url":"https://github.com/acme/app/pull/4","state":"OPEN","title":"Add bootstrap memory","body":"Bootstrap memory from GitHub PRs.","updatedAt":"2026-05-20T00:00:00Z","mergedAt":null,"repository":{"nameWithOwner":"acme/app"}}]},"rateLimit":{"remaining":10,"resetAt":"2026-05-20T02:00:00Z","cost":1}}}
+JSON
+exit 0
+fi
+if echo "$args" | grep -q 'is:merged'; then
+cat <<'JSON'
+{"data":{"search":{"pageInfo":{"hasNextPage":false,"endCursor":""},"nodes":[]},"rateLimit":{"remaining":10,"resetAt":"2026-05-20T02:00:00Z","cost":1}}}
+JSON
+exit 0
+fi
+exit 1
+`)
+	if err := os.Chmod(filepath.Join(dir, "gh"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 }

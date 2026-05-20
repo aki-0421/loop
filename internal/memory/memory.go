@@ -1,20 +1,30 @@
 package memory
 
 import (
-	"path/filepath"
 	"strings"
 
 	"github.com/aki-0421/loop/internal/artifactdb"
 )
 
 type Record struct {
-	RunID       string   `json:"run_id"`
-	IterationID string   `json:"iteration_id"`
-	Path        string   `json:"path"`
-	Artifact    string   `json:"artifact,omitempty"`
-	Branch      string   `json:"branch"`
-	Summary     string   `json:"summary"`
-	Keywords    []string `json:"keywords"`
+	Repo      string   `json:"repo"`
+	Number    int      `json:"number"`
+	URL       string   `json:"url"`
+	State     string   `json:"state"`
+	Title     string   `json:"title"`
+	Body      string   `json:"body,omitempty"`
+	UpdatedAt string   `json:"updated_at"`
+	MergedAt  string   `json:"merged_at,omitempty"`
+	FetchedAt string   `json:"fetched_at"`
+	Summary   string   `json:"summary"`
+	Excerpt   string   `json:"excerpt"`
+	Keywords  []string `json:"keywords"`
+
+	RunID       string `json:"run_id,omitempty"`
+	IterationID string `json:"iteration_id,omitempty"`
+	Path        string `json:"path,omitempty"`
+	Artifact    string `json:"artifact,omitempty"`
+	Branch      string `json:"branch,omitempty"`
 }
 
 type Index struct {
@@ -23,108 +33,88 @@ type Index struct {
 }
 
 type SearchOptions struct {
-	Query       string
+	Query string
+	Repo  string
+	Limit int
+
 	RunID       string
 	IterationID string
 	Artifact    string
-	Limit       int
 }
 
-func Recent(runsPath string, limit int) ([]string, error) {
-	items, err := artifactdb.RecentSummaries(artifactdb.GlobalDBPathFromRunsPath(runsPath), runIDFromPath(runsPath), limit)
+func Recent(runsPath string, limit int) ([]Record, error) {
+	return RecentWithRepo(runsPath, "", limit)
+}
+
+func RecentWithRepo(runsPath, repo string, limit int) ([]Record, error) {
+	items, err := artifactdb.RecentPRMemory(artifactdb.GlobalDBPathFromRunsPath(runsPath), repo, limit)
 	if err != nil {
 		return nil, err
 	}
-	return items, nil
+	return recordsFromPRMemory(items), nil
 }
 
 func Search(runsPath, query string, limit int) ([]Record, error) {
-	return SearchWithOptions(runsPath, SearchOptions{Query: query, RunID: runIDFromPath(runsPath), Limit: limit})
+	return SearchWithOptions(runsPath, SearchOptions{Query: query, Limit: limit})
 }
 
 func SearchWithOptions(runsPath string, opts SearchOptions) ([]Record, error) {
-	if opts.RunID == "" {
-		opts.RunID = runIDFromPath(runsPath)
-	}
-	hits, err := artifactdb.SearchGlobal(artifactdb.GlobalDBPathFromRunsPath(runsPath), artifactdb.SearchOptions{
-		Query:       opts.Query,
-		RunID:       opts.RunID,
-		IterationID: opts.IterationID,
-		Artifact:    opts.Artifact,
-		Limit:       opts.Limit,
+	hits, err := artifactdb.SearchPRMemory(artifactdb.GlobalDBPathFromRunsPath(runsPath), artifactdb.PRMemorySearchOptions{
+		Query: opts.Query,
+		Repo:  opts.Repo,
+		Limit: opts.Limit,
 	})
 	if err != nil {
 		return nil, err
 	}
 	records := make([]Record, 0, len(hits))
 	for _, hit := range hits {
-		records = append(records, recordFromHit(runsPath, hit))
+		records = append(records, recordFromPRMemory(hit.Record))
 	}
 	return records, nil
 }
 
 func Compact(runsDir string) (Index, error) {
-	if _, err := artifactdb.RebuildGlobalFromRuns(runsDir); err != nil {
-		return Index{}, err
-	}
 	records, err := BuildRecords(runsDir)
 	if err != nil {
 		return Index{}, err
 	}
-	return Index{Version: 2, Records: records}, nil
+	return Index{Version: 3, Records: records}, nil
 }
 
 func BuildRecords(runsPath string) ([]Record, error) {
-	hits, err := artifactdb.SummaryHits(artifactdb.GlobalDBPathFromRunsPath(runsPath), runIDFromPath(runsPath), 0)
+	items, err := artifactdb.RecentPRMemory(artifactdb.GlobalDBPathFromRunsPath(runsPath), "", 0)
 	if err != nil {
 		return nil, err
 	}
-	records := make([]Record, 0, len(hits))
-	for _, hit := range hits {
-		records = append(records, recordFromHit(runsPath, hit))
-	}
-	return records, nil
+	return recordsFromPRMemory(items), nil
 }
 
-func recordFromHit(runsPath string, hit artifactdb.SearchHit) Record {
-	path := filepath.Join(filepath.Dir(artifactdb.GlobalDBPathFromRunsPath(runsPath)), "runs", hit.RunID, "iterations", hit.IterationID, hit.Artifact)
-	record := parseSummaryRecord(runsPath, path, hit.Content)
-	record.RunID = hit.RunID
-	record.IterationID = hit.IterationID
-	record.Artifact = hit.Artifact
-	if hit.Artifact != "summary" {
-		record.Summary = firstSentence(hit.Content)
-		record.Keywords = keywords(hit.Content)
+func recordsFromPRMemory(items []artifactdb.PRMemoryRecord) []Record {
+	records := make([]Record, 0, len(items))
+	for _, item := range items {
+		records = append(records, recordFromPRMemory(item))
 	}
-	return record
+	return records
 }
 
-func parseSummaryRecord(root, path, text string) Record {
-	rel, _ := filepath.Rel(root, path)
-	parts := strings.Split(rel, string(filepath.Separator))
-	record := Record{Path: path, Artifact: "summary", Summary: firstSentence(text), Keywords: keywords(text)}
-	if len(parts) >= 4 {
-		record.RunID = parts[0]
-		record.IterationID = parts[2]
+func recordFromPRMemory(item artifactdb.PRMemoryRecord) Record {
+	return Record{
+		Repo:      item.Repo,
+		Number:    item.Number,
+		URL:       item.URL,
+		State:     item.State,
+		Title:     item.Title,
+		Body:      item.Body,
+		UpdatedAt: item.UpdatedAt,
+		MergedAt:  item.MergedAt,
+		FetchedAt: item.FetchedAt,
+		Summary:   item.Title,
+		Excerpt:   firstSentence(item.Body),
+		Keywords:  keywords(item.Title + "\n" + item.Body),
+		Path:      item.URL,
+		Artifact:  "pull-request",
 	}
-	for _, line := range strings.Split(text, "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "- Branch:") {
-			record.Branch = strings.TrimSpace(strings.TrimPrefix(line, "- Branch:"))
-		}
-		if strings.HasPrefix(line, "- Squash summary:") {
-			record.Summary = strings.TrimSpace(strings.TrimPrefix(line, "- Squash summary:"))
-		}
-	}
-	return record
-}
-
-func runIDFromPath(path string) string {
-	parts := strings.Split(filepath.Clean(path), string(filepath.Separator))
-	if len(parts) >= 2 && parts[len(parts)-2] == "runs" {
-		return parts[len(parts)-1]
-	}
-	return ""
 }
 
 func firstSentence(text string) string {

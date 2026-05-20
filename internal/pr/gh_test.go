@@ -191,6 +191,24 @@ func TestGHWrapperLogsParsesJobURL(t *testing.T) {
 	}
 }
 
+func TestGHWrapperGraphQLUsesSerialVariables(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "gh.log")
+	r := Runner{Dir: dir, GHPath: fakeGH(t, logPath, 0)}
+
+	if _, err := r.GraphQL(ctx, "query { viewer { login } }", map[string]string{"name": "app", "owner": "acme"}); err != nil {
+		t.Fatalf("GraphQL: %v", err)
+	}
+	logBytes, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(logBytes), "api graphql -f query=query { viewer { login } } -F name=app -F owner=acme") {
+		t.Fatalf("graphql command was not recorded correctly:\n%s", logBytes)
+	}
+}
+
 func TestParseJobRef(t *testing.T) {
 	runID, jobID := ParseJobRef("https://github.com/acme/app/actions/runs/12345/job/67890")
 	if runID != "12345" || jobID != "67890" {

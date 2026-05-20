@@ -7,12 +7,14 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/aki-0421/loop/internal/artifactdb"
 	"github.com/aki-0421/loop/internal/config"
 	"github.com/aki-0421/loop/internal/gitx"
+	"github.com/aki-0421/loop/internal/memory"
 	"github.com/aki-0421/loop/internal/pr"
 	"github.com/aki-0421/loop/internal/runstate"
 	"github.com/aki-0421/loop/internal/validation"
@@ -290,6 +292,13 @@ func commandPRMerge(ctx context.Context, g globals, args []string) error {
 	if err := writePRState(prCtx.iterDir, state); err != nil {
 		return codedError{1, err}
 	}
+	if _, err := memory.FetchPullRequest(ctx, memory.FetchOptions{
+		WorkDir: prCtx.workDir,
+		RunsDir: filepath.Join(prCtx.root, prCtx.cfg.Logs.Dir),
+		Ref:     state.PR,
+	}); err != nil {
+		_ = runstate.AppendEvent(prCtx.paths.Events, runstate.Event{"type": "memory.pr_fetch.failed", "pr": state.PR, "error": err.Error()})
+	}
 	return printResult(g, map[string]any{"pr": state.PR, "status": state.Status}, fmt.Sprintf("PR merged: %s\n", state.PR))
 }
 
@@ -458,7 +467,7 @@ func finalizeAgentOwnedPR(ctx context.Context, runner gitx.Runner, cleanup *iter
 		if _, err := runner.Run(ctx, "reset", "--hard"); err != nil {
 			return err
 		}
-		if _, err := runner.Run(ctx, "clean", "-fd"); err != nil {
+		if _, err := runGitCleanPreservingLoopRuntime(ctx, runner); err != nil {
 			return err
 		}
 	}

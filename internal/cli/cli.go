@@ -325,6 +325,11 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 	if err := runstate.Write(statePath, state); err != nil {
 		return codedError{1, err}
 	}
+	if err := syncMemoryBeforeRun(ctx, root, cfg, renderer); err != nil {
+		state.Stage = runstate.StageFailed
+		_ = runstate.Write(statePath, state)
+		return codedError{1, err}
+	}
 	var lastResult *validation.IterationResult
 	mergedCount := 0
 	for i := 1; cfg.Run.MaxIterations == 0 || i <= cfg.Run.MaxIterations; i++ {
@@ -404,6 +409,9 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 			state.Stage = runstate.StageCompleted
 			_ = runstate.Write(statePath, state)
 			return printResult(g, map[string]any{"run_id": runID, "prompt": rel(root, paths.Prompt)}, fmt.Sprintf("Dry run created prompt: %s\n", rel(root, paths.Prompt)))
+		}
+		if i > 1 {
+			syncMemoryBeforeIteration(ctx, root, cfg, paths)
 		}
 		state.Stage = runstate.StageAgentRunning
 		_ = runstate.Write(statePath, state)
@@ -714,7 +722,7 @@ func (c *iterationCleanup) cleanup(ctx context.Context) []string {
 			_, err = c.RootRunner.Run(ctx, "reset", "--hard")
 		}
 		record("reset integration state", err)
-		_, err = c.RootRunner.Run(ctx, "clean", "-fd")
+		_, err = runGitCleanPreservingLoopRuntime(ctx, c.RootRunner)
 		record("clean integration state", err)
 		if c.Branch != "" && c.Branch != c.BaseBranch {
 			record("delete branch "+c.Branch, c.RootRunner.DeleteBranch(ctx, c.Branch, true))
@@ -740,7 +748,7 @@ func (c *iterationCleanup) cleanup(ctx context.Context) []string {
 	workRunner := gitx.Runner{Dir: workDir}
 	_, err := workRunner.Run(ctx, "reset", "--hard")
 	record("reset working tree", err)
-	_, err = workRunner.Run(ctx, "clean", "-fd")
+	_, err = runGitCleanPreservingLoopRuntime(ctx, workRunner)
 	record("clean working tree", err)
 	_, err = c.RootRunner.Run(ctx, "checkout", c.BaseBranch)
 	record("checkout "+c.BaseBranch, err)
@@ -755,6 +763,22 @@ func removeEmptyDir(path string) {
 		return
 	}
 	_ = os.Remove(path)
+}
+
+func runGitCleanPreservingLoopRuntime(ctx context.Context, runner gitx.Runner) (string, error) {
+	args := []string{
+		"clean", "-fd",
+		"-e", ".loop/runs/",
+		"-e", ".loop/worktrees/",
+		"-e", ".loop/tmp/",
+		"-e", ".loop/locks/",
+		"-e", ".loop/loop.db",
+		"-e", ".loop/*.db",
+		"-e", ".loop/*.db-wal",
+		"-e", ".loop/*.db-shm",
+		"-e", ".loop/*.log",
+	}
+	return runner.Run(ctx, args...)
 }
 
 func ensureIterationBranch(ctx context.Context, runner gitx.Runner, expected string) error {
@@ -975,7 +999,7 @@ func commandSkills(ctx context.Context, g globals, args []string) error {
 
 func commandMemory(ctx context.Context, g globals, args []string) error {
 	if len(args) == 0 {
-		return codedError{2, fmt.Errorf("usage: loop memory <recent|search|compact>")}
+		return codedError{2, fmt.Errorf("usage: loop memory <recent|search>")}
 	}
 	root, err := gitx.RepoRoot(ctx, ".")
 	if err != nil {
@@ -986,27 +1010,26 @@ func commandMemory(ctx context.Context, g globals, args []string) error {
 	switch args[0] {
 	case "recent":
 		fs := flag.NewFlagSet("memory recent", flag.ContinueOnError)
-		run := fs.String("run", "", "run id")
+		run := fs.String("run", "", "deprecated; ignored")
+		repo := fs.String("repo", "", "GitHub owner/name")
 		limit := fs.Int("limit", cfg.Memory.RecentLimit, "limit")
 		if err := fs.Parse(args[1:]); err != nil {
 			return codedError{2, err}
 		}
-		dir := runsDir
-		if *run != "" {
-			dir = filepath.Join(runsDir, *run)
-		}
-		items, err := memory.Recent(dir, *limit)
+		_ = run
+		items, err := memory.RecentWithRepo(runsDir, *repo, *limit)
 		if err != nil {
 			return codedError{1, err}
 		}
 		for _, item := range items {
-			fmt.Println(item)
+			fmt.Println(formatMemoryRecord(item))
 		}
 	case "search":
 		fs := flag.NewFlagSet("memory search", flag.ContinueOnError)
-		run := fs.String("run", "", "run id")
-		iteration := fs.String("iteration", "", "iteration id")
-		artifact := fs.String("artifact", "", "artifact name")
+		run := fs.String("run", "", "deprecated; ignored")
+		iteration := fs.String("iteration", "", "deprecated; ignored")
+		artifact := fs.String("artifact", "", "deprecated; ignored")
+		repo := fs.String("repo", "", "GitHub owner/name")
 		limit := fs.Int("limit", cfg.Memory.SearchLimit, "limit")
 		if err := fs.Parse(args[1:]); err != nil {
 			return codedError{2, err}
@@ -1014,42 +1037,107 @@ func commandMemory(ctx context.Context, g globals, args []string) error {
 		if fs.NArg() != 1 {
 			return codedError{2, fmt.Errorf("usage: loop memory search <query>")}
 		}
-		dir := runsDir
-		if *run != "" {
-			dir = filepath.Join(runsDir, *run)
-		}
-		items, err := memory.SearchWithOptions(dir, memory.SearchOptions{
-			Query:       fs.Arg(0),
-			RunID:       *run,
-			IterationID: *iteration,
-			Artifact:    *artifact,
-			Limit:       *limit,
+		_, _, _ = run, iteration, artifact
+		items, err := memory.SearchWithOptions(runsDir, memory.SearchOptions{
+			Query: fs.Arg(0),
+			Repo:  *repo,
+			Limit: *limit,
 		})
 		if err != nil {
 			return codedError{1, err}
 		}
 		for _, item := range items {
-			fmt.Printf("%s/%s\t%s\t%s\n", item.RunID, item.IterationID, item.Artifact, item.Summary)
+			fmt.Println(formatMemoryRecord(item))
 		}
-	case "compact":
-		fs := flag.NewFlagSet("memory compact", flag.ContinueOnError)
-		run := fs.String("run", "", "run id")
-		if err := fs.Parse(args[1:]); err != nil {
-			return codedError{2, err}
-		}
-		dir := runsDir
-		if *run != "" {
-			dir = filepath.Join(runsDir, *run)
-		}
-		idx, err := memory.Compact(dir)
-		if err != nil {
-			return codedError{1, err}
-		}
-		fmt.Printf("indexed %d records\n", len(idx.Records))
 	default:
 		return codedError{2, fmt.Errorf("unknown memory subcommand %q", args[0])}
 	}
 	return nil
+}
+
+func formatMemoryRecord(item memory.Record) string {
+	return strings.Join([]string{
+		fmt.Sprintf("#%d", item.Number),
+		item.State,
+		cleanMemoryField(item.Repo),
+		cleanMemoryField(item.Title),
+		cleanMemoryField(item.URL),
+		cleanMemoryField(item.Excerpt),
+	}, "\t")
+}
+
+func cleanMemoryField(value string) string {
+	value = strings.ReplaceAll(value, "\t", " ")
+	value = strings.ReplaceAll(value, "\n", " ")
+	return strings.TrimSpace(value)
+}
+
+func syncMemoryBeforeRun(ctx context.Context, root string, cfg config.Config, renderer *runRenderer) error {
+	runsDir := filepath.Join(root, cfg.Logs.Dir)
+	repo, _, _, err := memory.ResolveGitHubRepository(ctx, root)
+	if errors.Is(err, memory.ErrNoGitHubRemote) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	count, err := artifactdb.CountPRMemory(artifactdb.GlobalDBPathFromRunsPath(runsDir), repo)
+	if err != nil {
+		return err
+	}
+	lastSync, err := artifactdb.PRMemoryLastSync(artifactdb.GlobalDBPathFromRunsPath(runsDir), repo)
+	if err != nil {
+		return err
+	}
+	if lastSync == "" && renderer != nil {
+		renderer.MemorySync(repo, true)
+	}
+	result, err := memory.Sync(ctx, memory.SyncOptions{WorkDir: root, RunsDir: runsDir})
+	if err != nil {
+		if count == 0 && lastSync == "" {
+			return fmt.Errorf("initial GitHub PR memory sync failed: %w", err)
+		}
+		fmt.Fprintf(os.Stderr, "warning: GitHub PR memory sync failed; using cached memory: %v\n", err)
+		return nil
+	}
+	if result.Fetched == 0 && count == 0 {
+		return nil
+	}
+	return nil
+}
+
+func syncMemoryBeforeIteration(ctx context.Context, root string, cfg config.Config, paths pathSet) {
+	runsDir := filepath.Join(root, cfg.Logs.Dir)
+	_, _, _, err := memory.ResolveGitHubRepository(ctx, root)
+	if errors.Is(err, memory.ErrNoGitHubRemote) {
+		return
+	}
+	if err != nil {
+		recordMemorySyncWarning(paths, err)
+		return
+	}
+	result, err := memory.Sync(ctx, memory.SyncOptions{WorkDir: root, RunsDir: runsDir})
+	if err != nil {
+		recordMemorySyncWarning(paths, err)
+		return
+	}
+	_ = runstate.AppendEvent(paths.Events, runstate.Event{
+		"type":     "memory.sync.completed",
+		"repo":     result.Repo,
+		"full":     result.Full,
+		"fetched":  result.Fetched,
+		"upserted": result.Upserted,
+		"deleted":  result.Deleted,
+	})
+}
+
+func recordMemorySyncWarning(paths pathSet, err error) {
+	msg := fmt.Sprintf("GitHub PR memory sync failed; using cached memory: %v", err)
+	appendErrorLog(paths.Errors, msg)
+	_ = runstate.AppendEvent(paths.Events, runstate.Event{
+		"type":  "memory.sync.failed",
+		"error": err.Error(),
+	})
 }
 
 func commandDoctor(ctx context.Context, g globals, args []string) error {

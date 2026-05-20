@@ -278,6 +278,46 @@ func (r *runRenderer) Merged(count int) {
 	r.render()
 }
 
+func (r *runRenderer) MemorySync(repo string, initial bool) {
+	if !r.enabled {
+		return
+	}
+	detail := "checking GitHub PR memory"
+	if initial {
+		detail = "fetching initial GitHub PR memory"
+	}
+	if strings.TrimSpace(repo) != "" {
+		detail += " for " + strings.TrimSpace(repo)
+	}
+	r.mu.Lock()
+	r.stageDetail = detail
+	r.current = detail
+	r.latestMsg = detail
+	if len(r.activity) == 0 || r.activity[len(r.activity)-1] != detail {
+		r.activity = append(r.activity, detail)
+		r.activityLog = append(r.activityLog, rendererLogLine{At: time.Now(), Text: detail})
+		if len(r.activity) > 20 {
+			r.activity = append([]string(nil), r.activity[len(r.activity)-20:]...)
+		}
+		if len(r.activityLog) > 20 {
+			r.activityLog = append([]rendererLogLine(nil), r.activityLog[len(r.activityLog)-20:]...)
+		}
+	}
+	r.addEventLocked(rendererEvent{
+		At:     time.Now(),
+		Status: "active",
+		Title:  "Memory Sync",
+		Detail: detail,
+	})
+	r.mu.Unlock()
+	if r.interactive {
+		r.render()
+	} else {
+		r.line("memory", detail)
+	}
+	r.setTitle()
+}
+
 func (r *runRenderer) startAgentUsageWindow() {
 	r.mu.Lock()
 	r.usageBaseInputTokens = r.inputTokens

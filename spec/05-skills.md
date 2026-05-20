@@ -15,7 +15,7 @@ Each skill is a directory containing `SKILL.md`.
 ```yaml
 ---
 name: loop
-description: Execute one loop coding iteration using CLI-managed context, memory, commits, validation, PR text, repair, and result JSON.
+description: Execute one loop coding iteration using CLI-managed context, GitHub PR memory, commits, validation, PR text, repair, and result JSON.
 version: 1
 ---
 ```
@@ -26,12 +26,12 @@ The body is Markdown. Built-in skills are English. Repository owners may customi
 
 ## Default skill
 
-The built-in `loop` skill consolidates the default iteration, memory, commit, pull request, repair, and result conventions. It tells the agent how to:
+The built-in `loop` skill consolidates the default iteration, GitHub PR memory, commit, pull request, repair, and result conventions. It tells the agent how to:
 
 - Read runtime context with `loop iteration read runtime`.
 - Read the user instruction with `loop iteration read instruction`.
-- Read recent memory with `loop memory recent`.
-- Search older memory with `loop memory search <query>`.
+- Read recent GitHub PR memory with `loop memory recent`.
+- Search older GitHub PR memory with `loop memory search <query>`.
 - Read pull request template text with `loop iteration read pr-template`.
 - Create, check, repair, and merge pull requests with `loop pr` before writing completed PR-mode results.
 - Write the plan through `loop iteration plan` using the CLI-owned template.

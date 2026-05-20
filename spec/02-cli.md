@@ -251,15 +251,14 @@ Rules:
 
 ## `loop memory`
 
-Inspect and search iteration memory.
+Inspect GitHub pull request memory.
 
 ```bash
-loop memory recent [--run <run-id>] [--limit 30]
-loop memory search <query> [--run <run-id>] [--iteration <id>] [--artifact <name>] [--limit <n>]
-loop memory compact [--run <run-id>]
+loop memory recent [--repo <owner/name>] [--limit 30]
+loop memory search <query> [--repo <owner/name>] [--limit <n>]
 ```
 
-`recent` returns the latest iteration summaries. `search` returns matching SQLite artifact excerpts. `compact` rebuilds the global SQLite search index from iteration databases.
+`recent` returns recent open and merged PR records. `search` returns matching PR title/body excerpts from the local `.loop/loop.db` cache without performing network access. Memory refresh is automatic during `loop run` and after successful `loop pr merge`; there is no manual memory refresh command.
 
 ## `loop doctor`
 

@@ -5,7 +5,7 @@
 `loop` wraps a coding agent CLI and gives it a repeatable harness:
 
 1. Read a persistent Markdown instruction file.
-2. Load recent run context from `.loop/`.
+2. Load recent GitHub pull request memory from the local `.loop/loop.db` cache.
 3. Run the configured agent with a compact code-generated skill bootstrap.
 4. Let the agent plan, edit, validate, and request commits for complete work.
 5. Read the agent result JSON.
@@ -53,6 +53,7 @@ The CLI owns:
 - Repair retries before PR creation. Pull request check repair happens inside the agent context through `loop pr checks`, local edits, commits, and `loop pr merge`.
 - Resume state.
 - Exit codes.
+- GitHub pull request memory synchronization.
 
 The agent owns:
 

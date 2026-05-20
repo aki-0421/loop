@@ -126,10 +126,11 @@ Responsibilities:
 
 Responsibilities:
 
-- Load recent summaries.
-- Search older SQLite-backed artifacts.
-- Rebuild the global `.loop/loop.db` FTS index from iteration databases.
-- Compact run summaries.
+- Resolve the GitHub repository from `origin`.
+- Sync open and merged pull request titles and bodies through `gh api graphql`.
+- Store PR memory in the rebuildable `.loop/loop.db` cache.
+- Search recent and older PR memory with SQLite FTS.
+- Fetch and upsert a merged PR after `loop pr merge`.
 
 ## Atomic writes
 
