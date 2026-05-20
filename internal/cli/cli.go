@@ -496,34 +496,36 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 			}
 		}
 		renderer.Commits(len(commits))
-		if len(commits) == 0 && cfg.Git.Commits.RequireAgentCommits {
-			return codedError{4, fmt.Errorf("completed iteration did not create commits")}
-		}
-		if err := validateIterationCommitSubjects(commits, cfg); err != nil {
-			return codedError{4, err}
-		}
-		clean, err := branchRunner.CheckClean(ctx, gitx.CleanOptions{IgnoreRuntime: true})
-		if err != nil {
-			return codedError{1, err}
-		}
-		if !clean.Clean && !mergedPR && cfg.Run.RepairAttempts > 0 {
-			result, clean, err = repairDirty(ctx, cfg, workDir, &paths, clean, renderer.AgentEvent)
-			if err == nil && result != nil {
-				lastResult = result
-				renderer.Branch(paths.CurrentBranch)
-				cleanup.Branch = paths.CurrentBranch
-				state.Iterations[len(state.Iterations)-1].BranchCurrent = paths.CurrentBranch
-				state.Iterations[len(state.Iterations)-1].SummarySentence = result.SummarySentence
-				state.Iterations[len(state.Iterations)-1].ShouldFullyStop = result.ShouldFullyStop
-				mergedPR = paths.PullRequestMode && prStateMerged(iterDir)
-			}
-		}
-		if !clean.Clean {
-			return codedError{4, fmt.Errorf("working tree is dirty after agent: %s", dirtyList(clean.Dirty))}
-		}
 		if !mergedPR {
-			if err := ensureIterationBranch(ctx, branchRunner, paths.CurrentBranch); err != nil {
+			if len(commits) == 0 && cfg.Git.Commits.RequireAgentCommits {
+				return codedError{4, fmt.Errorf("completed iteration did not create commits")}
+			}
+			if err := validateIterationCommitSubjects(commits, cfg); err != nil {
 				return codedError{4, err}
+			}
+			clean, err := branchRunner.CheckClean(ctx, gitx.CleanOptions{IgnoreRuntime: true})
+			if err != nil {
+				return codedError{1, err}
+			}
+			if !clean.Clean && cfg.Run.RepairAttempts > 0 {
+				result, clean, err = repairDirty(ctx, cfg, workDir, &paths, clean, renderer.AgentEvent)
+				if err == nil && result != nil {
+					lastResult = result
+					renderer.Branch(paths.CurrentBranch)
+					cleanup.Branch = paths.CurrentBranch
+					state.Iterations[len(state.Iterations)-1].BranchCurrent = paths.CurrentBranch
+					state.Iterations[len(state.Iterations)-1].SummarySentence = result.SummarySentence
+					state.Iterations[len(state.Iterations)-1].ShouldFullyStop = result.ShouldFullyStop
+					mergedPR = paths.PullRequestMode && prStateMerged(iterDir)
+				}
+			}
+			if !clean.Clean && !mergedPR {
+				return codedError{4, fmt.Errorf("working tree is dirty after agent: %s", dirtyList(clean.Dirty))}
+			}
+			if !mergedPR {
+				if err := ensureIterationBranch(ctx, branchRunner, paths.CurrentBranch); err != nil {
+					return codedError{4, err}
+				}
 			}
 		}
 		finalBranch := paths.CurrentBranch
@@ -768,6 +770,17 @@ func ensureIterationBranch(ctx context.Context, runner gitx.Runner, expected str
 
 func removeWorktreeBeforePRIntegration(ctx context.Context, runner gitx.Runner, cleanup *iterationCleanup, worktreePath, root string) error {
 	if worktreePath == "" {
+		return nil
+	}
+	if _, err := os.Stat(worktreePath); err != nil {
+		if !os.IsNotExist(err) {
+			return err
+		}
+		_, _ = runner.Run(ctx, "worktree", "prune")
+		if cleanup != nil {
+			cleanup.WorktreePath = ""
+			cleanup.WorkDir = root
+		}
 		return nil
 	}
 	if err := runner.RemoveWorktree(ctx, worktreePath, true); err != nil {

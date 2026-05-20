@@ -128,6 +128,28 @@ func TestRemoveWorktreeBeforePRIntegrationLeavesBranchDeletable(t *testing.T) {
 	}
 }
 
+func TestRemoveWorktreeBeforePRIntegrationToleratesAlreadyRemovedPath(t *testing.T) {
+	ctx := context.Background()
+	repo := newCleanupRepo(t)
+	runner := gitx.Runner{Dir: repo}
+	worktree := filepath.Join(repo, ".loop", "worktrees", "run", "0001")
+	git(t, repo, "worktree", "add", "-b", "feat/pr-branch", worktree, "develop")
+	if err := os.RemoveAll(worktree); err != nil {
+		t.Fatal(err)
+	}
+
+	cleanup := iterationCleanup{WorktreePath: worktree, WorkDir: worktree}
+	if err := removeWorktreeBeforePRIntegration(ctx, runner, &cleanup, worktree, repo); err != nil {
+		t.Fatalf("removeWorktreeBeforePRIntegration should tolerate an already removed path: %v", err)
+	}
+	if cleanup.WorktreePath != "" {
+		t.Fatalf("cleanup worktree path = %q, want empty", cleanup.WorktreePath)
+	}
+	if cleanup.WorkDir != repo {
+		t.Fatalf("cleanup work dir = %q, want %q", cleanup.WorkDir, repo)
+	}
+}
+
 func TestPreparePRMergeChecksOutBaseSoCurrentBranchCanBeDeleted(t *testing.T) {
 	ctx := context.Background()
 	repo := newCleanupRepo(t)
@@ -183,6 +205,24 @@ func assertBranchMissing(t *testing.T, repo, branch string) {
 	cmd.Dir = repo
 	if err := cmd.Run(); err == nil {
 		t.Fatalf("branch %s should be deleted", branch)
+	}
+}
+
+func assertRemoteBranchMissing(t *testing.T, repo, branch string) {
+	t.Helper()
+	cmd := exec.Command("git", "ls-remote", "--exit-code", "--heads", "origin", branch)
+	cmd.Dir = repo
+	if err := cmd.Run(); err == nil {
+		t.Fatalf("remote branch %s should be deleted from origin", branch)
+	}
+}
+
+func assertRemoteTrackingBranchMissing(t *testing.T, repo, branch string) {
+	t.Helper()
+	cmd := exec.Command("git", "show-ref", "--verify", "--quiet", "refs/remotes/origin/"+branch)
+	cmd.Dir = repo
+	if err := cmd.Run(); err == nil {
+		t.Fatalf("remote-tracking branch origin/%s should be pruned", branch)
 	}
 }
 
