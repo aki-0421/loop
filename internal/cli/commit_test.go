@@ -27,7 +27,7 @@ func TestCommitCommandCreatesValidatedCommit(t *testing.T) {
 	}()
 
 	out, err := captureStdout(t, func() error {
-		return commandCommit(ctx, globals{}, []string{"F", "add", "weather", "app"})
+		return commandCommit(ctx, globals{}, []string{"--type", "F", "add", "weather", "app"})
 	})
 	if err != nil {
 		t.Fatalf("loop commit: %v", err)
@@ -59,7 +59,7 @@ func TestCommitCommandRejectsInvalidMessageBeforeCommitting(t *testing.T) {
 		_ = os.Chdir(oldwd)
 	}()
 
-	err = commandCommit(ctx, globals{}, []string{"F", "Add weather app."})
+	err = commandCommit(ctx, globals{}, []string{"--type", "F", "Add weather app."})
 	if err == nil {
 		t.Fatal("loop commit should reject invalid message")
 	}
@@ -71,6 +71,16 @@ func TestCommitCommandRejectsInvalidMessageBeforeCommitting(t *testing.T) {
 	after := strings.TrimSpace(git(t, repo, "rev-parse", "HEAD"))
 	if after != before {
 		t.Fatalf("HEAD changed after rejected commit: before=%s after=%s", before, after)
+	}
+}
+
+func TestCommitCommandRequiresTypeFlag(t *testing.T) {
+	err := commandCommit(context.Background(), globals{}, []string{"F", "add", "weather", "app"})
+	if err == nil {
+		t.Fatal("loop commit should reject positional type")
+	}
+	if !strings.Contains(err.Error(), "--type") {
+		t.Fatalf("error should mention --type: %v", err)
 	}
 }
 

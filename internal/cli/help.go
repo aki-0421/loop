@@ -466,11 +466,14 @@ func allHelpCommands() []helpCommand {
 		},
 		{
 			Path:        []string{"commit"},
-			Usage:       "loop commit <type> <message>",
+			Usage:       "loop commit --type <type> <message>",
 			Summary:     "Create a validated iteration commit",
 			Description: commitContractHelpText(),
-			Agent:       true,
-			AgentOnly:   true,
+			Flags: []helpFlag{
+				{Name: "--type <type>", Description: "commit type: F, T, R, D, S, V, or C"},
+			},
+			Agent:     true,
+			AgentOnly: true,
 		},
 		{
 			Path:        []string{"branch"},
@@ -649,7 +652,7 @@ func allHelpCommands() []helpCommand {
 			Path:        []string{"iteration", "todo"},
 			Usage:       "loop iteration todo <list|insert|edit|complete> ...",
 			Summary:     "Manage the iteration TODO artifact",
-			Description: "After the plan selects the review slice, decompose that slice into one TODO per future `loop commit` invocation. Insert and edit TODOs with the same `<type> <message>` shape as `loop commit`, and complete an item only after its matching commit exists or no-change confirmation is done.",
+			Description: todoContractHelpText(),
 			Agent:       true,
 			AgentOnly:   true,
 		},
@@ -664,23 +667,26 @@ func allHelpCommands() []helpCommand {
 		},
 		{
 			Path:        []string{"iteration", "todo", "insert"},
-			Usage:       "loop iteration todo insert [--iteration-dir <dir>|--run <run-id> --iteration <n>] [--after <n>] <type> <message>",
+			Usage:       "loop iteration todo insert --type <type> <message> [--iteration-dir <dir>|--run <run-id> --iteration <n>] [--after <n>]",
 			Summary:     "Insert one pending iteration TODO",
-			Description: "Adds one pending TODO item using the same type aliases and message validation as `loop commit`, for example `loop iteration todo insert F add password reset flow`.",
+			Description: todoInsertHelpText(),
 			Flags: append(iterationLocatorFlags(),
 				helpFlag{Name: "--after <n>", Description: "insert after 1-based todo index; 0 inserts at the top", Default: "append"},
+				helpFlag{Name: "--type <type>", Description: "commit type: F, T, R, D, S, V, or C"},
 			),
 			Agent:     true,
 			AgentOnly: true,
 		},
 		{
 			Path:        []string{"iteration", "todo", "edit"},
-			Usage:       "loop iteration todo edit <n> [--iteration-dir <dir>|--run <run-id> --iteration <n>] <type> <message>",
+			Usage:       "loop iteration todo edit <n> --type <type> <message> [--iteration-dir <dir>|--run <run-id> --iteration <n>]",
 			Summary:     "Edit one iteration TODO",
-			Description: "Edits one TODO by the 1-based index from `loop iteration todo list` using the same `<type> <message>` shape as `loop commit`, and preserves its status.",
-			Flags:       iterationLocatorFlags(),
-			Agent:       true,
-			AgentOnly:   true,
+			Description: todoEditHelpText(),
+			Flags: append(iterationLocatorFlags(),
+				helpFlag{Name: "--type <type>", Description: "commit type: F, T, R, D, S, V, or C"},
+			),
+			Agent:     true,
+			AgentOnly: true,
 		},
 		{
 			Path:        []string{"iteration", "todo", "complete"},
@@ -807,10 +813,41 @@ func branchKindsHelpText() string {
 
 func commitContractHelpText() string {
 	return strings.Join([]string{
+		commitTypeHelpText(),
+		"Pass the type with `--type`, for example `loop commit --type F add weather app shell`; the CLI stages repository changes, validates the message, creates `<TYPE>: <message>`, and returns the SHA and subject.",
+		"Use an English imperative lowercase message, keep it short, omit the trailing period, commit only complete reviewable work, and do not run `git add` or `git commit` directly.",
+	}, " ")
+}
+
+func todoContractHelpText() string {
+	return strings.Join([]string{
+		"After the plan selects the implementation scope, decompose that scope into one TODO per future `loop commit` invocation.",
+		commitTypeHelpText(),
+		"Insert and edit TODOs with the same `--type <type> <message>` shape as `loop commit`, for example `loop iteration todo insert --type F add password reset flow`.",
+		"Complete an item only after its matching commit exists or no-change confirmation is done.",
+	}, " ")
+}
+
+func todoInsertHelpText() string {
+	return strings.Join([]string{
+		"Adds one pending TODO item using the same type aliases and message validation as `loop commit`.",
+		commitTypeHelpText(),
+		"Example: `loop iteration todo insert --type F add password reset flow`.",
+	}, " ")
+}
+
+func todoEditHelpText() string {
+	return strings.Join([]string{
+		"Edits one TODO by the 1-based index from `loop iteration todo list` and preserves its status.",
+		commitTypeHelpText(),
+		"Use the same `--type <type> <message>` shape as `loop commit`, for example `loop iteration todo edit 2 --type T add password reset tests`.",
+	}, " ")
+}
+
+func commitTypeHelpText() string {
+	return strings.Join([]string{
 		"`<type>` is one of F, T, R, D, S, V, or C, with common lowercase aliases accepted.",
 		"Types: F=features, fixes, or user-visible behavior; T=tests or test utilities; R=refactors; D=documentation; S=style or presentation; V=versioning, dependencies, or licensing; C=config, build, lint, CI, or tooling.",
-		"Pass the type separately, for example `loop commit F add weather app shell`; the CLI stages repository changes, validates the message, creates `<TYPE>: <message>`, and returns the SHA and subject.",
-		"Use an English imperative lowercase message, keep it short, omit the trailing period, commit only complete reviewable work, and do not run `git add` or `git commit` directly.",
 	}, " ")
 }
 

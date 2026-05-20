@@ -153,17 +153,17 @@ func TestIterationTodoCommandMutatesOneItemAtATime(t *testing.T) {
 	dir := t.TempDir()
 
 	if _, err := captureStdout(t, func() error {
-		return commandIteration(ctx, globals{}, []string{"todo", "insert", "--iteration-dir", dir, "F", "add", "feature", "shell"})
+		return commandIteration(ctx, globals{}, []string{"todo", "insert", "--iteration-dir", dir, "--type", "F", "add", "feature", "shell"})
 	}); err != nil {
 		t.Fatalf("todo insert first: %v", err)
 	}
 	if _, err := captureStdout(t, func() error {
-		return commandIteration(ctx, globals{}, []string{"todo", "insert", "--iteration-dir", dir, "--after", "0", "T", "add", "feature", "tests"})
+		return commandIteration(ctx, globals{}, []string{"todo", "insert", "--iteration-dir", dir, "--after", "0", "--type", "T", "add", "feature", "tests"})
 	}); err != nil {
 		t.Fatalf("todo insert at top: %v", err)
 	}
 	if _, err := captureStdout(t, func() error {
-		return commandIteration(ctx, globals{}, []string{"todo", "edit", "--iteration-dir", dir, "2", "F", "add", "revised", "feature", "shell"})
+		return commandIteration(ctx, globals{}, []string{"todo", "edit", "--iteration-dir", dir, "2", "--type", "F", "add", "revised", "feature", "shell"})
 	}); err != nil {
 		t.Fatalf("todo edit: %v", err)
 	}
@@ -222,10 +222,11 @@ func TestIterationTodoCommandRejectsInvalidTextAndIndexes(t *testing.T) {
 
 	for _, args := range [][]string{
 		{"todo", "insert", "--iteration-dir", dir},
-		{"todo", "insert", "--iteration-dir", dir, "nope", "add", "feature"},
-		{"todo", "insert", "--iteration-dir", dir, "F", "Add", "feature"},
-		{"todo", "insert", "--iteration-dir", dir, "F", "add", "feature."},
-		{"todo", "edit", "--iteration-dir", dir, "1", "F", "add", "missing"},
+		{"todo", "insert", "--iteration-dir", dir, "F", "add", "feature"},
+		{"todo", "insert", "--iteration-dir", dir, "--type", "nope", "add", "feature"},
+		{"todo", "insert", "--iteration-dir", dir, "--type", "F", "Add", "feature"},
+		{"todo", "insert", "--iteration-dir", dir, "--type", "F", "add", "feature."},
+		{"todo", "edit", "--iteration-dir", dir, "1", "--type", "F", "add", "missing"},
 		{"todo", "complete", "--iteration-dir", dir, "1"},
 		{"todo", "complete", "--iteration-dir", dir},
 	} {

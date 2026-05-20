@@ -112,7 +112,7 @@ Required agent outputs:
 - `summary` artifact with a concise iteration summary.
 - `result` artifact matching the schema.
 
-The agent first uses the plan to select the review slice, then manages TODOs one item at a time to decompose that slice into commit-sized tasks. Each TODO uses the same type and message shape as `loop commit`, and one completed TODO equals one `loop commit` invocation except no-change confirmations. Before the iteration ends, the agent confirms that commits are complete and `git status --short` shows no changed files.
+The agent first uses the plan to select the review slice, then manages TODOs one item at a time to decompose that slice into commit-sized tasks. Each TODO uses the same `--type` and message shape as `loop commit`, and one completed TODO equals one `loop commit` invocation except no-change confirmations. Before the iteration ends, the agent confirms that commits are complete and `git status --short` shows no changed files.
 
 ## Result handling
 

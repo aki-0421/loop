@@ -51,7 +51,7 @@ func TestAgentHelpCommandShowsCompactList(t *testing.T) {
 	for _, want := range []string{
 		"agent-help-v1\n",
 		"cmd:loop branch rename",
-		"cmd:loop commit type message;",
+		"cmd:loop commit --type type message;",
 		"cmd:loop iteration plan",
 		"cmd:loop iteration result",
 		"cmd:loop iteration todo",
@@ -116,12 +116,37 @@ func TestAgentHelpCommandShowsIterationPlanAndTodoDetails(t *testing.T) {
 	for _, want := range []string{
 		"cmd:loop iteration todo",
 		"sub:loop iteration todo complete",
-		"After the plan selects the review slice",
-		"same `<type> <message>` shape as `loop commit`",
-		"complete an item only after its matching commit exists",
+		"After the plan selects the implementation scope",
+		"`<type>` is one of F, T, R, D, S, V, or C",
+		"F=features, fixes, or user-visible behavior",
+		"same `--type <type> <message>` shape as `loop commit`",
+		"Complete an item only after its matching commit exists",
 	} {
 		if !strings.Contains(todoOut, want) {
 			t.Fatalf("todo help output missing %q:\n%s", want, todoOut)
+		}
+	}
+}
+
+func TestAgentHelpCommandShowsTodoTypeDetailsForTypedCommands(t *testing.T) {
+	for _, topic := range [][]string{
+		{"agent", "iteration", "todo", "insert"},
+		{"agent", "iteration", "todo", "edit"},
+	} {
+		out, err := captureStdout(t, func() error {
+			return commandHelp(context.Background(), globals{}, topic)
+		})
+		if err != nil {
+			t.Fatalf("loop help %v: %v", topic, err)
+		}
+		for _, want := range []string{
+			"`<type>` is one of F, T, R, D, S, V, or C",
+			"F=features, fixes, or user-visible behavior",
+			"--type type",
+		} {
+			if !strings.Contains(out, want) {
+				t.Fatalf("todo typed command help %v missing %q:\n%s", topic, want, out)
+			}
 		}
 	}
 }
@@ -152,10 +177,11 @@ func TestAgentHelpCommandShowsCommitContract(t *testing.T) {
 		t.Fatalf("loop help agent commit: %v", err)
 	}
 	for _, want := range []string{
-		"cmd:loop commit type message",
+		"cmd:loop commit --type type message",
 		"desc:`<type>` is one of F, T, R, D, S, V, or C",
 		"F=features, fixes, or user-visible behavior",
-		"loop commit F add weather app shell",
+		"loop commit --type F add weather app shell",
+		"--type type",
 		"do not run `git add` or `git commit` directly",
 	} {
 		if !strings.Contains(out, want) {

@@ -61,7 +61,7 @@ Branch slugs:
 The agent requests commits during the iteration by running:
 
 ```bash
-loop commit <type> <short imperative message>
+loop commit --type <type> <short imperative message>
 ```
 
 The CLI stages repository changes, validates the message, creates the commit on the current iteration branch, and prints the resulting commit SHA and subject. Runtime files under `.loop/runs/`, including `iteration.db`, `prompt.md`, `agent-events.jsonl`, and `errors.log`, are not committed.

@@ -15,11 +15,13 @@ import (
 func commandCommit(ctx context.Context, g globals, args []string) error {
 	fs := flag.NewFlagSet("commit", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
+	kind := fs.String("type", "", "commit type")
+	args = flagsFirst(args, map[string]bool{"type": true})
 	if err := fs.Parse(args); err != nil {
 		return codedError{2, err}
 	}
-	if fs.NArg() < 2 {
-		return codedError{2, fmt.Errorf("usage: loop commit <type> <message>")}
+	if strings.TrimSpace(*kind) == "" || fs.NArg() < 1 {
+		return codedError{2, fmt.Errorf("usage: loop commit --type <type> <message>")}
 	}
 	root, err := gitx.RepoRoot(ctx, ".")
 	if err != nil {
@@ -29,7 +31,7 @@ func commandCommit(ctx context.Context, g globals, args []string) error {
 	if err != nil {
 		return codedError{3, err}
 	}
-	subject, err := buildLoopCommitSubject(fs.Arg(0), strings.Join(fs.Args()[1:], " "), cfg.Git.Commits.MessageMaxLength)
+	subject, err := buildLoopCommitSubject(*kind, strings.Join(fs.Args(), " "), cfg.Git.Commits.MessageMaxLength)
 	if err != nil {
 		return codedError{2, err}
 	}

@@ -146,17 +146,19 @@ func commandIterationTodoInsert(ctx context.Context, g globals, args []string) e
 	fs.SetOutput(os.Stderr)
 	iterDir, dirAlias, runID, iteration := addIterationLocatorFlags(fs)
 	after := fs.Int("after", -1, "insert after 1-based todo index; 0 inserts at the top")
+	kind := fs.String("type", "", "commit type")
 	args = flagsFirst(args, map[string]bool{
 		"iteration-dir": true,
 		"dir":           true,
 		"run":           true,
 		"iteration":     true,
 		"after":         true,
+		"type":          true,
 	})
 	if err := fs.Parse(args); err != nil {
 		return codedError{2, err}
 	}
-	text, err := todoCommitSubject(ctx, g, fs.Args())
+	text, err := todoCommitSubject(ctx, g, *kind, fs.Args(), "usage: loop iteration todo insert --type <type> <message>")
 	if err != nil {
 		return codedError{2, err}
 	}
@@ -187,23 +189,25 @@ func commandIterationTodoEdit(ctx context.Context, g globals, args []string) err
 	fs := flag.NewFlagSet("iteration todo edit", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	iterDir, dirAlias, runID, iteration := addIterationLocatorFlags(fs)
+	kind := fs.String("type", "", "commit type")
 	args = flagsFirst(args, map[string]bool{
 		"iteration-dir": true,
 		"dir":           true,
 		"run":           true,
 		"iteration":     true,
+		"type":          true,
 	})
 	if err := fs.Parse(args); err != nil {
 		return codedError{2, err}
 	}
-	if fs.NArg() < 3 {
-		return codedError{2, fmt.Errorf("usage: loop iteration todo edit <n> [--iteration-dir <dir>|--run <run-id> --iteration <n>] <type> <message>")}
+	if fs.NArg() < 1 {
+		return codedError{2, fmt.Errorf("usage: loop iteration todo edit <n> --type <type> <message> [--iteration-dir <dir>|--run <run-id> --iteration <n>]")}
 	}
 	index, err := parseTodoIndex(fs.Arg(0))
 	if err != nil {
 		return codedError{2, err}
 	}
-	text, err := todoCommitSubject(ctx, g, fs.Args()[1:])
+	text, err := todoCommitSubject(ctx, g, *kind, fs.Args()[1:], "usage: loop iteration todo edit <n> --type <type> <message>")
 	if err != nil {
 		return codedError{2, err}
 	}
@@ -432,11 +436,11 @@ func todoStatusMarker(status string) string {
 	}
 }
 
-func todoCommitSubject(ctx context.Context, g globals, args []string) (string, error) {
-	if len(args) < 2 {
-		return "", errors.New("usage: loop iteration todo insert <type> <message>")
+func todoCommitSubject(ctx context.Context, g globals, kind string, args []string, usage string) (string, error) {
+	if strings.TrimSpace(kind) == "" || len(args) < 1 {
+		return "", errors.New(usage)
 	}
-	return buildLoopCommitSubject(args[0], strings.Join(args[1:], " "), todoCommitMessageMaxLength(ctx, g))
+	return buildLoopCommitSubject(kind, strings.Join(args, " "), todoCommitMessageMaxLength(ctx, g))
 }
 
 func todoCommitMessageMaxLength(ctx context.Context, g globals) int {

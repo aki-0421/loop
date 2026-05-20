@@ -89,7 +89,7 @@ loop help agent iteration todo
 loop iteration plan template
 ```
 
-Use the plan template to choose exactly one selected review slice first. After the plan has fixed the work target, use the TODO workflow described by the help output to decompose that slice into commit-sized tasks. TODOs must contain only the current slice, and each TODO uses the same type and message shape as `loop commit`, for example `loop iteration todo insert F add password reset flow`.
+Use the plan template to choose exactly one selected review slice first. After the plan has fixed the work target, use the TODO workflow described by the help output to decompose that slice into commit-sized tasks. TODOs must contain only the current slice, and each TODO uses the same `--type` and message shape as `loop commit`, for example `loop iteration todo insert --type F add password reset flow`.
 
 `Out of Scope` is required when the instruction is broad. It should briefly name deferred specs, features, tooling, or docs without expanding them into a roadmap.
 
@@ -105,7 +105,7 @@ Before the first commit in an iteration, inspect the commit help:
 
 ```bash
 loop help agent commit
-loop commit F add password reset flow
+loop commit --type F add password reset flow
 ```
 
 Use `loop commit` for commits. Do not run `git add` or `git commit` directly. If `loop commit` rejects the type or message, read the error, fix it immediately, and retry before continuing.
