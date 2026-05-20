@@ -1,6 +1,6 @@
 ---
 name: loop
-description: Execute one loop coding iteration using CLI-managed context, memory, commits, validation, PR text, repair, and result JSON.
+description: Execute one autonomous coding iteration inside the loop harness. Use for CLI-managed iterations that must gather context, choose one reviewer-sized slice, write plan and todo artifacts, edit repository files, validate, commit through loop, optionally create/merge a pull request, and write result JSON.
 version: 1
 ---
 
@@ -8,117 +8,154 @@ version: 1
 
 You are executing one iteration inside the `loop` harness.
 
-## Purpose
+## Scope
 
-- Complete one reviewer-sized iteration from the current instruction.
-- One iteration is one pull-request-sized change, not one project or milestone.
-- Integration settings are provided by `loop iteration read runtime`, including `integration_mode` and `pull_request_mode`.
-- Write human-readable output in English unless repository context explicitly requires otherwise.
-- Do not ask the user questions or wait for manual user actions; make explicit assumptions or return `blocked` when no safe path exists.
-- Use repository evidence before assumptions, and record assumptions in the `result` artifact.
-- Stop after the chosen slice is complete, validated, committed, and documented.
+- Complete exactly one reviewer-sized iteration from the current instruction.
+- Treat one iteration as one pull-request-sized change, not a project, epic, milestone, or roadmap.
+- Use the repository, current instruction, `AGENTS.md`, runtime artifact, memory, and discovered docs as evidence.
+- Do not ask the user questions or wait for manual actions. Make explicit assumptions when safe, or return `blocked` when no safe path exists.
+- Stop after the selected slice is complete, validated, committed, documented, and, when pull request mode is enabled, merged.
 
-## Artifact CLI and memory
+## Product neutrality contract
 
-Use the `loop` CLI binary as the source of truth for runtime artifacts, memory, commits, and result generation.
-Do not construct or edit paths under the iteration directory directly for artifacts; this does not restrict normal repository file edits.
-If a `loop` command fails, read the error, fix the arguments or state, and rerun it.
+`loop` is the OSS harness. Keep it independent of any product, framework, architecture, UI tool, database, cloud provider, test runner, or domain method.
 
-## Iteration map
+- Do not infer task-specific requirements from this file.
+- Do not add conditional protocols for particular work types here.
+- Load task-specific behavior only from the current instruction, nearest `AGENTS.md`, repository docs, available skills, and existing code.
+- If a repository-specific convention is discoverable in docs or code, follow it there instead of duplicating it here.
+- If instructions conflict, prefer the current user instruction, then the nearest repository instruction that applies to the edited files, then this harness contract.
 
-Use this section as the working order and section map for one loop iteration:
+## Harness-owned artifacts
 
-1. Establish context. See [Getting oriented](#getting-oriented).
-2. Choose exactly one implementation slice, then write `plan` and `todo` before any repository file edits. See [Implementation scope planning](#implementation-scope-planning) and [TODO planning](#todo-planning).
-3. Implement only that slice by editing normal repository files.
-4. Validate the relevant behavior. See [Validation](#validation).
-5. Commit each completed TODO immediately with `loop commit` before moving to unrelated work. See [Commit contract](#commit-contract).
-6. Stop after the chosen slice is complete; do not begin a follow-up slice.
-7. Write `worklog` and `summary`. See [Handoff artifacts](#handoff-artifacts).
-8. If the result will be `completed`, rename the branch with `loop branch rename`. See [Branch naming](#branch-naming).
-9. If pull request mode is enabled, write PR artifacts, create the PR, wait for checks, repair CI failures in this same context, and merge through `loop pr`. See [PR artifacts and merge](#pr-artifacts-and-merge).
-10. Before writing `result`, confirm commits are complete and `git status --short` shows no changed files; commit complete work with `loop commit` or revert incomplete work.
-11. Write the final `result` artifact only after the PR is merged in pull request mode. See [Repair and result JSON](#repair-and-result-json).
+Use the `loop` CLI as the source of truth for runtime artifacts, memory, commits, branch state, pull requests, and result generation.
 
-## Getting oriented
+- Do not construct or edit paths under the iteration directory directly for artifacts.
+- This restriction does not apply to normal repository source files.
+- If a `loop` command fails, read the error, fix the arguments or state, and rerun it.
+- Do not bypass the harness with direct Git, PR, or artifact writes when an equivalent `loop` command exists.
 
-Start each iteration by collecting operational context and recent-work context. Keep this phase shallow; detailed codebase exploration happens during planning.
+## Working order
 
-1. Run `loop help agent`.
-2. Run `pwd`.
-3. Run `git status --short --branch`.
-4. Run `loop iteration read runtime` to load integration mode, pull request mode, branch context, configured validation, and goal.
-5. Run `loop iteration read instruction` to load the current task text.
-6. Run `loop memory recent --limit 30` to review recent iteration summaries.
-7. If recent memory points to older relevant context, run `loop memory search <query>`.
-8. If commit history exists, run `git log --oneline -20`.
-9. Inspect broad repository landmarks only when needed to identify planning entry points: root files, package directories, README or index files, and test or CI entry points.
-10. Carry forward the planning inputs: current goal, branch and mode, validation settings, recent changes, unfinished or broken work, constraints, and assumptions.
-11. If required operational context is missing or unsafe to interpret, return `blocked` with the missing evidence.
+1. Establish context.
+2. Select exactly one implementation slice.
+3. Write `plan` and `todo` before any repository file edits.
+4. Implement only the selected slice.
+5. Validate the relevant behavior.
+6. Commit each completed TODO through `loop commit` before moving to unrelated work.
+7. Stop after the selected slice is complete; do not begin a follow-up slice.
+8. Write `worklog` and `summary`.
+9. If the result will be `completed`, rename the branch through `loop branch rename`.
+10. If pull request mode is enabled, create the PR, wait for checks, repair failures narrowly, and merge through `loop pr`.
+11. Confirm `git status --short` has no changed files before writing the final `result`.
+12. Write `result` only after required commits and, when enabled, PR merge are complete.
 
-## Implementation scope planning
+## Establish context
 
-Plan after orientation and before any repository file edits. Use targeted codebase exploration to choose exactly one reviewer-sized slice.
+Start each iteration with shallow operational context. Do not deep-scan the repository until planning identifies a target path.
+
+Run:
+
+```bash
+loop help agent
+pwd
+git status --short --branch
+loop iteration read runtime
+loop iteration read instruction
+loop memory recent --limit 30
+```
+
+Then:
+
+- If memory points to relevant older context, run `loop memory search <query>`.
+- If commit history exists, inspect recent commits, usually with `git log --oneline -20`.
+- Inspect only the broad landmarks needed to plan: root files, package directories, README, nearest `AGENTS.md`, docs indexes, package scripts, tests, CI, and validation entry points.
+- Carry forward the goal, branch/mode, validation settings, recent changes, unfinished work, constraints, and assumptions.
+- Return `blocked` if required operational context is missing or unsafe to interpret.
+
+## Plan one slice
+
+Before editing repository files, inspect the plan help and template:
 
 ```bash
 loop help agent iteration plan
 loop iteration plan template
 ```
 
-Use the CLI-owned template when writing the `plan` artifact.
+Choose one reviewer-sized slice using repository evidence.
 
-1. Start from the concrete entry point named or implied by the instruction or recent work, such as a failing test, route, endpoint, command, job, schema, migration, package, or configuration boundary.
-2. Identify the highest-risk affected path: unknown behavior, integration boundary, data contract, migration, generated artifact, shared abstraction, or failing validation.
-3. Inspect only the evidence needed to understand that path: relevant code, tests, docs or specs, schemas, fixtures, callers, consumers, runtime errors, and validation entry points.
-4. For shared models, types, configuration, repository interfaces, adapters, or other cross-cutting contracts, verify the shape against existing usage from at least one caller and one consumer when available.
-5. Prefer a narrow vertical slice through the riskiest path over completing one layer across packages.
-6. Use a horizontal slice when the task itself is horizontal or the contract is already proven, such as renaming one API, updating one generated schema, fixing one shared utility, repairing one CI rule, or changing one established interface.
-7. Let observed behavior and existing contracts shape new abstractions; introduce shared abstractions only with an immediate caller, consumer, or validation path.
-8. Cross package boundaries when needed to prove the selected behavior, and keep each cross-package change tied to that behavior.
-9. Keep the slice small enough to answer one reviewer question. If it grows, shrink to a characterization, repair, migration step, or proof slice that is independently reviewable.
-10. Separate scaffolding, product behavior, refactors, tests, CI, and documentation unless one directly proves the other inside the selected slice.
-11. Write the `plan` with the selected slice, why it was chosen, evidence used, expected files or subsystems, validation strategy, assumptions, and `Out of Scope`.
-12. When the original instruction is broad, `Out of Scope` must briefly name deferred specs, features, layers, packages, tooling, or docs without turning them into a roadmap.
+- Start from the concrete entry point named or implied by the instruction, such as a failing test, changed behavior, route, endpoint, command, job, schema, migration, package, doc, or configuration boundary.
+- Identify the highest-risk path: unknown behavior, integration boundary, data contract, migration, generated artifact, shared abstraction, or failing validation.
+- Inspect only the evidence needed for that path: relevant code, tests, docs, schemas, fixtures, callers, consumers, runtime errors, logs, and validation entry points.
+- Prefer the smallest independently reviewable change that proves progress toward the instruction.
+- Use a cross-file or cross-package change only when needed to prove the selected behavior.
+- Introduce shared abstractions only when there is immediate evidence for them: a caller, consumer, validation path, or repository convention.
+- Avoid unused scaffolding. A scaffold-only slice is valid only when the instruction or repository evidence makes scaffolding itself the selected deliverable and validation proves it is usable.
+- Separate product behavior, refactors, tests, CI, docs, and tooling unless one directly proves the other inside the selected slice.
+- If the slice grows, shrink it to a characterization, repair, migration step, scaffold, or proof slice that can stand alone.
 
-## TODO planning
+Write the `plan` artifact with:
 
-After the plan has fixed the work target, decompose only that selected slice into TODOs.
+- selected slice,
+- why it was chosen,
+- evidence used,
+- expected files or subsystems,
+- validation strategy,
+- assumptions,
+- out of scope.
+
+When the instruction is broad, `Out of Scope` must name deferred areas briefly without becoming a roadmap.
+
+## Write TODOs
+
+After the plan fixes the work target, inspect TODO help:
 
 ```bash
 loop help agent iteration todo
 ```
 
-Planning gate: stay in planning until both the `plan` and `todo` artifacts have been written. Before that point, only inspect, read, and reason; do not edit repository files, run formatting/codegen that writes files, validate with mutating commands, or call `loop commit`.
+Stay in planning until both `plan` and `todo` are written.
 
-## Validation
+Before both artifacts exist, only inspect, read, and reason. Do not edit repository files, run formatting or codegen that writes files, validate with mutating commands, or call `loop commit`.
 
-Validation is available when configured in the effective config or discoverable from repository conventions such as package scripts, Makefile targets, or CI config. Prefer configured validation first, then the narrowest relevant repository command. If validation was already failing before your change, report that baseline and do not repair unrelated historical failures.
+TODOs should be commit-sized and evidence-linked. Each TODO should end in one of: a source change, a validation change, a documentation update, an artifact update, or no-change evidence.
 
-Validation commands must terminate. Do not run a persistent development server as a foreground command. If browser or HTTP validation requires a server, start it in the background, capture its PID, run the check, and kill the server before continuing. Record the server lifecycle in `worklog`.
+## Validate
 
-## Commit contract
+Prefer configured validation from runtime. If none is configured, use the narrowest relevant repository command discovered from scripts, Makefile, CI, or docs.
 
-Before the first commit in an iteration, inspect the commit help:
+- Validation commands must terminate.
+- Do not run persistent servers in the foreground.
+- If validation needs a server, start it in the background, capture the PID, run the check, and kill the server before continuing.
+- If validation was already failing before your change, report the baseline and do not repair unrelated failures unless that repair is the selected slice.
+- If validation cannot run, record the missing dependency, command, credential, or unsafe condition in `worklog`, PR notes, and `result`.
+
+## Commit
+
+Before the first commit, inspect commit help:
 
 ```bash
 loop help agent commit
-loop commit --type F add password reset flow
 ```
 
-Use `loop commit` for commits. Do not run `git add` or `git commit` directly. If `loop commit` rejects the type or message, read the error, fix it immediately, and retry before continuing.
+Use `loop commit` for commits. Do not run `git add` or `git commit` directly.
 
-Commit immediately after a TODO is complete and sufficiently validated. Mark a TODO complete only after the matching commit exists, unless it required no repository change. Do not accumulate independent TODOs and commit them at the end.
+- Commit immediately after a TODO is complete and sufficiently validated.
+- Mark a TODO complete only after the matching commit exists, unless it required no repository change.
+- Do not accumulate independent TODOs and commit them all at the end.
+- Do not commit secrets, local logs, build outputs, or generated noise unless repository convention or the selected slice requires them.
+- If `loop commit` rejects the type or message, read the error, fix it, and retry.
 
-## Handoff artifacts
+## Handoff
 
-Every completed iteration must leave enough structured context for the next iteration to continue without guessing.
+Write enough context for the next iteration to continue without guessing.
 
 `worklog` should include:
 
 - selected slice,
 - important commands,
 - validation commands and outcomes,
-- files or subsystems changed,
+- changed files or subsystems,
 - decisions and assumptions,
 - reverted or deferred work.
 
@@ -131,45 +168,36 @@ Every completed iteration must leave enough structured context for the next iter
 - next recommended slice,
 - whether the original goal is complete.
 
-If follow-up slices remain, the iteration can still be `completed`, but `should_fully_stop` must be `false`.
+If follow-up slices remain, the iteration may still be `completed`, but `should_fully_stop` must be `false`.
 
-## PR artifacts and merge
+## Pull request mode
 
-If pull request mode is enabled, get template text with `loop iteration read pr-template`. The CLI returns the repository template when present and CLI-owned fallback text otherwise.
+If pull request mode is enabled:
 
-- Follow the template text returned by the CLI; do not assume built-in sections.
-- Write `pr-title` with `loop iteration write pr-title`.
-- Write `pr-body` with `loop iteration write pr-body`.
-- Write PR title and body content in English by default.
-- Preserve visible template headings and checklist labels.
-- Fill visible template sections with the chosen implementation slice, validation results, review notes, and intentionally deferred work.
-- Keep the title concise and action-oriented.
-- Describe only what this PR changes.
-- Mention deferred work briefly when the original instruction is broader than the chosen slice.
-- Run `loop pr create` after PR title and body are ready.
-- Run `loop pr checks`. If it fails, read `loop iteration read pr-checks`, fetch needed logs with `loop pr logs <job-url-or-id>`, repair in the same branch, validate locally, commit with `loop commit`, update worklog and PR body when useful, then rerun `loop pr checks`.
-- Run `loop pr merge` only after checks pass. It performs configured validation, performs a final check wait, merges through `gh`, and records the merged PR state.
-- Do not write a `completed` result in pull request mode until `loop pr merge` has succeeded.
+1. Read the template with `loop iteration read pr-template`.
+2. Write `pr-title` with `loop iteration write pr-title`.
+3. Write `pr-body` with `loop iteration write pr-body`.
+4. Run `loop pr create`.
+5. Run `loop pr checks`.
+6. If checks fail, read `loop iteration read pr-checks`, fetch logs with `loop pr logs <job-url-or-id>`, repair narrowly, validate locally, commit through `loop commit`, update artifacts when useful, and rerun checks.
+7. Run `loop pr merge` only after checks pass.
+
+Follow the returned PR template. Describe only this PR's selected slice, validation results, review notes, and intentionally deferred work. Do not write a `completed` result in pull request mode until `loop pr merge` succeeds.
 
 ## Branch naming
 
-For completed work, inspect the branch rename help first, then rename the iteration branch before writing the result:
+For completed work, inspect branch rename help and rename through the harness before writing the result:
 
 ```bash
 loop help agent branch rename
-loop branch rename feat/add-password-reset-tests
-loop branch rename --kind fix handle-empty-search-query
+loop branch rename --kind fix concise-description #feat/add-password-reset-tests
 ```
 
-Use one of the kinds shown by the help output. If the rename command prints a collision-adjusted branch, keep using that printed branch. Do not run direct Git branch switch, rename, push, PR, or merge commands; use `loop pr` for pull request operations.
+Use one of the kinds shown by help. If the command prints a collision-adjusted branch, keep using that printed branch. Do not run direct Git branch switch, rename, push, PR, or merge commands.
 
 Skip branch rename only for `no_change`, `blocked`, or `failed` results.
 
-## Repair and result JSON
-
-Repair narrowly without broadening the slice. Use `blocked` when no safe path exists.
-
-For `completed`, the branch must already be renamed with `loop branch rename`; otherwise the result command will fail and tell you to rename it. `branch.final_name` is filled from tracked runtime context.
+## Result
 
 Generate the final result through the CLI:
 
@@ -177,6 +205,8 @@ Generate the final result through the CLI:
 loop iteration result --write --status completed --summary "..." --should-stop false --goal-evaluation "..." --validation-status passed
 ```
 
-Add `--validation-command`, `--assumption`, `--blocked-reason`, `--error`, or branch override flags only when needed. The result command owns the JSON shape and returns actionable errors for mechanical contract problems; fix its feedback and rerun it.
+Add validation command, assumption, blocked reason, error, or branch override flags only when needed. The CLI owns the JSON shape. Fix any CLI feedback and rerun.
 
-Set `should_fully_stop` to `true` only when repository evidence shows the original instruction goal is complete. When the selected slice is complete but deferred slices remain, set `status` to `completed`, set `should_fully_stop` to `false`, and explain the next slice in `goal_evaluation`.
+Use `completed` only when the selected slice is complete and required merge steps are finished. Use `blocked` when no safe path exists. Use `failed` for unrecoverable execution errors. Use `no_change` only when repository evidence shows no change is needed.
+
+Set `should_fully_stop` to `true` only when repository evidence shows the original instruction goal is complete.
