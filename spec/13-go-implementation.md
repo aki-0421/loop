@@ -128,8 +128,10 @@ Responsibilities:
 
 - Resolve the GitHub repository from `origin`.
 - Sync open and merged pull request titles and bodies through `gh api graphql`.
-- Store PR memory in the rebuildable `.loop/loop.db` cache.
-- Search recent and older PR memory with SQLite FTS.
+- Sync repository Issues and Issue/PR comment diffs through `gh api graphql`.
+- Create clarification Issues and ensure `loop:question` / `loop:blocking` labels.
+- Store PR memory and GitHub context in the rebuildable `.loop/loop.db` cache.
+- Search recent and older PR, Issue, and comment context with SQLite FTS.
 - Fetch and upsert a merged PR after `loop pr merge`.
 
 ## Atomic writes

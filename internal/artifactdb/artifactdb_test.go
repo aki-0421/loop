@@ -119,3 +119,59 @@ func TestPRMemoryUpsertReplaceDeleteRecentAndSearch(t *testing.T) {
 		t.Fatalf("last sync = %q", lastSync)
 	}
 }
+
+func TestGitHubContextUpsertReplaceRecentSearchAndBlockingIssues(t *testing.T) {
+	root := t.TempDir()
+	dbPath := filepath.Join(root, ".loop", GlobalDBName)
+	records := []GitHubContextRecord{
+		{Repo: "acme/app", Kind: "issue", Number: 7, URL: "https://github.com/acme/app/issues/7", State: "open", Title: "Clarify retention", Body: "Should archived records be retained?", Author: "pm", Labels: "loop:question,loop:blocking", UpdatedAt: "2026-05-18T00:00:00Z", FetchedAt: "2026-05-20T00:00:00Z"},
+		{Repo: "acme/app", Kind: "issue-comment", Number: 7, CommentID: "c1", URL: "https://github.com/acme/app/issues/7#issuecomment-1", State: "open", Title: "Clarify retention", Body: "Keep only GitHub-backed context.", Author: "owner", Labels: "loop:question,loop:blocking", UpdatedAt: "2026-05-19T00:00:00Z", FetchedAt: "2026-05-20T00:00:00Z"},
+	}
+	if err := ReplaceGitHubContext(dbPath, "acme/app", []string{"issue", "issue-comment"}, records, "2026-05-20T00:00:00Z", "github_context.issues.last_sync.acme/app"); err != nil {
+		t.Fatal(err)
+	}
+	recent, err := RecentGitHubContext(dbPath, "acme/app", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recent) != 1 || recent[0].Kind != "issue-comment" || recent[0].CommentID != "c1" {
+		t.Fatalf("recent = %+v, want issue comment", recent)
+	}
+	hits, err := SearchGitHubContext(dbPath, GitHubContextSearchOptions{Query: "GitHub-backed", Repo: "acme/app", Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) != 1 || hits[0].Record.Kind != "issue-comment" {
+		t.Fatalf("search hits = %+v, want issue comment", hits)
+	}
+	open, err := OpenBlockingGitHubIssues(dbPath, "acme/app", []int{7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(open) != 1 || open[0].Number != 7 {
+		t.Fatalf("open blocking issues = %+v, want #7", open)
+	}
+	upserted, err := ApplyGitHubContextSync(dbPath, "acme/app", []GitHubContextRecord{
+		{Repo: "acme/app", Kind: "issue", Number: 7, URL: "https://github.com/acme/app/issues/7", State: "closed", Title: "Clarify retention", Body: "Closed as confirmed.", Author: "pm", Labels: "loop:question,loop:blocking", UpdatedAt: "2026-05-20T01:00:00Z", ClosedAt: "2026-05-20T01:00:00Z", FetchedAt: "2026-05-20T01:00:00Z"},
+	}, "2026-05-20T01:00:00Z", "github_context.updates.last_sync.acme/app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if upserted != 1 {
+		t.Fatalf("upserted = %d, want 1", upserted)
+	}
+	open, err = OpenBlockingGitHubIssues(dbPath, "acme/app", []int{7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(open) != 0 {
+		t.Fatalf("closed issue remained blocking: %+v", open)
+	}
+	lastSync, err := GitHubContextLastSync(dbPath, "github_context.updates.last_sync.acme/app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lastSync != "2026-05-20T01:00:00Z" {
+		t.Fatalf("last sync = %q", lastSync)
+	}
+}

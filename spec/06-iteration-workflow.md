@@ -96,9 +96,9 @@ The base checkout remains untouched during agent execution. Integration happens 
 The agent bootstrap prompt is built in memory for every agent launch. It is intentionally compact and only bootstraps the loop skill workflow. It includes:
 
 - A short instruction to use the `loop` skill.
-- A short instruction to use `loop iteration` and `loop memory` commands.
+- A short instruction to use `loop iteration`, `loop memory`, and `loop issue` commands.
 
-The agent bootstrap prompt does not inline runtime metadata, effective config, schema summaries, full path lists, GitHub PR memory, goal text, instruction file content, or instruction file paths. The `loop` skill tells the agent which CLI commands expose runtime context and writable artifacts.
+The agent bootstrap prompt does not inline runtime metadata, effective config, schema summaries, full path lists, GitHub context memory, goal text, instruction file content, or instruction file paths. The `loop` skill tells the agent which CLI commands expose runtime context, writable artifacts, and GitHub clarification Issues.
 
 ## Agent phase
 
@@ -123,7 +123,7 @@ The CLI validates the `result` artifact and decides the next action.
 | `completed` | Work for this iteration is ready to integrate | validate and integrate |
 | `no_change` | No repository change was needed | stop or continue based on `should_fully_stop` |
 | `needs_repair` | Agent requests repair flow | launch repair if attempts remain |
-| `blocked` | No safe automated path exists | stop the run |
+| `blocked` | No safe automated path exists | sleep when an open `loop:blocking` Issue is referenced; otherwise stop the run |
 | `failed` | Agent could not complete the contract | repair or stop |
 
 ## Dirty state handling

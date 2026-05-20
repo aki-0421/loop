@@ -65,6 +65,34 @@ type PRMemorySearchHit struct {
 	Rank   float64
 }
 
+type GitHubContextRecord struct {
+	Repo      string
+	Kind      string
+	Number    int
+	CommentID string
+	URL       string
+	State     string
+	Title     string
+	Body      string
+	Author    string
+	Labels    string
+	UpdatedAt string
+	ClosedAt  string
+	FetchedAt string
+}
+
+type GitHubContextSearchOptions struct {
+	Query string
+	Repo  string
+	Kind  string
+	Limit int
+}
+
+type GitHubContextSearchHit struct {
+	Record GitHubContextRecord
+	Rank   float64
+}
+
 func LocalDBPath(iterationDir string) string {
 	return filepath.Join(iterationDir, LocalDBName)
 }
@@ -657,6 +685,281 @@ func PRMemoryLastSync(globalDBPath, repo string) (string, error) {
 	return value, err
 }
 
+func UpsertGitHubContext(globalDBPath string, record GitHubContextRecord) error {
+	if record.Repo == "" || record.Kind == "" || record.Number <= 0 {
+		return errors.New("repo, kind, and positive GitHub number are required")
+	}
+	db, err := openGlobal(globalDBPath)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	if err := ensureGlobal(db); err != nil {
+		return err
+	}
+	return upsertGitHubContext(db, record)
+}
+
+func ReplaceGitHubContext(globalDBPath, repo string, kinds []string, records []GitHubContextRecord, syncedAt, metadataKey string) error {
+	if repo == "" {
+		return errors.New("repo is required")
+	}
+	if syncedAt == "" {
+		syncedAt = now()
+	}
+	db, err := openGlobal(globalDBPath)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	if err := ensureGlobal(db); err != nil {
+		return err
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, kind := range normalizeContextKinds(kinds) {
+		if _, err := tx.Exec(`DELETE FROM github_context WHERE repo = ? AND kind = ?`, repo, kind); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`DELETE FROM github_context_fts WHERE repo = ? AND kind = ?`, repo, kind); err != nil {
+			return err
+		}
+	}
+	for _, record := range records {
+		record.Repo = repo
+		if err := upsertGitHubContextTx(tx, record); err != nil {
+			return err
+		}
+	}
+	if metadataKey != "" {
+		if err := setGlobalMetadataTx(tx, metadataKey, syncedAt); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func ApplyGitHubContextSync(globalDBPath, repo string, records []GitHubContextRecord, syncedAt, metadataKey string) (int, error) {
+	if repo == "" {
+		return 0, errors.New("repo is required")
+	}
+	if syncedAt == "" {
+		syncedAt = now()
+	}
+	db, err := openGlobal(globalDBPath)
+	if err != nil {
+		return 0, err
+	}
+	defer db.Close()
+	if err := ensureGlobal(db); err != nil {
+		return 0, err
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	upserted := 0
+	for _, record := range records {
+		record.Repo = repo
+		if err := upsertGitHubContextTx(tx, record); err != nil {
+			return 0, err
+		}
+		upserted++
+	}
+	if metadataKey != "" {
+		if err := setGlobalMetadataTx(tx, metadataKey, syncedAt); err != nil {
+			return 0, err
+		}
+	}
+	return upserted, tx.Commit()
+}
+
+func RecentGitHubContext(globalDBPath, repo string, limit int) ([]GitHubContextRecord, error) {
+	db, err := openGlobal(globalDBPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	defer db.Close()
+	if err := ensureGlobal(db); err != nil {
+		return nil, err
+	}
+	query := `SELECT repo, kind, number, comment_id, url, state, title, body, author, labels, updated_at, closed_at, fetched_at FROM github_context`
+	args := []any{}
+	if repo != "" {
+		query += ` WHERE repo = ?`
+		args = append(args, repo)
+	}
+	query += ` ORDER BY updated_at DESC, number DESC, kind, comment_id`
+	if limit > 0 {
+		query += ` LIMIT ?`
+		args = append(args, limit)
+	}
+	rows, err := db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanGitHubContextRows(rows)
+}
+
+func SearchGitHubContext(globalDBPath string, opts GitHubContextSearchOptions) ([]GitHubContextSearchHit, error) {
+	query := ftsQuery(opts.Query)
+	if query == "" {
+		return nil, nil
+	}
+	db, err := openGlobal(globalDBPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	defer db.Close()
+	if err := ensureGlobal(db); err != nil {
+		return nil, err
+	}
+	sqlText := `SELECT repo, kind, number, comment_id, url, state, title, body, author, labels, updated_at, closed_at, fetched_at, bm25(github_context_fts) AS rank
+FROM github_context_fts WHERE github_context_fts MATCH ?`
+	args := []any{query}
+	if opts.Repo != "" {
+		sqlText += ` AND repo = ?`
+		args = append(args, opts.Repo)
+	}
+	if opts.Kind != "" {
+		sqlText += ` AND kind = ?`
+		args = append(args, opts.Kind)
+	}
+	sqlText += ` ORDER BY rank, updated_at DESC, number DESC`
+	if opts.Limit > 0 {
+		sqlText += ` LIMIT ?`
+		args = append(args, opts.Limit)
+	}
+	rows, err := db.Query(sqlText, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []GitHubContextSearchHit
+	for rows.Next() {
+		var hit GitHubContextSearchHit
+		if err := scanGitHubContextRow(rows, &hit.Record, &hit.Rank); err != nil {
+			return nil, err
+		}
+		out = append(out, hit)
+	}
+	return out, rows.Err()
+}
+
+func CountGitHubContext(globalDBPath, repo, kind string) (int, error) {
+	db, err := openGlobal(globalDBPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	defer db.Close()
+	if err := ensureGlobal(db); err != nil {
+		return 0, err
+	}
+	query := `SELECT COUNT(*) FROM github_context`
+	args := []any{}
+	var clauses []string
+	if repo != "" {
+		clauses = append(clauses, "repo = ?")
+		args = append(args, repo)
+	}
+	if kind != "" {
+		clauses = append(clauses, "kind = ?")
+		args = append(args, kind)
+	}
+	if len(clauses) > 0 {
+		query += ` WHERE ` + strings.Join(clauses, " AND ")
+	}
+	var count int
+	if err := db.QueryRow(query, args...).Scan(&count); err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+func GitHubContextLastSync(globalDBPath, metadataKey string) (string, error) {
+	if metadataKey == "" {
+		return "", nil
+	}
+	db, err := openGlobal(globalDBPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", err
+	}
+	defer db.Close()
+	if err := ensureGlobal(db); err != nil {
+		return "", err
+	}
+	var value string
+	err = db.QueryRow(`SELECT value FROM global_metadata WHERE key = ?`, metadataKey).Scan(&value)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return value, err
+}
+
+func OpenBlockingGitHubIssues(globalDBPath, repo string, numbers []int) ([]GitHubContextRecord, error) {
+	if repo == "" || len(numbers) == 0 {
+		return nil, nil
+	}
+	db, err := openGlobal(globalDBPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	defer db.Close()
+	if err := ensureGlobal(db); err != nil {
+		return nil, err
+	}
+	placeholders := make([]string, 0, len(numbers))
+	args := []any{repo, "issue", "open"}
+	for _, number := range numbers {
+		if number <= 0 {
+			continue
+		}
+		placeholders = append(placeholders, "?")
+		args = append(args, number)
+	}
+	if len(placeholders) == 0 {
+		return nil, nil
+	}
+	query := `SELECT repo, kind, number, comment_id, url, state, title, body, author, labels, updated_at, closed_at, fetched_at
+FROM github_context WHERE repo = ? AND kind = ? AND state = ? AND number IN (` + strings.Join(placeholders, ",") + `)`
+	rows, err := db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	records, err := scanGitHubContextRows(rows)
+	if err != nil {
+		return nil, err
+	}
+	out := records[:0]
+	for _, record := range records {
+		if contextLabelsContain(record.Labels, "loop:blocking") {
+			out = append(out, record)
+		}
+	}
+	return out, nil
+}
+
 func upsertPRMemory(db *sql.DB, record PRMemoryRecord) error {
 	tx, err := db.Begin()
 	if err != nil {
@@ -718,6 +1021,100 @@ func deletePRMemoryTx(tx *sql.Tx, repo string, number int) error {
 	}
 	_, err := tx.Exec(`DELETE FROM pr_memory_fts WHERE repo = ? AND number = ?`, repo, number)
 	return err
+}
+
+func upsertGitHubContext(db *sql.DB, record GitHubContextRecord) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := upsertGitHubContextTx(tx, record); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func upsertGitHubContextTx(tx *sql.Tx, record GitHubContextRecord) error {
+	record.Kind = normalizeGitHubContextKind(record.Kind)
+	record.State = strings.ToLower(strings.TrimSpace(record.State))
+	if record.FetchedAt == "" {
+		record.FetchedAt = now()
+	}
+	if record.CommentID == "" {
+		record.CommentID = ""
+	}
+	if _, err := tx.Exec(`INSERT INTO github_context(repo, kind, number, comment_id, url, state, title, body, author, labels, updated_at, closed_at, fetched_at)
+VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(repo, kind, number, comment_id) DO UPDATE SET
+	url = excluded.url,
+	state = excluded.state,
+	title = excluded.title,
+	body = excluded.body,
+	author = excluded.author,
+	labels = excluded.labels,
+	updated_at = excluded.updated_at,
+	closed_at = excluded.closed_at,
+	fetched_at = excluded.fetched_at`,
+		record.Repo, record.Kind, record.Number, record.CommentID, record.URL, record.State, record.Title, record.Body, record.Author, record.Labels, record.UpdatedAt, record.ClosedAt, record.FetchedAt); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM github_context_fts WHERE repo = ? AND kind = ? AND number = ? AND comment_id = ?`,
+		record.Repo, record.Kind, record.Number, record.CommentID); err != nil {
+		return err
+	}
+	if strings.TrimSpace(record.Title+"\n"+record.Body) != "" {
+		if _, err := tx.Exec(`INSERT INTO github_context_fts(repo, kind, number, comment_id, url, state, title, body, author, labels, updated_at, closed_at, fetched_at)
+VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			record.Repo, record.Kind, record.Number, record.CommentID, record.URL, record.State, record.Title, record.Body, record.Author, record.Labels, record.UpdatedAt, record.ClosedAt, record.FetchedAt); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func scanGitHubContextRows(rows *sql.Rows) ([]GitHubContextRecord, error) {
+	var out []GitHubContextRecord
+	for rows.Next() {
+		var record GitHubContextRecord
+		if err := rows.Scan(&record.Repo, &record.Kind, &record.Number, &record.CommentID, &record.URL, &record.State, &record.Title, &record.Body, &record.Author, &record.Labels, &record.UpdatedAt, &record.ClosedAt, &record.FetchedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, record)
+	}
+	return out, rows.Err()
+}
+
+func scanGitHubContextRow(rows *sql.Rows, record *GitHubContextRecord, rank *float64) error {
+	return rows.Scan(&record.Repo, &record.Kind, &record.Number, &record.CommentID, &record.URL, &record.State, &record.Title, &record.Body, &record.Author, &record.Labels, &record.UpdatedAt, &record.ClosedAt, &record.FetchedAt, rank)
+}
+
+func normalizeContextKinds(kinds []string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(kinds))
+	for _, kind := range kinds {
+		kind = normalizeGitHubContextKind(kind)
+		if kind == "" || seen[kind] {
+			continue
+		}
+		seen[kind] = true
+		out = append(out, kind)
+	}
+	return out
+}
+
+func normalizeGitHubContextKind(kind string) string {
+	return strings.ToLower(strings.TrimSpace(kind))
+}
+
+func contextLabelsContain(labels, want string) bool {
+	want = strings.ToLower(strings.TrimSpace(want))
+	for _, label := range strings.Split(labels, ",") {
+		if strings.ToLower(strings.TrimSpace(label)) == want {
+			return true
+		}
+	}
+	return false
 }
 
 func setGlobalMetadataTx(tx *sql.Tx, key, value string) error {
@@ -784,6 +1181,8 @@ func ensureGlobal(db *sql.DB) error {
 		`CREATE TABLE IF NOT EXISTS global_metadata(key TEXT PRIMARY KEY, value TEXT NOT NULL)`,
 		`CREATE TABLE IF NOT EXISTS pr_memory(repo TEXT NOT NULL, number INTEGER NOT NULL, url TEXT NOT NULL, state TEXT NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL, updated_at TEXT NOT NULL, merged_at TEXT NOT NULL, fetched_at TEXT NOT NULL, PRIMARY KEY(repo, number))`,
 		`CREATE VIRTUAL TABLE IF NOT EXISTS pr_memory_fts USING fts5(repo UNINDEXED, number UNINDEXED, url UNINDEXED, state UNINDEXED, title, body, updated_at UNINDEXED, merged_at UNINDEXED, fetched_at UNINDEXED, tokenize = 'unicode61')`,
+		`CREATE TABLE IF NOT EXISTS github_context(repo TEXT NOT NULL, kind TEXT NOT NULL, number INTEGER NOT NULL, comment_id TEXT NOT NULL DEFAULT '', url TEXT NOT NULL, state TEXT NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL, author TEXT NOT NULL, labels TEXT NOT NULL, updated_at TEXT NOT NULL, closed_at TEXT NOT NULL, fetched_at TEXT NOT NULL, PRIMARY KEY(repo, kind, number, comment_id))`,
+		`CREATE VIRTUAL TABLE IF NOT EXISTS github_context_fts USING fts5(repo UNINDEXED, kind UNINDEXED, number UNINDEXED, comment_id UNINDEXED, url UNINDEXED, state UNINDEXED, title, body, author UNINDEXED, labels UNINDEXED, updated_at UNINDEXED, closed_at UNINDEXED, fetched_at UNINDEXED, tokenize = 'unicode61')`,
 	}
 	for _, stmt := range stmts {
 		if _, err := db.Exec(stmt); err != nil {

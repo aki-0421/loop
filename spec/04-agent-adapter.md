@@ -31,13 +31,13 @@ An adapter receives:
 The assembled prompt is a compact, non-user-editable skill bootstrap:
 
 1. A short instruction to use the `loop` skill.
-2. A short instruction to use `loop iteration`, `loop memory`, and `loop commit` commands.
+2. A short instruction to use `loop iteration`, `loop memory`, `loop issue`, and `loop commit` commands.
 
-Detailed loop behavior and CLI usage live in repository skills, especially `loop`. The prompt intentionally does not inline skill instructions, effective config, schema summaries, required file paths, runtime values, recent GitHub PR memory, goal text, instruction Markdown content, or instruction file paths.
+Detailed loop behavior and CLI usage live in repository skills, especially `loop`. The prompt intentionally does not inline skill instructions, effective config, schema summaries, required file paths, runtime values, recent GitHub context memory, goal text, instruction Markdown content, or instruction file paths.
 
 ## Bootstrap requirements
 
-The code-generated bootstrap activates the `loop` skill. In pull request mode it tells the agent to read template text with `loop iteration read pr-template`. Skills use `loop iteration`, `loop memory`, and `loop pr` commands for mechanical runtime artifact reads and writes. The agent decides when a commit-ready unit is complete, but commit creation goes through `loop commit`; result JSON, pull request text, check repair, and PR merge are handled inside the agent context through CLI commands.
+The code-generated bootstrap activates the `loop` skill. In pull request mode it tells the agent to read template text with `loop iteration read pr-template`. Skills use `loop iteration`, `loop memory`, `loop issue`, and `loop pr` commands for mechanical runtime artifact reads, writes, and GitHub clarification Issues. The agent decides when a commit-ready unit is complete, but commit creation goes through `loop commit`; result JSON, pull request text, check repair, and PR merge are handled inside the agent context through CLI commands.
 
 ## Process output capture
 

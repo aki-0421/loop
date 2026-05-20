@@ -43,6 +43,7 @@ var iterationArtifacts = map[string]iterationArtifact{
 	"pr-state":         {Name: "pr-state", File: "pr-state.json", Database: true},
 	"pr-checks":        {Name: "pr-checks", File: "pr-checks.json", Database: true},
 	"pr-check-log":     {Name: "pr-check-log", File: "pr-check-log.txt", Database: true},
+	"github-updates":   {Name: "github-updates", File: "github-updates.md", Database: true},
 	"pr-template":      {Name: "pr-template", Repository: true},
 	"instruction":      {Name: "instruction", File: "prompt.md", NoPath: true},
 }
@@ -57,6 +58,7 @@ var iterationArtifactAliases = map[string]string{
 	"pr_state":         "pr-state",
 	"pr_checks":        "pr-checks",
 	"pr_check_log":     "pr-check-log",
+	"github_updates":   "github-updates",
 	"pull-request":     "pr-body",
 	"pr_template":      "pr-template",
 	"task":             "instruction",

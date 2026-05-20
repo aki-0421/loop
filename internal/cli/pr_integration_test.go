@@ -833,6 +833,10 @@ func runTestFakeAgent() int {
 	case "blocked":
 		writeTestFakeResult(iterDir, "blocked", nil)
 		return 1
+	case "blocking_issue":
+		_ = commandIssue(context.Background(), globals{JSON: true, NoColor: true}, []string{"ask", "--title", "Clarify blocking fixture", "--body", "Can this blocked fixture continue?", "--blocking"})
+		writeTestFakeResult(iterDir, "blocked", nil)
+		return 0
 	case "no_change":
 		writeTestFakeResult(iterDir, "no_change", nil)
 		return 0
@@ -994,7 +998,7 @@ func writeTestFakeResult(iterDir, status string, commit map[string]any) {
 		"blocked_reason":    "",
 	}
 	if status == "blocked" {
-		result["blocked_reason"] = "Fake agent blocked by requested mode."
+		result["blocked_reason"] = getenvForTestAgent("LOOP_FAKE_BLOCKED_REASON", "Fake agent blocked by requested mode.")
 	}
 	data, _ := json.MarshalIndent(result, "", "  ")
 	_ = artifactdb.Write(iterDir, "result", string(append(data, '\n')))

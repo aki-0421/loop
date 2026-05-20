@@ -32,7 +32,9 @@ Repair outputs the same result JSON schema through the `result` artifact. If rep
 
 A blocked state means the agent cannot proceed safely without external information or permissions:
 
-- The run stops.
+- If the blocked reason references an open GitHub Issue labeled `loop:blocking`, the current `loop run` process enters in-memory sleep mode instead of exiting.
+- While sleeping, the CLI does not start a new iteration. It polls GitHub Issue/PR diffs every five minutes, writes `github-updates` when a diff appears, and relaunches the agent in the same iteration to decide whether work can proceed.
+- If there is no open blocking Issue reference, or if a wake attempt still cannot proceed and no open blocking Issue remains, the run stops as blocked.
 - The blocked reason is written to the `result` artifact and `run-state.json`.
 - The CLI does not ask the user.
 
@@ -45,7 +47,7 @@ The CLI must be able to resume from these stages:
 - `repair_running`: inspect process marker; if no process exists, retry repair or stop.
 - `validating`: rerun validation.
 - `integrating`: inspect Git and PR state, then complete integration or stop.
-- `blocked`: resume only after instruction/config changes.
+- `blocked`: resume only after instruction/config changes, or by starting a new run that observes updated GitHub Issues during normal startup. Sleep mode itself is not persisted as a run-state stage.
 - `failed`: resume only with `--repair` or explicit iteration selection.
 
 ## State reconstruction

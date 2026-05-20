@@ -199,8 +199,8 @@ loop iteration result [--iteration-dir <dir>|--run <run-id> --iteration <n>] --s
 
 If `--iteration-dir` is omitted, commands resolve the current agent iteration automatically. If `--run` is supplied, the CLI resolves `.loop/runs/<run-id>/iterations/<n>` using the configured log directory; `--iteration latest` selects the newest iteration.
 
-Writable artifacts are `plan`, `todo`, `worklog`, `summary`, `result`, `pr-title`, and `pr-body`. Read-only artifacts include `runtime`, `instruction`, `prompt`, `effective-config`, `validation`, `events`, `stdout`, and `stderr`.
-PR command artifacts `pr-state`, `pr-checks`, and `pr-check-log` are read-only to the agent and written by `loop pr`.
+Writable artifacts are `plan`, `todo`, `worklog`, `summary`, `result`, `pr-title`, and `pr-body`. Read-only artifacts include `runtime`, `instruction`, `prompt`, `effective-config`, `validation`, `events`, `stdout`, `stderr`, and `github-updates`.
+PR command artifacts `pr-state`, `pr-checks`, and `pr-check-log` are read-only to the agent and written by `loop pr`. `github-updates` is written by the CLI when new GitHub Issue, PR, or comment diffs are observed at an iteration boundary or sleep wake cycle.
 
 `plan` and `todo` use dedicated namespaces instead of generic bulk writes. `loop iteration plan template` prints the CLI-owned plan template, `loop iteration plan write` stores the filled plan, and `loop iteration plan read` reads it. After the plan selects the review slice, `loop iteration todo list` prints numbered TODOs; `insert --type <type> <message>`, `edit <n> --type <type> <message>`, and `complete <n>` mutate one TODO item at a time by the 1-based index shown by `list`. TODO `type` and `message` use the same validation as `loop commit`. Generic `loop iteration write plan`, `append plan`, `write todo`, and `append todo` are rejected with guidance to these commands.
 
@@ -232,6 +232,18 @@ loop pr merge [--iteration-dir <dir>|--run <run-id> --iteration <n>]
 
 `loop pr create` reads `pr-title` and `pr-body`, pushes the tracked branch when configured, creates or reuses the pull request, and writes `pr-state`. `loop pr checks` pushes current commits, waits for checks, writes `pr-checks`, and exits non-zero on failed checks with only a concise `errors.log` pointer. `loop pr logs` writes `pr-check-log`. `loop pr merge` runs configured validation, performs a final check wait, merges through `gh`, and records `pr-state.status=merged`.
 
+## `loop issue`
+
+Create GitHub clarification Issues through agent-facing CLI commands.
+
+```bash
+loop issue ask --title <text> --body <text> [--blocking] [--iteration-dir <dir>|--run <run-id> --iteration <n>]
+```
+
+`loop issue ask` creates the GitHub labels `loop:question` and, with `--blocking`, `loop:blocking`, applies them to the Issue, embeds loop run/iteration metadata in the Issue body, prints the Issue number and URL, and stores the Issue in the rebuildable GitHub context cache. Label creation failure is a hard command error.
+
+Agents use this command only for important product, policy, or large blocking specification ambiguity. After creating an Issue, the agent continues implementation that is unrelated to that clarification. The agent writes a `blocked` result only when no safe independent work remains, and the blocked reason should include the blocking Issue URL.
+
 ## `loop skills`
 
 Manage repository skills.
@@ -251,14 +263,14 @@ Rules:
 
 ## `loop memory`
 
-Inspect GitHub pull request memory.
+Inspect cached GitHub PR, Issue, and comment context.
 
 ```bash
 loop memory recent [--repo <owner/name>] [--limit 30]
 loop memory search <query> [--repo <owner/name>] [--limit <n>]
 ```
 
-`recent` returns recent open and merged PR records. `search` returns matching PR title/body excerpts from the local `.loop/loop.db` cache without performing network access. Memory refresh is automatic during `loop run` and after successful `loop pr merge`; there is no manual memory refresh command.
+`recent` returns recent cached GitHub context records. `search` returns matching PR title/body, Issue title/body, and comment excerpts from the local `.loop/loop.db` cache without performing network access. Output includes kind (`pr`, `issue`, `issue-comment`, or `pr-comment`), number, state, repository, title, URL, and excerpt. Memory refresh is automatic during `loop run` and after successful `loop pr merge`; there is no manual memory refresh command.
 
 ## `loop doctor`
 

@@ -55,6 +55,7 @@ Environment controls:
 | `LOOP_FAKE_AGENT_MODE=needs_repair` | Write a valid `needs_repair` result. |
 | `LOOP_FAKE_AGENT_MODE=dirty` | Leave uncommitted changes. |
 | `LOOP_FAKE_AGENT_MODE=blocked` | Write blocked result. |
+| `LOOP_FAKE_AGENT_MODE=blocking_issue` | Create a blocking clarification Issue and write blocked result. |
 | `LOOP_FAKE_AGENT_MODE=validation_fix` | Commit a validation marker for validation repair tests. |
 | `LOOP_FAKE_AGENT_SEQUENCE` | Comma-separated modes consumed by successive agent invocations. |
 | `LOOP_FAKE_AGENT_COUNT_FILE` | Counter file used with `LOOP_FAKE_AGENT_SEQUENCE` across process invocations. |

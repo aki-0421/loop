@@ -41,7 +41,7 @@ func TestRunRendererShowsInitialMemoryFetch(t *testing.T) {
 
 	renderer.MemorySync("acme/app", true)
 
-	want := "fetching initial GitHub PR memory for acme/app"
+	want := "fetching initial GitHub memory for acme/app"
 	if !strings.Contains(out.String(), want) {
 		t.Fatalf("line renderer should print initial memory fetch: %q", out.String())
 	}

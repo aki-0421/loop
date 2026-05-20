@@ -37,6 +37,9 @@ type codedError struct {
 }
 
 var prChecksSleep = sleepContext
+var githubSleepPoll = sleepContext
+
+var githubSleepPollInterval = 5 * time.Minute
 
 var errPRChecksTimedOut = errors.New("pull request checks timed out")
 
@@ -103,6 +106,8 @@ func Run(args []string) error {
 		return commandBranch(ctx, g, rest[1:])
 	case "pr":
 		return commandPR(ctx, g, rest[1:])
+	case "issue":
+		return commandIssue(ctx, g, rest[1:])
 	case "iteration":
 		return commandIteration(ctx, g, rest[1:])
 	case "skills":
@@ -431,11 +436,30 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 				return codedError{4, err}
 			}
 		}
+		slept := false
+		result, slept, err = sleepOnBlockingIssues(ctx, root, cfg, workDir, &paths, result, renderer)
+		if err != nil {
+			state.Stage = runstate.StageFailed
+			_ = runstate.Write(statePath, state)
+			return codedError{4, err}
+		}
 		renderer.Branch(paths.CurrentBranch)
 		cleanup.Branch = paths.CurrentBranch
 		state.Iterations[len(state.Iterations)-1].BranchCurrent = paths.CurrentBranch
 		lastResult = result
 		mergedPR := paths.PullRequestMode && prStateMerged(iterDir)
+		if slept {
+			_ = runstate.AppendEvent(paths.Events, runstate.Event{
+				"type":   "github_sleep.resumed",
+				"status": result.Status,
+			})
+		}
+		if result.Status == "blocked" {
+			state.Stage = runstate.StageBlocked
+			_ = runstate.Write(statePath, state)
+			appendErrorLog(paths.Errors, "run blocked: "+result.BlockedReason)
+			return codedError{7, fmt.Errorf("run blocked: %s", result.BlockedReason)}
+		}
 		state.Stage = runstate.StageValidating
 		_ = runstate.Write(statePath, state)
 		renderer.Stage(runstate.StageValidating, "running validation")
@@ -462,12 +486,6 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 				appendErrorLog(paths.Errors, "required validation failed")
 				return codedError{5, fmt.Errorf("required validation failed")}
 			}
-		}
-		if result.Status == "blocked" {
-			state.Stage = runstate.StageBlocked
-			_ = runstate.Write(statePath, state)
-			appendErrorLog(paths.Errors, "run blocked: "+result.BlockedReason)
-			return codedError{7, fmt.Errorf("run blocked: %s", result.BlockedReason)}
 		}
 		if result.Status == "failed" {
 			state.Stage = runstate.StageFailed
@@ -1055,8 +1073,100 @@ func commandMemory(ctx context.Context, g globals, args []string) error {
 	return nil
 }
 
+func commandIssue(ctx context.Context, g globals, args []string) error {
+	if len(args) == 0 {
+		return codedError{2, fmt.Errorf("usage: loop issue <ask>")}
+	}
+	switch args[0] {
+	case "ask":
+		return commandIssueAsk(ctx, g, args[1:])
+	default:
+		return codedError{2, fmt.Errorf("unknown issue subcommand %q", args[0])}
+	}
+}
+
+func commandIssueAsk(ctx context.Context, g globals, args []string) error {
+	args = flagsFirst(args, map[string]bool{
+		"title": true, "body": true, "body-file": true,
+		"iteration-dir": true, "dir": true, "run": true, "iteration": true,
+	})
+	fs := flag.NewFlagSet("issue ask", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	title := fs.String("title", "", "issue title")
+	body := fs.String("body", "", "issue body")
+	bodyFile := fs.String("body-file", "", "read issue body from file")
+	blocking := fs.Bool("blocking", false, "mark the question as blocking")
+	iterDir := fs.String("iteration-dir", "", "iteration directory")
+	dirAlias := fs.String("dir", "", "iteration directory")
+	runID := fs.String("run", os.Getenv("LOOP_RUN_ID"), "run id")
+	iteration := fs.String("iteration", defaultIterationEnv(), "iteration id")
+	if err := fs.Parse(args); err != nil {
+		return codedError{2, err}
+	}
+	if fs.NArg() != 0 {
+		return codedError{2, fmt.Errorf("usage: loop issue ask --title <text> --body <text> [--blocking]")}
+	}
+	if *dirAlias != "" {
+		*iterDir = *dirAlias
+	}
+	if *bodyFile != "" {
+		data, err := os.ReadFile(*bodyFile)
+		if err != nil {
+			return codedError{1, fmt.Errorf("read issue body file: %w", err)}
+		}
+		*body = string(data)
+	}
+	root, err := gitx.RepoRoot(ctx, ".")
+	if err != nil {
+		return codedError{1, err}
+	}
+	cfg, err := config.Load(config.LoadOptions{CWD: root, ConfigPath: g.ConfigPath, Overrides: config.Overrides{Agent: g.Agent, NoColor: g.NoColor}})
+	if err != nil {
+		return codedError{3, err}
+	}
+	resolvedDir, err := resolveIterationDir(ctx, g, *iterDir, *runID, *iteration)
+	if err != nil {
+		return codedError{1, err}
+	}
+	metadataRunID := strings.TrimSpace(*runID)
+	metadataIterationID := strings.TrimSpace(*iteration)
+	if resolvedDir != "" {
+		parsedRun, parsedIteration := artifactdb.ParseIterationDir(resolvedDir)
+		if parsedRun != "" {
+			metadataRunID = parsedRun
+		}
+		if parsedIteration != "" {
+			metadataIterationID = parsedIteration
+		}
+	}
+	record, err := memory.CreateIssueQuestion(ctx, memory.IssueQuestionOptions{
+		WorkDir:     root,
+		RunsDir:     filepath.Join(root, cfg.Logs.Dir),
+		Title:       *title,
+		Body:        *body,
+		Blocking:    *blocking,
+		RunID:       metadataRunID,
+		IterationID: metadataIterationID,
+	})
+	if err != nil {
+		return codedError{1, err}
+	}
+	value := map[string]any{
+		"number":   record.Number,
+		"url":      record.URL,
+		"title":    record.Title,
+		"blocking": *blocking,
+	}
+	return printResult(g, value, fmt.Sprintf("created issue #%d %s\n", record.Number, record.URL))
+}
+
 func formatMemoryRecord(item memory.Record) string {
+	kind := item.Kind
+	if kind == "" {
+		kind = "pr"
+	}
 	return strings.Join([]string{
+		cleanMemoryField(kind),
 		fmt.Sprintf("#%d", item.Number),
 		item.State,
 		cleanMemoryField(item.Repo),
@@ -1092,15 +1202,26 @@ func syncMemoryBeforeRun(ctx context.Context, root string, cfg config.Config, re
 	if lastSync == "" && renderer != nil {
 		renderer.MemorySync(repo, true)
 	}
-	result, err := memory.Sync(ctx, memory.SyncOptions{WorkDir: root, RunsDir: runsDir})
-	if err != nil {
+	if _, err := memory.Sync(ctx, memory.SyncOptions{WorkDir: root, RunsDir: runsDir}); err != nil {
 		if count == 0 && lastSync == "" {
 			return fmt.Errorf("initial GitHub PR memory sync failed: %w", err)
 		}
 		fmt.Fprintf(os.Stderr, "warning: GitHub PR memory sync failed; using cached memory: %v\n", err)
 		return nil
 	}
-	if result.Fetched == 0 && count == 0 {
+	contextCount, err := artifactdb.CountGitHubContext(artifactdb.GlobalDBPathFromRunsPath(runsDir), repo, "issue")
+	if err != nil {
+		return err
+	}
+	contextLastSync, err := artifactdb.GitHubContextLastSync(artifactdb.GlobalDBPathFromRunsPath(runsDir), "github_context.issues.last_sync."+repo)
+	if err != nil {
+		return err
+	}
+	if _, err := memory.SyncIssues(ctx, memory.SyncOptions{WorkDir: root, RunsDir: runsDir}); err != nil {
+		if contextCount == 0 && contextLastSync == "" {
+			return fmt.Errorf("initial GitHub Issue context sync failed: %w", err)
+		}
+		fmt.Fprintf(os.Stderr, "warning: GitHub Issue context sync failed; using cached context: %v\n", err)
 		return nil
 	}
 	return nil
@@ -1129,6 +1250,20 @@ func syncMemoryBeforeIteration(ctx context.Context, root string, cfg config.Conf
 		"upserted": result.Upserted,
 		"deleted":  result.Deleted,
 	})
+	contextResult, err := memory.SyncGitHubUpdates(ctx, memory.SyncOptions{WorkDir: root, RunsDir: runsDir})
+	if err != nil {
+		recordGitHubContextWarning(paths, err)
+		return
+	}
+	if len(contextResult.Records) > 0 {
+		writeGitHubUpdatesArtifact(filepath.Dir(paths.Result), contextResult.Records)
+	}
+	_ = runstate.AppendEvent(paths.Events, runstate.Event{
+		"type":     "github_context.sync.completed",
+		"repo":     contextResult.Repo,
+		"fetched":  contextResult.Fetched,
+		"upserted": contextResult.Upserted,
+	})
 }
 
 func recordMemorySyncWarning(paths pathSet, err error) {
@@ -1138,6 +1273,161 @@ func recordMemorySyncWarning(paths pathSet, err error) {
 		"type":  "memory.sync.failed",
 		"error": err.Error(),
 	})
+}
+
+func recordGitHubContextWarning(paths pathSet, err error) {
+	msg := fmt.Sprintf("GitHub context sync failed; using cached context: %v", err)
+	appendErrorLog(paths.Errors, msg)
+	_ = runstate.AppendEvent(paths.Events, runstate.Event{
+		"type":  "github_context.sync.failed",
+		"error": err.Error(),
+	})
+}
+
+func sleepOnBlockingIssues(ctx context.Context, root string, cfg config.Config, workDir string, paths *pathSet, result *validation.IterationResult, renderer *runRenderer) (*validation.IterationResult, bool, error) {
+	if result == nil || result.Status != "blocked" {
+		return result, false, nil
+	}
+	open, err := hasOpenBlockingIssues(ctx, root, cfg, result.BlockedReason)
+	if err != nil {
+		recordGitHubContextWarning(*paths, err)
+		return result, false, nil
+	}
+	if !open {
+		return result, false, nil
+	}
+	slept := false
+	for {
+		slept = true
+		if renderer != nil {
+			renderer.SleepWaitingForGitHub()
+		}
+		_ = runstate.AppendEvent(paths.Events, runstate.Event{
+			"type":   "github_sleep.waiting",
+			"reason": result.BlockedReason,
+		})
+		if err := githubSleepPoll(ctx, githubSleepPollInterval); err != nil {
+			return result, slept, err
+		}
+		updates, err := memory.SyncGitHubUpdates(ctx, memory.SyncOptions{WorkDir: root, RunsDir: filepath.Join(root, cfg.Logs.Dir)})
+		if err != nil {
+			recordGitHubContextWarning(*paths, err)
+			continue
+		}
+		if len(updates.Records) == 0 {
+			_ = runstate.AppendEvent(paths.Events, runstate.Event{
+				"type": "github_sleep.no_updates",
+				"repo": updates.Repo,
+			})
+			continue
+		}
+		writeGitHubUpdatesArtifact(filepath.Dir(paths.Result), updates.Records)
+		_ = runstate.AppendEvent(paths.Events, runstate.Event{
+			"type":    "github_sleep.updates",
+			"repo":    updates.Repo,
+			"records": len(updates.Records),
+		})
+		previousExtra := paths.AgentPromptExtra
+		paths.AgentPromptExtra = githubUpdatesPromptExtra(updates.Records)
+		next, err := runAgentAndReadResult(ctx, cfg, workDir, paths, renderer.AgentEvent)
+		paths.AgentPromptExtra = previousExtra
+		if err != nil {
+			return nil, slept, err
+		}
+		if next.Status == "needs_repair" {
+			next, err = repairRequested(ctx, cfg, workDir, paths, next, renderer.AgentEvent)
+			if err != nil {
+				return nil, slept, err
+			}
+		}
+		if next.Status != "blocked" {
+			return next, slept, nil
+		}
+		open, err = hasOpenBlockingIssues(ctx, root, cfg, next.BlockedReason)
+		if err != nil {
+			recordGitHubContextWarning(*paths, err)
+			return next, slept, nil
+		}
+		if !open {
+			return next, slept, nil
+		}
+		result = next
+	}
+}
+
+func hasOpenBlockingIssues(ctx context.Context, root string, cfg config.Config, blockedReason string) (bool, error) {
+	numbers := issueNumbersFromText(blockedReason)
+	if len(numbers) == 0 {
+		return false, nil
+	}
+	records, err := memory.OpenBlockingIssues(ctx, memory.BlockingIssueOptions{
+		WorkDir: root,
+		RunsDir: filepath.Join(root, cfg.Logs.Dir),
+		Numbers: numbers,
+	})
+	if errors.Is(err, memory.ErrNoGitHubRemote) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return len(records) > 0, nil
+}
+
+func issueNumbersFromText(text string) []int {
+	seen := map[int]bool{}
+	var numbers []int
+	for _, field := range strings.FieldsFunc(text, func(r rune) bool {
+		switch r {
+		case ' ', '\n', '\t', '\r', '<', '>', '(', ')', '[', ']', ',', ';':
+			return true
+		default:
+			return false
+		}
+	}) {
+		field = strings.Trim(field, ".:")
+		number := memory.IssueNumber(field)
+		if number <= 0 || seen[number] {
+			continue
+		}
+		seen[number] = true
+		numbers = append(numbers, number)
+	}
+	return numbers
+}
+
+func writeGitHubUpdatesArtifact(iterDir string, records []memory.Record) {
+	if len(records) == 0 {
+		return
+	}
+	_ = artifactdb.Write(iterDir, "github-updates", formatGitHubUpdates(records))
+}
+
+func githubUpdatesPromptExtra(records []memory.Record) string {
+	return "## GitHub Updates\n\n" + formatGitHubUpdates(records) + "\nUse these GitHub Issue and PR updates to decide whether the blocked work can proceed. If the updates are unrelated and no safe independent work remains, write another blocked result referencing the relevant Issue URL.\n"
+}
+
+func formatGitHubUpdates(records []memory.Record) string {
+	var b strings.Builder
+	b.WriteString("# GitHub Updates\n\n")
+	for _, record := range records {
+		kind := firstNonEmpty(record.Kind, "github")
+		title := strings.TrimSpace(record.Title)
+		if title == "" {
+			title = "(untitled)"
+		}
+		fmt.Fprintf(&b, "- %s #%d %s %s\n", kind, record.Number, strings.TrimSpace(record.State), title)
+		if strings.TrimSpace(record.URL) != "" {
+			fmt.Fprintf(&b, "  URL: %s\n", strings.TrimSpace(record.URL))
+		}
+		if strings.TrimSpace(record.Author) != "" {
+			fmt.Fprintf(&b, "  Author: %s\n", strings.TrimSpace(record.Author))
+		}
+		if strings.TrimSpace(record.Excerpt) != "" {
+			fmt.Fprintf(&b, "  Excerpt: %s\n", strings.TrimSpace(record.Excerpt))
+		}
+	}
+	return b.String()
 }
 
 func commandDoctor(ctx context.Context, g globals, args []string) error {

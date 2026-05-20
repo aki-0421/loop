@@ -91,12 +91,143 @@ func TestFetchPullRequestUpsertsMergedPR(t *testing.T) {
 	}
 }
 
+func TestCreateIssueQuestionEnsuresLabelsAndStoresIssue(t *testing.T) {
+	ctx := context.Background()
+	repo := newGitHubMemoryRepo(t)
+	logPath := filepath.Join(t.TempDir(), "gh.log")
+	ghPath := fakeIssueCreateGH(t, logPath)
+	runsDir := filepath.Join(repo, ".loop", "runs")
+	record, err := CreateIssueQuestion(ctx, IssueQuestionOptions{
+		WorkDir:     repo,
+		RunsDir:     runsDir,
+		Title:       "Clarify retention policy",
+		Body:        "Which records are authoritative?",
+		Blocking:    true,
+		RunID:       "run-1",
+		IterationID: "0001",
+		GHPath:      ghPath,
+	})
+	if err != nil {
+		t.Fatalf("create issue: %v", err)
+	}
+	if record.Number != 12 || record.Kind != "issue" || !strings.Contains(record.Labels, LabelBlocking) {
+		t.Fatalf("record = %+v, want blocking issue #12", record)
+	}
+	hits, err := artifactdb.SearchGitHubContext(artifactdb.GlobalDBPathFromRunsPath(runsDir), artifactdb.GitHubContextSearchOptions{Query: "authoritative", Repo: "acme/app", Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) != 1 || hits[0].Record.Number != 12 {
+		t.Fatalf("stored issue search hits = %+v", hits)
+	}
+	log := readFileForMemoryTest(t, logPath)
+	if strings.Count(log, "createLabel") != 2 || !strings.Contains(log, "blocking: true") || !strings.Contains(log, "loop:question") {
+		t.Fatalf("issue creation did not ensure labels and metadata:\n%s", log)
+	}
+}
+
+func TestSyncIssuesAndGitHubUpdatesStoreIssueAndPRComments(t *testing.T) {
+	ctx := context.Background()
+	repo := newGitHubMemoryRepo(t)
+	ghPath := fakeGitHubContextGH(t)
+	runsDir := filepath.Join(repo, ".loop", "runs")
+	full, err := SyncIssues(ctx, SyncOptions{WorkDir: repo, RunsDir: runsDir, Full: true, GHPath: ghPath})
+	if err != nil {
+		t.Fatalf("sync issues: %v", err)
+	}
+	if !full.Full || full.Fetched != 2 {
+		t.Fatalf("full context result = %+v, want issue and comment", full)
+	}
+	updates, err := SyncGitHubUpdates(ctx, SyncOptions{WorkDir: repo, RunsDir: runsDir, GHPath: ghPath})
+	if err != nil {
+		t.Fatalf("sync updates: %v", err)
+	}
+	if updates.Fetched != 2 {
+		t.Fatalf("updates = %+v, want closed issue and PR comment", updates)
+	}
+	hits, err := artifactdb.SearchGitHubContext(artifactdb.GlobalDBPathFromRunsPath(runsDir), artifactdb.GitHubContextSearchOptions{Query: "reviewer answer", Repo: "acme/app", Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) != 1 || hits[0].Record.Kind != "pr-comment" || hits[0].Record.Number != 6 {
+		t.Fatalf("PR comment search hits = %+v", hits)
+	}
+}
+
 func newGitHubMemoryRepo(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	runGit(t, dir, "init", "-b", "main")
 	runGit(t, dir, "remote", "add", "origin", "https://github.com/acme/app.git")
 	return dir
+}
+
+func fakeIssueCreateGH(t *testing.T, logPath string) string {
+	t.Helper()
+	return fakeGHScript(t, `#!/bin/sh
+echo "$@" >> "`+logPath+`"
+args="$*"
+if echo "$args" | grep -q 'repository(owner:'; then
+cat <<'JSON'
+{"data":{"repository":{"id":"repo-id","labels":{"nodes":[]}},"rateLimit":{"remaining":10,"resetAt":"2026-05-20T02:00:00Z","cost":1}}}
+JSON
+exit 0
+fi
+if echo "$args" | grep -q 'createLabel'; then
+if echo "$args" | grep -q 'loop:blocking'; then
+cat <<'JSON'
+{"data":{"createLabel":{"label":{"id":"blocking-label","name":"loop:blocking"}},"rateLimit":{"remaining":10,"resetAt":"2026-05-20T02:00:00Z","cost":1}}}
+JSON
+exit 0
+fi
+cat <<'JSON'
+{"data":{"createLabel":{"label":{"id":"question-label","name":"loop:question"}},"rateLimit":{"remaining":10,"resetAt":"2026-05-20T02:00:00Z","cost":1}}}
+JSON
+exit 0
+fi
+if echo "$args" | grep -q 'createIssue'; then
+cat <<'JSON'
+{"data":{"createIssue":{"issue":{"__typename":"Issue","number":12,"url":"https://github.com/acme/app/issues/12","state":"OPEN","title":"Clarify retention policy","body":"Which records are authoritative?","updatedAt":"2026-05-20T00:00:00Z","closedAt":null,"author":{"login":"bot"},"labels":{"nodes":[{"name":"loop:question"},{"name":"loop:blocking"}]},"repository":{"nameWithOwner":"acme/app"}}},"rateLimit":{"remaining":10,"resetAt":"2026-05-20T02:00:00Z","cost":1}}}
+JSON
+exit 0
+fi
+exit 1
+`)
+}
+
+func fakeGitHubContextGH(t *testing.T) string {
+	t.Helper()
+	return fakeGHScript(t, `#!/bin/sh
+args="$*"
+if echo "$args" | grep -q 'is:pr updated:>='; then
+cat <<'JSON'
+{"data":{"search":{"pageInfo":{"hasNextPage":false,"endCursor":""},"nodes":[{"__typename":"PullRequest","number":6,"url":"https://github.com/acme/app/pull/6","state":"MERGED","title":"Add reviewable change","body":"PR body.","updatedAt":"2026-05-20T03:00:00Z","closedAt":"2026-05-20T03:00:00Z","mergedAt":"2026-05-20T03:00:00Z","author":{"login":"dev"},"labels":{"nodes":[]},"repository":{"nameWithOwner":"acme/app"},"comments":{"nodes":[{"id":"pc1","url":"https://github.com/acme/app/pull/6#issuecomment-1","body":"reviewer answer accepted","updatedAt":"2026-05-20T03:00:00Z","author":{"login":"reviewer"}}]}}]},"rateLimit":{"remaining":10,"resetAt":"2026-05-20T04:00:00Z","cost":1}}}
+JSON
+exit 0
+fi
+if echo "$args" | grep -q 'is:issue updated:>='; then
+cat <<'JSON'
+{"data":{"search":{"pageInfo":{"hasNextPage":false,"endCursor":""},"nodes":[{"__typename":"Issue","number":4,"url":"https://github.com/acme/app/issues/4","state":"CLOSED","title":"Clarify cache authority","body":"Closed as confirmed.","updatedAt":"2026-05-20T02:00:00Z","closedAt":"2026-05-20T02:00:00Z","author":{"login":"pm"},"labels":{"nodes":[{"name":"loop:question"},{"name":"loop:blocking"}]},"repository":{"nameWithOwner":"acme/app"},"comments":{"nodes":[]}}]},"rateLimit":{"remaining":10,"resetAt":"2026-05-20T04:00:00Z","cost":1}}}
+JSON
+exit 0
+fi
+if echo "$args" | grep -q 'is:issue'; then
+cat <<'JSON'
+{"data":{"search":{"pageInfo":{"hasNextPage":false,"endCursor":""},"nodes":[{"__typename":"Issue","number":4,"url":"https://github.com/acme/app/issues/4","state":"OPEN","title":"Clarify cache authority","body":"Is GitHub authoritative?","updatedAt":"2026-05-20T00:00:00Z","closedAt":null,"author":{"login":"pm"},"labels":{"nodes":[{"name":"loop:question"},{"name":"loop:blocking"}]},"repository":{"nameWithOwner":"acme/app"},"comments":{"nodes":[{"id":"ic1","url":"https://github.com/acme/app/issues/4#issuecomment-1","body":"Waiting for owner answer.","updatedAt":"2026-05-20T00:30:00Z","author":{"login":"dev"}}]}}]},"rateLimit":{"remaining":10,"resetAt":"2026-05-20T04:00:00Z","cost":1}}}
+JSON
+exit 0
+fi
+exit 1
+`)
+}
+
+func readFileForMemoryTest(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
 }
 
 func runGit(t *testing.T, dir string, args ...string) {

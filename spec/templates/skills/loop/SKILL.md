@@ -1,6 +1,6 @@
 ---
 name: loop
-description: Execute one autonomous coding iteration inside the loop harness. Use for CLI-managed iterations that must gather context, choose one reviewer-sized slice, write plan and todo artifacts, edit repository files, validate, commit through loop, optionally create/merge a pull request, and write result JSON.
+description: Execute one autonomous coding iteration inside the loop harness. Use for CLI-managed iterations that must gather context, choose one reviewer-sized slice, write plan and todo artifacts, edit repository files, validate, commit through loop, optionally create/merge a pull request, ask important clarifications through GitHub Issues, and write result JSON.
 version: 1
 ---
 
@@ -12,8 +12,8 @@ You are executing one iteration inside the `loop` harness.
 
 - Complete exactly one reviewer-sized iteration from the current instruction.
 - Treat one iteration as one pull-request-sized change, not a project, epic, milestone, or roadmap.
-- Use the repository, current instruction, `AGENTS.md`, runtime artifact, GitHub PR memory, and discovered docs as evidence.
-- Do not ask the user questions or wait for manual actions. Make explicit assumptions when safe, or return `blocked` when no safe path exists.
+- Use the repository, current instruction, `AGENTS.md`, runtime artifact, GitHub PR/Issue/comment memory, and discovered docs as evidence.
+- Do not ask the user questions directly or wait for manual actions. Make explicit assumptions when safe, create GitHub clarification Issues for important ambiguity, or return `blocked` when no safe path exists.
 - Stop after the selected slice is complete, validated, committed, documented, and, when pull request mode is enabled, merged.
 
 ## Product neutrality contract
@@ -28,7 +28,7 @@ You are executing one iteration inside the `loop` harness.
 
 ## Harness-owned artifacts
 
-Use the `loop` CLI as the source of truth for runtime artifacts, GitHub PR memory, commits, branch state, pull requests, and result generation.
+Use the `loop` CLI as the source of truth for runtime artifacts, GitHub context memory, clarification Issues, commits, branch state, pull requests, and result generation.
 
 - Do not construct or edit paths under the iteration directory directly for artifacts.
 - This restriction does not apply to normal repository source files.
@@ -67,11 +67,25 @@ loop memory recent --limit 30
 
 Then:
 
-- If GitHub PR memory points to relevant older context, run `loop memory search <query>`.
+- If GitHub context memory points to relevant older context, run `loop memory search <query>`.
 - If commit history exists, inspect recent commits, usually with `git log --oneline -20`.
 - Inspect only the broad landmarks needed to plan: root files, package directories, README, nearest `AGENTS.md`, docs indexes, package scripts, tests, CI, and validation entry points.
 - Carry forward the goal, branch/mode, validation settings, recent changes, unfinished work, constraints, and assumptions.
-- Return `blocked` if required operational context is missing or unsafe to interpret.
+- Return `blocked` only if required operational context is missing or unsafe to interpret and no safe independent work remains.
+
+## Clarifications
+
+Use GitHub Issues for important product, policy, or large blocking specification questions:
+
+```bash
+loop issue ask --title "Clarify ..." --body "..." [--blocking]
+```
+
+- Use `--blocking` only when the answer can block a large implementation choice or no safe final decision exists.
+- After creating an Issue, record the URL in `worklog` and continue TODOs unrelated to that clarification.
+- Do not use Issues for minor local uncertainties that can be resolved from code, tests, docs, or a safe explicit assumption.
+- Return `blocked` only when no safe independent work remains; include the blocking Issue URL in `--blocked-reason`.
+- If `loop iteration read github-updates` contains Issue or PR updates after a sleep wake cycle, read and apply them before deciding whether to continue or remain blocked.
 
 ## Plan one slice
 
@@ -207,6 +221,6 @@ loop iteration result --write --status completed --summary "..." --should-stop f
 
 Add validation command, assumption, blocked reason, error, or branch override flags only when needed. The CLI owns the JSON shape. Fix any CLI feedback and rerun.
 
-Use `completed` only when the selected slice is complete and required merge steps are finished. Use `blocked` when no safe path exists. Use `failed` for unrecoverable execution errors. Use `no_change` only when repository evidence shows no change is needed.
+Use `completed` only when the selected slice is complete and required merge steps are finished. Use `blocked` when no safe path exists after any necessary blocking Issue has been created and unrelated work is exhausted. Use `failed` for unrecoverable execution errors. Use `no_change` only when repository evidence shows no change is needed.
 
 Set `should_fully_stop` to `true` only when repository evidence shows the original instruction goal is complete.

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aki-0421/loop/internal/artifactdb"
 	"github.com/aki-0421/loop/internal/runstate"
@@ -72,8 +73,8 @@ func TestRunInitialSyncsGitHubPRMemoryBeforeFirstIteration(t *testing.T) {
 	}
 
 	log := readText(t, ghLog)
-	if got := strings.Count(log, "api graphql"); got != 2 {
-		t.Fatalf("initial memory sync GraphQL calls = %d, want 2:\n%s", got, log)
+	if got := strings.Count(log, "api graphql"); got != 3 {
+		t.Fatalf("initial memory sync GraphQL calls = %d, want 3:\n%s", got, log)
 	}
 	hits, err := artifactdb.SearchPRMemory(filepath.Join(repo, ".loop", "loop.db"), artifactdb.PRMemorySearchOptions{Query: "bootstrap memory", Repo: "acme/app", Limit: 10})
 	if err != nil {
@@ -118,6 +119,58 @@ func TestRunContinuesWhenIterationMemorySyncFailsAfterInitialSync(t *testing.T) 
 	}
 	if got := countEventType(t, iterDir, "agent.started"); got != 1 {
 		t.Fatalf("agent should still run in iteration 2, started count = %d", got)
+	}
+}
+
+func TestRunSleepsOnBlockingIssueAndWakesOnGitHubUpdate(t *testing.T) {
+	ctx := context.Background()
+	repo := newCleanupRepo(t)
+	git(t, repo, "remote", "add", "origin", "https://github.com/acme/app.git")
+	writeResilienceFixture(t, repo, resilienceOptions{
+		Sequence:       "blocking_issue,no_change",
+		MaxIterations:  1,
+		RepairAttempts: 0,
+	})
+	commitLoopRuntimeIgnore(t, repo)
+	ghDir := t.TempDir()
+	ghLog := filepath.Join(ghDir, "gh.log")
+	writeBlockingIssueSleepFakeGH(t, ghDir, ghLog)
+	t.Setenv("PATH", ghDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("LOOP_FAKE_BLOCKED_REASON", "Waiting on https://github.com/acme/app/issues/44")
+	previousSleep := githubSleepPoll
+	previousInterval := githubSleepPollInterval
+	githubSleepPoll = func(context.Context, time.Duration) error { return nil }
+	githubSleepPollInterval = time.Millisecond
+	defer func() {
+		githubSleepPoll = previousSleep
+		githubSleepPollInterval = previousInterval
+	}()
+	withWorkingDir(t, repo)
+
+	if _, err := captureStdout(t, func() error {
+		return commandRun(ctx, globals{Agent: "resilience", JSON: true, NoColor: true}, []string{"task.md"})
+	}); err != nil {
+		t.Fatalf("loop run should wake after blocking issue update: %v", err)
+	}
+
+	state := readLatestRunState(t, repo)
+	if state.Stage != runstate.StageCompleted {
+		t.Fatalf("stage = %s, want completed", state.Stage)
+	}
+	iterDir := latestIterationDir(t, repo, "0001")
+	updates, err := artifactdb.Read(iterDir, "github-updates")
+	if err != nil {
+		t.Fatalf("github-updates artifact missing: %v", err)
+	}
+	if !strings.Contains(updates, "issue #44 closed") {
+		t.Fatalf("github-updates missing closed issue:\n%s", updates)
+	}
+	if got := countEventType(t, iterDir, "agent.started"); got != 2 {
+		t.Fatalf("agent should relaunch in same iteration after wake, started count = %d", got)
+	}
+	log := readText(t, ghLog)
+	if !strings.Contains(log, "createIssue") || !strings.Contains(log, "is:issue updated:>=") {
+		t.Fatalf("fake gh log missing issue creation or sleep polling:\n%s", log)
 	}
 }
 
@@ -303,6 +356,12 @@ func writeInitialMemorySyncFakeGH(t *testing.T, dir, logPath string) {
 	mustWrite(t, filepath.Join(dir, "gh"), `#!/bin/sh
 echo "$@" >> "`+logPath+`"
 args="$*"
+if echo "$args" | grep -q 'is:issue'; then
+cat <<'JSON'
+{"data":{"search":{"pageInfo":{"hasNextPage":false,"endCursor":""},"nodes":[{"__typename":"Issue","number":2,"url":"https://github.com/acme/app/issues/2","state":"OPEN","title":"Clarify bootstrap behavior","body":"Initial repository issue context.","updatedAt":"2026-05-20T00:00:00Z","closedAt":null,"author":{"login":"octo"},"labels":{"nodes":[]},"repository":{"nameWithOwner":"acme/app"},"comments":{"nodes":[]}}]},"rateLimit":{"remaining":10,"resetAt":"2026-05-20T02:00:00Z","cost":1}}}
+JSON
+exit 0
+fi
 if echo "$args" | grep -q 'is:open'; then
 cat <<'JSON'
 {"data":{"search":{"pageInfo":{"hasNextPage":false,"endCursor":""},"nodes":[{"number":4,"url":"https://github.com/acme/app/pull/4","state":"OPEN","title":"Add bootstrap memory","body":"Bootstrap memory from GitHub PRs.","updatedAt":"2026-05-20T00:00:00Z","mergedAt":null,"repository":{"nameWithOwner":"acme/app"}}]},"rateLimit":{"remaining":10,"resetAt":"2026-05-20T02:00:00Z","cost":1}}}
@@ -331,9 +390,92 @@ if echo "$args" | grep -q 'updated:>='; then
   echo "temporary GraphQL failure" >&2
   exit 1
 fi
+if echo "$args" | grep -q 'is:issue'; then
+cat <<'JSON'
+{"data":{"search":{"pageInfo":{"hasNextPage":false,"endCursor":""},"nodes":[{"__typename":"Issue","number":2,"url":"https://github.com/acme/app/issues/2","state":"OPEN","title":"Clarify bootstrap behavior","body":"Initial repository issue context.","updatedAt":"2026-05-20T00:00:00Z","closedAt":null,"author":{"login":"octo"},"labels":{"nodes":[]},"repository":{"nameWithOwner":"acme/app"},"comments":{"nodes":[]}}]},"rateLimit":{"remaining":10,"resetAt":"2026-05-20T02:00:00Z","cost":1}}}
+JSON
+exit 0
+fi
 if echo "$args" | grep -q 'is:open'; then
 cat <<'JSON'
 {"data":{"search":{"pageInfo":{"hasNextPage":false,"endCursor":""},"nodes":[{"number":4,"url":"https://github.com/acme/app/pull/4","state":"OPEN","title":"Add bootstrap memory","body":"Bootstrap memory from GitHub PRs.","updatedAt":"2026-05-20T00:00:00Z","mergedAt":null,"repository":{"nameWithOwner":"acme/app"}}]},"rateLimit":{"remaining":10,"resetAt":"2026-05-20T02:00:00Z","cost":1}}}
+JSON
+exit 0
+fi
+if echo "$args" | grep -q 'is:merged'; then
+cat <<'JSON'
+{"data":{"search":{"pageInfo":{"hasNextPage":false,"endCursor":""},"nodes":[]},"rateLimit":{"remaining":10,"resetAt":"2026-05-20T02:00:00Z","cost":1}}}
+JSON
+exit 0
+fi
+exit 1
+`)
+	if err := os.Chmod(filepath.Join(dir, "gh"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeBlockingIssueSleepFakeGH(t *testing.T, dir, logPath string) {
+	t.Helper()
+	pollState := filepath.Join(dir, "poll.count")
+	mustWrite(t, filepath.Join(dir, "gh"), `#!/bin/sh
+echo "$@" >> "`+logPath+`"
+args="$*"
+if echo "$args" | grep -q 'is:issue updated:>='; then
+  count=0
+  if [ -f "`+pollState+`" ]; then count=$(cat "`+pollState+`"); fi
+  next=$((count + 1))
+  echo "$next" > "`+pollState+`"
+  if [ "$count" = "0" ]; then
+cat <<'JSON'
+{"data":{"search":{"pageInfo":{"hasNextPage":false,"endCursor":""},"nodes":[]},"rateLimit":{"remaining":10,"resetAt":"2026-05-20T02:00:00Z","cost":1}}}
+JSON
+    exit 0
+  fi
+cat <<'JSON'
+{"data":{"search":{"pageInfo":{"hasNextPage":false,"endCursor":""},"nodes":[{"__typename":"Issue","number":44,"url":"https://github.com/acme/app/issues/44","state":"CLOSED","title":"Clarify blocking fixture","body":"Closed as confirmed.","updatedAt":"2026-05-20T01:00:00Z","closedAt":"2026-05-20T01:00:00Z","author":{"login":"pm"},"labels":{"nodes":[{"name":"loop:question"},{"name":"loop:blocking"}]},"repository":{"nameWithOwner":"acme/app"},"comments":{"nodes":[]}}]},"rateLimit":{"remaining":10,"resetAt":"2026-05-20T02:00:00Z","cost":1}}}
+JSON
+exit 0
+fi
+if echo "$args" | grep -q 'is:pr updated:>='; then
+cat <<'JSON'
+{"data":{"search":{"pageInfo":{"hasNextPage":false,"endCursor":""},"nodes":[]},"rateLimit":{"remaining":10,"resetAt":"2026-05-20T02:00:00Z","cost":1}}}
+JSON
+exit 0
+fi
+if echo "$args" | grep -q 'repository(owner:'; then
+cat <<'JSON'
+{"data":{"repository":{"id":"repo-id","labels":{"nodes":[]}},"rateLimit":{"remaining":10,"resetAt":"2026-05-20T02:00:00Z","cost":1}}}
+JSON
+exit 0
+fi
+if echo "$args" | grep -q 'createLabel'; then
+if echo "$args" | grep -q 'loop:blocking'; then
+cat <<'JSON'
+{"data":{"createLabel":{"label":{"id":"blocking-label","name":"loop:blocking"}},"rateLimit":{"remaining":10,"resetAt":"2026-05-20T02:00:00Z","cost":1}}}
+JSON
+exit 0
+fi
+cat <<'JSON'
+{"data":{"createLabel":{"label":{"id":"question-label","name":"loop:question"}},"rateLimit":{"remaining":10,"resetAt":"2026-05-20T02:00:00Z","cost":1}}}
+JSON
+exit 0
+fi
+if echo "$args" | grep -q 'createIssue'; then
+cat <<'JSON'
+{"data":{"createIssue":{"issue":{"__typename":"Issue","number":44,"url":"https://github.com/acme/app/issues/44","state":"OPEN","title":"Clarify blocking fixture","body":"Can this blocked fixture continue?","updatedAt":"2026-05-20T00:30:00Z","closedAt":null,"author":{"login":"bot"},"labels":{"nodes":[{"name":"loop:question"},{"name":"loop:blocking"}]},"repository":{"nameWithOwner":"acme/app"}}},"rateLimit":{"remaining":10,"resetAt":"2026-05-20T02:00:00Z","cost":1}}}
+JSON
+exit 0
+fi
+if echo "$args" | grep -q 'is:issue'; then
+cat <<'JSON'
+{"data":{"search":{"pageInfo":{"hasNextPage":false,"endCursor":""},"nodes":[]},"rateLimit":{"remaining":10,"resetAt":"2026-05-20T02:00:00Z","cost":1}}}
+JSON
+exit 0
+fi
+if echo "$args" | grep -q 'is:open'; then
+cat <<'JSON'
+{"data":{"search":{"pageInfo":{"hasNextPage":false,"endCursor":""},"nodes":[]},"rateLimit":{"remaining":10,"resetAt":"2026-05-20T02:00:00Z","cost":1}}}
 JSON
 exit 0
 fi

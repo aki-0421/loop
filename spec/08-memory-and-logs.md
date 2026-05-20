@@ -64,22 +64,37 @@ Every iteration writes structured runtime artifacts into its local SQLite DB, `.
 - `result`: JSON iteration result.
 - `pr-title` and `pr-body`: pull request text.
 - `pr-state`, `pr-checks`, and `pr-check-log`: pull request lifecycle state and check diagnostics written by `loop pr`.
+- `github-updates`: newly observed GitHub Issue, PR, or comment diffs for an iteration boundary or sleep wake cycle.
 
 Agents should read and write these artifacts through `loop iteration` commands so path resolution and artifact boundaries stay in the CLI. `plan` and `todo` have dedicated `loop iteration plan` and `loop iteration todo` commands; other writable artifacts use `loop iteration write` or `loop iteration append`.
 
-## GitHub PR memory
+## GitHub context memory
 
-Long-term memory comes from GitHub pull requests. The local `.loop/loop.db` file is only a rebuildable cache of GitHub PR titles and bodies. GitHub is authoritative; local iteration summaries are not indexed as memory.
+Long-term memory comes from GitHub pull requests, Issues, and Issue/PR comments. The local `.loop/loop.db` file is only a rebuildable cache of GitHub titles, bodies, and comments. GitHub is authoritative; local iteration summaries are not indexed as memory.
 
-`loop run` syncs PR memory before the first agent iteration when the repository has a GitHub `origin` remote. If the PR memory cache is empty and this initial sync fails, the run stops. After a successful initial sync, later per-iteration sync failures are recorded as warnings and the run continues with the existing cache. `loop pr merge` best-effort fetches the merged PR from GitHub and upserts it into memory after a successful host merge.
+`loop run` syncs PR memory and GitHub Issue context before the first agent iteration when the repository has a GitHub `origin` remote. If the PR memory cache is empty and the initial PR sync fails, the run stops. If the Issue context cache is empty and the initial Issue sync fails, the run stops. After a successful initial sync, later per-iteration sync failures are recorded as warnings and the run continues with the existing cache. `loop pr merge` best-effort fetches the merged PR from GitHub and upserts it into PR memory after a successful host merge.
 
-The sync includes open and merged pull requests. Closed pull requests that were not merged are removed from memory during incremental sync.
+PR sync includes open and merged pull requests. Closed pull requests that were not merged are removed from PR memory during incremental sync. Issue sync includes all repository Issues, including non-loop Issues, and incremental GitHub context sync stores newly observed Issue state changes and Issue/PR comments.
 
-The prompt never loads every historical pull request. The default context load is:
+The prompt never loads every historical GitHub record. The default context load is:
 
-1. Recent open and merged PR records up to `memory.recentLimit`.
-2. SQLite FTS matches from PR titles and bodies up to `memory.searchLimit`.
-3. Full PR bodies only when the skill requests them through `loop memory`.
+1. Recent cached GitHub context records up to `memory.recentLimit`.
+2. SQLite FTS matches from PR titles/bodies, Issue titles/bodies, and cached comments up to `memory.searchLimit`.
+3. Full cached bodies only when the skill requests them through `loop memory`.
+
+`loop memory recent` and `loop memory search` never perform network access. They read the current cache and print records with kind, number, state, repository, URL, title, and excerpt. Kinds are `pr`, `issue`, `issue-comment`, and `pr-comment`.
+
+## Clarification Issues
+
+Important product, policy, or large blocking specification questions are asked through GitHub Issues, not local DB-only memory. Agents use:
+
+```bash
+loop issue ask --title <text> --body <text> [--blocking]
+```
+
+The command creates and applies `loop:question`, and also `loop:blocking` when `--blocking` is supplied. It embeds loop run and iteration metadata in the Issue body and stores only the GitHub Issue reference in normal runtime artifacts.
+
+After asking a question, agents continue TODOs that are unrelated to that clarification. They write a `blocked` result only when no safe independent work remains. When a blocked result references an open `loop:blocking` Issue, `loop run` enters in-memory sleep mode instead of adding a new result status. Sleep mode does not start a new iteration; it displays that it is waiting for GitHub Issue/PR updates, polls every five minutes for Issue/PR comment or closure diffs, writes `github-updates` when a diff appears, and relaunches the agent in the same iteration to decide whether work can proceed. If the update is unrelated, the agent may return `blocked` again and the CLI resumes sleep.
 
 ## Summary format
 
@@ -109,12 +124,14 @@ The `summary` artifact uses this format:
 
 ## Search index
 
-`.loop/loop.db` stores searchable GitHub PR records and FTS5 indexes:
+`.loop/loop.db` stores searchable GitHub PR records, GitHub context records, and FTS5 indexes:
 
 ```text
 global_metadata(key, value)
 pr_memory(repo, number, url, state, title, body, updated_at, merged_at, fetched_at)
 pr_memory_fts(repo, number, url, state, title, body, updated_at, merged_at, fetched_at)
+github_context(repo, kind, number, comment_id, url, state, title, body, author, labels, updated_at, closed_at, fetched_at)
+github_context_fts(repo, kind, number, comment_id, url, state, title, body, author, labels, updated_at, closed_at, fetched_at)
 ```
 
 Search uses SQLite FTS5 ranking and may be filtered by GitHub repository.
