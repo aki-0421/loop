@@ -1075,11 +1075,13 @@ func commandMemory(ctx context.Context, g globals, args []string) error {
 
 func commandIssue(ctx context.Context, g globals, args []string) error {
 	if len(args) == 0 {
-		return codedError{2, fmt.Errorf("usage: loop issue <ask>")}
+		return codedError{2, fmt.Errorf("usage: loop issue <ask|report>")}
 	}
 	switch args[0] {
 	case "ask":
 		return commandIssueAsk(ctx, g, args[1:])
+	case "report":
+		return commandIssueReport(ctx, g, args[1:])
 	default:
 		return codedError{2, fmt.Errorf("unknown issue subcommand %q", args[0])}
 	}
@@ -1158,6 +1160,84 @@ func commandIssueAsk(ctx context.Context, g globals, args []string) error {
 		"blocking": *blocking,
 	}
 	return printResult(g, value, fmt.Sprintf("created issue #%d %s\n", record.Number, record.URL))
+}
+
+func commandIssueReport(ctx context.Context, g globals, args []string) error {
+	args = flagsFirst(args, map[string]bool{
+		"title": true, "body": true, "body-file": true, "kind": true,
+		"iteration-dir": true, "dir": true, "run": true, "iteration": true,
+	})
+	fs := flag.NewFlagSet("issue report", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	title := fs.String("title", "", "issue title")
+	body := fs.String("body", "", "issue body")
+	bodyFile := fs.String("body-file", "", "read issue body from file")
+	kind := fs.String("kind", "other", "gap kind: tool, docs, guardrail, observability, environment, workflow, or other")
+	blocking := fs.Bool("blocking", false, "mark the capability gap as blocking")
+	iterDir := fs.String("iteration-dir", "", "iteration directory")
+	dirAlias := fs.String("dir", "", "iteration directory")
+	runID := fs.String("run", os.Getenv("LOOP_RUN_ID"), "run id")
+	iteration := fs.String("iteration", defaultIterationEnv(), "iteration id")
+	if err := fs.Parse(args); err != nil {
+		return codedError{2, err}
+	}
+	if fs.NArg() != 0 {
+		return codedError{2, fmt.Errorf("usage: loop issue report --title <text> --body <text> [--kind <kind>] [--blocking]")}
+	}
+	if *dirAlias != "" {
+		*iterDir = *dirAlias
+	}
+	if *bodyFile != "" {
+		data, err := os.ReadFile(*bodyFile)
+		if err != nil {
+			return codedError{1, fmt.Errorf("read issue body file: %w", err)}
+		}
+		*body = string(data)
+	}
+	root, err := gitx.RepoRoot(ctx, ".")
+	if err != nil {
+		return codedError{1, err}
+	}
+	cfg, err := config.Load(config.LoadOptions{CWD: root, ConfigPath: g.ConfigPath, Overrides: config.Overrides{Agent: g.Agent, NoColor: g.NoColor}})
+	if err != nil {
+		return codedError{3, err}
+	}
+	resolvedDir, err := resolveIterationDir(ctx, g, *iterDir, *runID, *iteration)
+	if err != nil {
+		return codedError{1, err}
+	}
+	metadataRunID := strings.TrimSpace(*runID)
+	metadataIterationID := strings.TrimSpace(*iteration)
+	if resolvedDir != "" {
+		parsedRun, parsedIteration := artifactdb.ParseIterationDir(resolvedDir)
+		if parsedRun != "" {
+			metadataRunID = parsedRun
+		}
+		if parsedIteration != "" {
+			metadataIterationID = parsedIteration
+		}
+	}
+	record, err := memory.CreateIssueReport(ctx, memory.IssueReportOptions{
+		WorkDir:     root,
+		RunsDir:     filepath.Join(root, cfg.Logs.Dir),
+		Title:       *title,
+		Body:        *body,
+		Kind:        *kind,
+		Blocking:    *blocking,
+		RunID:       metadataRunID,
+		IterationID: metadataIterationID,
+	})
+	if err != nil {
+		return codedError{1, err}
+	}
+	value := map[string]any{
+		"number":   record.Number,
+		"url":      record.URL,
+		"title":    record.Title,
+		"kind":     *kind,
+		"blocking": *blocking,
+	}
+	return printResult(g, value, fmt.Sprintf("reported issue #%d %s\n", record.Number, record.URL))
 }
 
 func formatMemoryRecord(item memory.Record) string {

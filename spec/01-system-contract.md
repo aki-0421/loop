@@ -20,6 +20,7 @@ Runs are fully automated:
 - `loop` never asks the user for confirmation during `run`.
 - The agent must not ask the user questions directly.
 - Important product, policy, or large blocking specification clarifications are asked through `loop issue ask`, which creates GitHub Issues in the repository.
+- Missing agent affordances are reported through `loop issue report`, which creates GitHub improvement Issues for tools, docs, guardrails, observability, environment setup, or workflow gaps.
 - Missing information is handled by making a local, explicit assumption and continuing.
 - After creating a clarification Issue, the agent continues unrelated work. If no safe independent work remains, the agent records a blocked result in JSON and references the blocking Issue URL.
 - A blocked result that references an open `loop:blocking` Issue puts the current run process into in-memory sleep mode. Sleep mode polls GitHub Issue/PR updates and relaunches the agent in the same iteration when new context appears.
@@ -81,7 +82,7 @@ The skill bootstrap is implemented in Go under the prompt assembly package. It i
 The CLI assembles each agent request in this order:
 
 1. Non-user-editable instruction to use the `loop` skill.
-2. Instruction to use `loop iteration`, `loop memory`, `loop issue`, and `loop commit` commands for runtime context, artifact reads or writes, GitHub clarification Issues, and commits.
+2. Instruction to use `loop iteration`, `loop memory`, `loop issue`, and `loop commit` commands for runtime context, artifact reads or writes, GitHub Issues, and commits.
 
 When an agent adapter supports a system or developer message channel, the bootstrap can be sent through that channel. When an adapter only supports a single prompt stream, the bootstrap is passed as the prompt. The implementation must avoid duplicating the full skill contract in the prompt.
 

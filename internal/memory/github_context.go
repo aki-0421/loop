@@ -16,6 +16,8 @@ import (
 const (
 	LabelQuestion = "loop:question"
 	LabelBlocking = "loop:blocking"
+	LabelAgentGap = "loop:agent-gap"
+	LabelProposal = "loop:proposal"
 )
 
 type ContextSyncResult struct {
@@ -33,6 +35,18 @@ type IssueQuestionOptions struct {
 	RunsDir     string
 	Title       string
 	Body        string
+	Blocking    bool
+	RunID       string
+	IterationID string
+	GHPath      string
+}
+
+type IssueReportOptions struct {
+	WorkDir     string
+	RunsDir     string
+	Title       string
+	Body        string
+	Kind        string
 	Blocking    bool
 	RunID       string
 	IterationID string
@@ -127,11 +141,50 @@ func CreateIssueQuestion(ctx context.Context, opts IssueQuestionOptions) (Record
 		return Record{}, err
 	}
 	runner := pr.Runner{Dir: opts.WorkDir, GHPath: opts.GHPath}
-	repositoryID, labels, err := ensureQuestionLabels(ctx, runner, owner, name, opts.Blocking)
+	required := []string{LabelQuestion}
+	if opts.Blocking {
+		required = append(required, LabelBlocking)
+	}
+	repositoryID, labels, err := ensureLoopLabels(ctx, runner, owner, name, required)
 	if err != nil {
 		return Record{}, err
 	}
 	body = appendQuestionMetadata(body, opts)
+	issue, err := createQuestionIssue(ctx, runner, repositoryID, title, body, labels)
+	if err != nil {
+		return Record{}, err
+	}
+	issue.Repo = repo
+	globalPath := artifactdb.GlobalDBPathFromRunsPath(opts.RunsDir)
+	if err := artifactdb.UpsertGitHubContext(globalPath, issue); err != nil {
+		return Record{}, err
+	}
+	return recordFromGitHubContext(issue), nil
+}
+
+func CreateIssueReport(ctx context.Context, opts IssueReportOptions) (Record, error) {
+	title := strings.TrimSpace(opts.Title)
+	body := strings.TrimSpace(opts.Body)
+	if title == "" {
+		return Record{}, errors.New("issue title is required")
+	}
+	if body == "" {
+		return Record{}, errors.New("issue body is required")
+	}
+	repo, owner, name, err := ResolveGitHubRepository(ctx, opts.WorkDir)
+	if err != nil {
+		return Record{}, err
+	}
+	runner := pr.Runner{Dir: opts.WorkDir, GHPath: opts.GHPath}
+	required := []string{LabelAgentGap, LabelProposal}
+	if opts.Blocking {
+		required = append(required, LabelBlocking)
+	}
+	repositoryID, labels, err := ensureLoopLabels(ctx, runner, owner, name, required)
+	if err != nil {
+		return Record{}, err
+	}
+	body = appendReportMetadata(body, opts)
 	issue, err := createQuestionIssue(ctx, runner, repositoryID, title, body, labels)
 	if err != nil {
 		return Record{}, err
@@ -417,7 +470,7 @@ func fetchGitHubContextSearch(ctx context.Context, runner pr.Runner, requests []
 	return dedupeContextRecords(out), nil
 }
 
-func ensureQuestionLabels(ctx context.Context, runner pr.Runner, owner, name string, blocking bool) (string, []graphQLContextLabel, error) {
+func ensureLoopLabels(ctx context.Context, runner pr.Runner, owner, name string, required []string) (string, []graphQLContextLabel, error) {
 	result, err := runner.GraphQL(ctx, repositoryLabelsGraphQL, map[string]string{
 		"owner":      owner,
 		"name":       name,
@@ -444,15 +497,15 @@ func ensureQuestionLabels(ctx context.Context, runner pr.Runner, owner, name str
 	for _, label := range response.Data.Repository.Labels.Nodes {
 		labelsByName[label.Name] = label
 	}
-	required := []string{LabelQuestion}
-	if blocking {
-		required = append(required, LabelBlocking)
-	}
 	labels := make([]graphQLContextLabel, 0, len(required))
 	for _, labelName := range required {
+		labelName = strings.TrimSpace(labelName)
+		if labelName == "" {
+			continue
+		}
 		label, ok := labelsByName[labelName]
 		if !ok {
-			label, err = createQuestionLabel(ctx, runner, repositoryID, labelName)
+			label, err = createLoopLabel(ctx, runner, repositoryID, labelName)
 			if err != nil {
 				return "", nil, err
 			}
@@ -462,13 +515,8 @@ func ensureQuestionLabels(ctx context.Context, runner pr.Runner, owner, name str
 	return repositoryID, labels, nil
 }
 
-func createQuestionLabel(ctx context.Context, runner pr.Runner, repositoryID, name string) (graphQLContextLabel, error) {
-	color := "FBCA04"
-	description := "Clarification requested by loop"
-	if name == LabelBlocking {
-		color = "D73A4A"
-		description = "Blocking clarification requested by loop"
-	}
+func createLoopLabel(ctx context.Context, runner pr.Runner, repositoryID, name string) (graphQLContextLabel, error) {
+	color, description := loopLabelPresentation(name)
 	result, err := runner.GraphQL(ctx, createLabelGraphQL, map[string]string{
 		"repositoryId": repositoryID,
 		"name":         name,
@@ -492,6 +540,19 @@ func createQuestionLabel(ctx context.Context, runner pr.Runner, repositoryID, na
 		return graphQLContextLabel{}, fmt.Errorf("GitHub label %q was not created", name)
 	}
 	return response.Data.CreateLabel.Label, nil
+}
+
+func loopLabelPresentation(name string) (string, string) {
+	switch name {
+	case LabelBlocking:
+		return "D73A4A", "Blocking clarification or capability gap requested by loop"
+	case LabelAgentGap:
+		return "5319E7", "Agent capability gap reported by loop"
+	case LabelProposal:
+		return "1D76DB", "Improvement proposal from loop agent"
+	default:
+		return "FBCA04", "Clarification requested by loop"
+	}
 }
 
 func createQuestionIssue(ctx context.Context, runner pr.Runner, repositoryID, title, body string, labels []graphQLContextLabel) (artifactdb.GitHubContextRecord, error) {
@@ -572,6 +633,43 @@ func appendQuestionMetadata(body string, opts IssueQuestionOptions) string {
 	fmt.Fprintf(&b, "blocking: %t\n", opts.Blocking)
 	b.WriteString("-->\n")
 	return b.String()
+}
+
+func appendReportMetadata(body string, opts IssueReportOptions) string {
+	var b strings.Builder
+	b.WriteString(strings.TrimRight(body, "\n"))
+	b.WriteString("\n\n<!-- loop:agent-gap\n")
+	if opts.RunID != "" {
+		fmt.Fprintf(&b, "run_id: %s\n", opts.RunID)
+	}
+	if opts.IterationID != "" {
+		fmt.Fprintf(&b, "iteration_id: %s\n", opts.IterationID)
+	}
+	fmt.Fprintf(&b, "kind: %s\n", normalizeReportKind(opts.Kind))
+	fmt.Fprintf(&b, "blocking: %t\n", opts.Blocking)
+	b.WriteString("-->\n")
+	return b.String()
+}
+
+func normalizeReportKind(kind string) string {
+	switch strings.ToLower(strings.TrimSpace(kind)) {
+	case "tool", "tools":
+		return "tool"
+	case "doc", "docs", "documentation":
+		return "docs"
+	case "guardrail", "guardrails":
+		return "guardrail"
+	case "observability", "logs", "metrics", "trace", "traces":
+		return "observability"
+	case "env", "environment":
+		return "environment"
+	case "workflow", "process":
+		return "workflow"
+	case "other", "":
+		return "other"
+	default:
+		return "other"
+	}
 }
 
 func issueContextRecordFromGraphQL(node graphQLContextNode, fetchedAt string) artifactdb.GitHubContextRecord {

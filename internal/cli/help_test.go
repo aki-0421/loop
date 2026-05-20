@@ -55,6 +55,7 @@ func TestAgentHelpCommandShowsCompactList(t *testing.T) {
 		"cmd:loop iteration plan",
 		"cmd:loop iteration result",
 		"cmd:loop iteration todo",
+		"cmd:loop issue report",
 		"cmd:loop memory search",
 		"artifacts:",
 		"plan:rw:db",

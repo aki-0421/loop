@@ -234,15 +234,18 @@ loop pr merge [--iteration-dir <dir>|--run <run-id> --iteration <n>]
 
 ## `loop issue`
 
-Create GitHub clarification Issues through agent-facing CLI commands.
+Create GitHub clarification and capability-gap Issues through agent-facing CLI commands.
 
 ```bash
 loop issue ask --title <text> --body <text> [--blocking] [--iteration-dir <dir>|--run <run-id> --iteration <n>]
+loop issue report --title <text> --body <text> [--kind <kind>] [--blocking] [--iteration-dir <dir>|--run <run-id> --iteration <n>]
 ```
 
 `loop issue ask` creates the GitHub labels `loop:question` and, with `--blocking`, `loop:blocking`, applies them to the Issue, embeds loop run/iteration metadata in the Issue body, prints the Issue number and URL, and stores the Issue in the rebuildable GitHub context cache. Label creation failure is a hard command error.
 
 Agents use this command only for important product, policy, or large blocking specification ambiguity. After creating an Issue, the agent continues implementation that is unrelated to that clarification. The agent writes a `blocked` result only when no safe independent work remains, and the blocked reason should include the blocking Issue URL.
+
+`loop issue report` creates `loop:agent-gap` and `loop:proposal`, plus optional `loop:blocking`, for cases where the agent could not inspect, validate, repair, or decide well because the repository is missing a tool, documentation, guardrail, observability signal, environment setup, or workflow affordance. `--kind` is one of `tool`, `docs`, `guardrail`, `observability`, `environment`, `workflow`, or `other`. The Issue body should include current-run evidence, the effect on agent work, and a proposed harness or repository improvement.
 
 ## `loop skills`
 

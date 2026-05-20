@@ -33,6 +33,7 @@ The built-in `loop` skill consolidates the default iteration, GitHub context mem
 - Read recent GitHub PR, Issue, and comment context with `loop memory recent`.
 - Search older GitHub context with `loop memory search <query>`.
 - Create important clarification Issues with `loop issue ask`.
+- Report missing tools, docs, guardrails, observability, environment support, or workflow support with `loop issue report`.
 - Read pull request template text with `loop iteration read pr-template`.
 - Create, check, repair, and merge pull requests with `loop pr` before writing completed PR-mode results.
 - Write the plan through `loop iteration plan` using the CLI-owned template.

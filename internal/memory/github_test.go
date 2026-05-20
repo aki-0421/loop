@@ -126,6 +126,42 @@ func TestCreateIssueQuestionEnsuresLabelsAndStoresIssue(t *testing.T) {
 	}
 }
 
+func TestCreateIssueReportEnsuresLabelsAndStoresProposal(t *testing.T) {
+	ctx := context.Background()
+	repo := newGitHubMemoryRepo(t)
+	logPath := filepath.Join(t.TempDir(), "gh.log")
+	ghPath := fakeIssueReportGH(t, logPath)
+	runsDir := filepath.Join(repo, ".loop", "runs")
+	record, err := CreateIssueReport(ctx, IssueReportOptions{
+		WorkDir:     repo,
+		RunsDir:     runsDir,
+		Title:       "Report missing browser validation harness",
+		Body:        "The agent could not verify the UI path because no browser harness exists.",
+		Kind:        "tool",
+		Blocking:    true,
+		RunID:       "run-1",
+		IterationID: "0001",
+		GHPath:      ghPath,
+	})
+	if err != nil {
+		t.Fatalf("create report issue: %v", err)
+	}
+	if record.Number != 13 || record.Kind != "issue" || !strings.Contains(record.Labels, LabelAgentGap) || !strings.Contains(record.Labels, LabelProposal) {
+		t.Fatalf("record = %+v, want proposal issue #13", record)
+	}
+	hits, err := artifactdb.SearchGitHubContext(artifactdb.GlobalDBPathFromRunsPath(runsDir), artifactdb.GitHubContextSearchOptions{Query: "browser harness", Repo: "acme/app", Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) != 1 || hits[0].Record.Number != 13 {
+		t.Fatalf("stored report search hits = %+v", hits)
+	}
+	log := readFileForMemoryTest(t, logPath)
+	if strings.Count(log, "createLabel") != 3 || !strings.Contains(log, "kind: tool") || !strings.Contains(log, "loop:agent-gap") || !strings.Contains(log, "loop:proposal") {
+		t.Fatalf("report issue did not ensure labels and metadata:\n%s", log)
+	}
+}
+
 func TestSyncIssuesAndGitHubUpdatesStoreIssueAndPRComments(t *testing.T) {
 	ctx := context.Background()
 	repo := newGitHubMemoryRepo(t)
@@ -188,6 +224,45 @@ fi
 if echo "$args" | grep -q 'createIssue'; then
 cat <<'JSON'
 {"data":{"createIssue":{"issue":{"__typename":"Issue","number":12,"url":"https://github.com/acme/app/issues/12","state":"OPEN","title":"Clarify retention policy","body":"Which records are authoritative?","updatedAt":"2026-05-20T00:00:00Z","closedAt":null,"author":{"login":"bot"},"labels":{"nodes":[{"name":"loop:question"},{"name":"loop:blocking"}]},"repository":{"nameWithOwner":"acme/app"}}},"rateLimit":{"remaining":10,"resetAt":"2026-05-20T02:00:00Z","cost":1}}}
+JSON
+exit 0
+fi
+exit 1
+`)
+}
+
+func fakeIssueReportGH(t *testing.T, logPath string) string {
+	t.Helper()
+	return fakeGHScript(t, `#!/bin/sh
+echo "$@" >> "`+logPath+`"
+args="$*"
+if echo "$args" | grep -q 'repository(owner:'; then
+cat <<'JSON'
+{"data":{"repository":{"id":"repo-id","labels":{"nodes":[]}},"rateLimit":{"remaining":10,"resetAt":"2026-05-20T02:00:00Z","cost":1}}}
+JSON
+exit 0
+fi
+if echo "$args" | grep -q 'createLabel'; then
+if echo "$args" | grep -q 'loop:blocking'; then
+cat <<'JSON'
+{"data":{"createLabel":{"label":{"id":"blocking-label","name":"loop:blocking"}},"rateLimit":{"remaining":10,"resetAt":"2026-05-20T02:00:00Z","cost":1}}}
+JSON
+exit 0
+fi
+if echo "$args" | grep -q 'loop:proposal'; then
+cat <<'JSON'
+{"data":{"createLabel":{"label":{"id":"proposal-label","name":"loop:proposal"}},"rateLimit":{"remaining":10,"resetAt":"2026-05-20T02:00:00Z","cost":1}}}
+JSON
+exit 0
+fi
+cat <<'JSON'
+{"data":{"createLabel":{"label":{"id":"agent-gap-label","name":"loop:agent-gap"}},"rateLimit":{"remaining":10,"resetAt":"2026-05-20T02:00:00Z","cost":1}}}
+JSON
+exit 0
+fi
+if echo "$args" | grep -q 'createIssue'; then
+cat <<'JSON'
+{"data":{"createIssue":{"issue":{"__typename":"Issue","number":13,"url":"https://github.com/acme/app/issues/13","state":"OPEN","title":"Report missing browser validation harness","body":"The agent could not verify the UI path because no browser harness exists.","updatedAt":"2026-05-20T00:00:00Z","closedAt":null,"author":{"login":"bot"},"labels":{"nodes":[{"name":"loop:agent-gap"},{"name":"loop:proposal"},{"name":"loop:blocking"}]},"repository":{"nameWithOwner":"acme/app"}}},"rateLimit":{"remaining":10,"resetAt":"2026-05-20T02:00:00Z","cost":1}}}
 JSON
 exit 0
 fi

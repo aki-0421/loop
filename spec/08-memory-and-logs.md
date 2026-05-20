@@ -90,9 +90,12 @@ Important product, policy, or large blocking specification questions are asked t
 
 ```bash
 loop issue ask --title <text> --body <text> [--blocking]
+loop issue report --title <text> --body <text> [--kind <kind>] [--blocking]
 ```
 
 The command creates and applies `loop:question`, and also `loop:blocking` when `--blocking` is supplied. It embeds loop run and iteration metadata in the Issue body and stores only the GitHub Issue reference in normal runtime artifacts.
+
+`loop issue report` records agent capability gaps as improvement proposals. It creates and applies `loop:agent-gap` and `loop:proposal`, plus `loop:blocking` when `--blocking` is supplied. Agents use it when missing tools, docs, guardrails, observability, environment support, or workflow support made the current run less effective. The report should include evidence, impact, and a proposed harness or repository change.
 
 After asking a question, agents continue TODOs that are unrelated to that clarification. They write a `blocked` result only when no safe independent work remains. When a blocked result references an open `loop:blocking` Issue, `loop run` enters in-memory sleep mode instead of adding a new result status. Sleep mode does not start a new iteration; it displays that it is waiting for GitHub Issue/PR updates, polls every five minutes for Issue/PR comment or closure diffs, writes `github-updates` when a diff appears, and relaunches the agent in the same iteration to decide whether work can proceed. If the update is unrelated, the agent may return `blocked` again and the CLI resumes sleep.
 

@@ -54,7 +54,7 @@ type MemoryItem struct {
 func HarnessContract(pullRequestMode bool) string {
 	lines := []string{
 		"Use the `loop` skill for this single loop iteration.",
-		"Use `loop iteration`, `loop memory`, `loop issue`, and `loop commit` commands for runtime context, artifacts, GitHub clarification Issues, and commits.",
+		"Use `loop iteration`, `loop memory`, `loop issue`, and `loop commit` commands for runtime context, artifacts, GitHub Issues, and commits.",
 	}
 	if pullRequestMode {
 		lines = append(lines, "Before writing pull request artifacts, read template text with `loop iteration read pr-template`; create, check, repair, and merge the PR with `loop pr` before writing a completed result.")

@@ -37,7 +37,7 @@ Detailed loop behavior and CLI usage live in repository skills, especially `loop
 
 ## Bootstrap requirements
 
-The code-generated bootstrap activates the `loop` skill. In pull request mode it tells the agent to read template text with `loop iteration read pr-template`. Skills use `loop iteration`, `loop memory`, `loop issue`, and `loop pr` commands for mechanical runtime artifact reads, writes, and GitHub clarification Issues. The agent decides when a commit-ready unit is complete, but commit creation goes through `loop commit`; result JSON, pull request text, check repair, and PR merge are handled inside the agent context through CLI commands.
+The code-generated bootstrap activates the `loop` skill. In pull request mode it tells the agent to read template text with `loop iteration read pr-template`. Skills use `loop iteration`, `loop memory`, `loop issue`, and `loop pr` commands for mechanical runtime artifact reads, writes, and GitHub Issues. The agent decides when a commit-ready unit is complete, but commit creation goes through `loop commit`; result JSON, pull request text, check repair, and PR merge are handled inside the agent context through CLI commands.
 
 ## Process output capture
 
