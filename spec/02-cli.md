@@ -192,6 +192,8 @@ loop iteration path <artifact> [--iteration-dir <dir>|--run <run-id> --iteration
 loop iteration read <artifact> [--iteration-dir <dir>|--run <run-id> --iteration <n>]
 loop iteration write <artifact> [--iteration-dir <dir>|--run <run-id> --iteration <n>] [--file <path>|--value <text>]
 loop iteration append <artifact> [--iteration-dir <dir>|--run <run-id> --iteration <n>] [--file <path>|--value <text>]
+loop iteration plan <template|read|write> ...
+loop iteration todo <list|insert|edit|complete> ...
 loop iteration result [--iteration-dir <dir>|--run <run-id> --iteration <n>] --summary <text> --should-stop <bool> --goal-evaluation <text> [flags]
 ```
 
@@ -199,6 +201,8 @@ If `--iteration-dir` is omitted, commands resolve the current agent iteration au
 
 Writable artifacts are `plan`, `todo`, `worklog`, `summary`, `result`, `pr-title`, and `pr-body`. Read-only artifacts include `runtime`, `instruction`, `prompt`, `effective-config`, `validation`, `events`, `stdout`, and `stderr`.
 PR command artifacts `pr-state`, `pr-checks`, and `pr-check-log` are read-only to the agent and written by `loop pr`.
+
+`plan` and `todo` use dedicated namespaces instead of generic bulk writes. `loop iteration plan template` prints the CLI-owned plan template, `loop iteration plan write` stores the filled plan, and `loop iteration plan read` reads it. After the plan selects the review slice, `loop iteration todo list` prints numbered TODOs; `insert <type> <message>`, `edit <n> <type> <message>`, and `complete <n>` mutate one TODO item at a time by the 1-based index shown by `list`. TODO `type` and `message` use the same validation as `loop commit`. Generic `loop iteration write plan`, `append plan`, `write todo`, and `append todo` are rejected with guidance to these commands.
 
 `pr-template` is a read-only artifact. `loop iteration read pr-template` prints the selected repository pull request template when present, otherwise it prints the CLI-owned fallback template. `loop iteration path pr-template` prints a path only when a repository template file exists.
 

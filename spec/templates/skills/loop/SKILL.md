@@ -75,34 +75,21 @@ Use these PR-slicing heuristics:
 - If dependent work is needed, stack it as follow-up slices instead of merging it into this PR.
 - Prefer boring, reversible changes over impressive completeness.
 
-Write `plan` before code edits; it is runtime memory only and must not be committed.
+Write the `plan` and `todo` artifacts before code edits; they are runtime memory only and must not be committed.
 
-Planning gate: stay in planning until both `plan` and `todo` artifacts have been written. Before that point, only inspect, read, and reason; do not edit repository files, run formatting/codegen that writes files, validate with mutating commands, or call `loop commit`.
+Planning gate: stay in planning until both artifacts have been written. Before that point, only inspect, read, and reason; do not edit repository files, run formatting/codegen that writes files, validate with mutating commands, or call `loop commit`.
 
 Use orientation findings when selecting the review slice. If memory, git history, or progress artifacts identify unfinished or broken work, prefer finishing or repairing that slice before starting new behavior.
 
-Plan sections:
+Inspect the CLI-owned planning help and template before writing artifacts:
 
-- Purpose
-- Review Slice
-- Change Set
-- TODO
-- Verification
-- Out of Scope
-- Follow-up Slices
-- Risks and Notes, when relevant
+```bash
+loop help agent iteration plan
+loop help agent iteration todo
+loop iteration plan template
+```
 
-`Review Slice` must name exactly one selected slice.
-
-Before writing TODOs, draft the commit shape for the selected slice. Use `loop help agent commit` as the commit prefix reference: decide which kinds of work are truly required, and split work whenever it needs a different prefix or a different clear commit subject.
-
-`TODO` must contain only the current slice. Each checkbox must represent exactly one future `loop commit` invocation, except no-change confirmations. Write each checkbox with the intended commit type and short imperative subject, for example `- [ ] D: update loop planning guidance`. If implementation proves the type or subject wrong, update the TODO before committing.
-
-Prefer one TODO and one commit for the chosen slice when possible. Use additional TODOs and commits only when the selected slice contains distinct commit-ready units, such as tightly coupled tests, docs, or configuration needed to prove the same slice.
-
-Even for a tiny or no-change slice, write a `todo` artifact before leaving planning. Use one checkbox that names the confirmation or implementation unit.
-
-Split TODOs by commit boundary, not by command sequence. A TODO is too broad if it needs more than one clear commit subject, if its subject would naturally contain "and", or if part of it can be reviewed, validated, reverted, or explained independently. Different prefixes are different TODOs unless one change directly proves the other and they must be reviewed and reverted together. When in doubt, split the TODOs and keep dependencies ordered.
+Use the plan template to choose exactly one selected review slice first. After the plan has fixed the work target, use the TODO workflow described by the help output to decompose that slice into commit-sized tasks. TODOs must contain only the current slice, and each TODO uses the same type and message shape as `loop commit`, for example `loop iteration todo insert F add password reset flow`.
 
 `Out of Scope` is required when the instruction is broad. It should briefly name deferred specs, features, tooling, or docs without expanding them into a roadmap.
 

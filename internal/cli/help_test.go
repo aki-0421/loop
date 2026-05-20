@@ -52,7 +52,9 @@ func TestAgentHelpCommandShowsCompactList(t *testing.T) {
 		"agent-help-v1\n",
 		"cmd:loop branch rename",
 		"cmd:loop commit type message;",
+		"cmd:loop iteration plan",
 		"cmd:loop iteration result",
+		"cmd:loop iteration todo",
 		"cmd:loop memory search",
 		"artifacts:",
 		"plan:rw:db",
@@ -83,6 +85,43 @@ func TestAgentHelpCommandShowsIterationResultDetails(t *testing.T) {
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("help output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestAgentHelpCommandShowsIterationPlanAndTodoDetails(t *testing.T) {
+	planOut, err := captureStdout(t, func() error {
+		return commandHelp(context.Background(), globals{}, []string{"agent", "iteration", "plan"})
+	})
+	if err != nil {
+		t.Fatalf("loop help agent iteration plan: %v", err)
+	}
+	for _, want := range []string{
+		"cmd:loop iteration plan",
+		"sub:loop iteration plan read",
+		"loop iteration plan template",
+		"Keep TODOs in `loop iteration todo`",
+	} {
+		if !strings.Contains(planOut, want) {
+			t.Fatalf("plan help output missing %q:\n%s", want, planOut)
+		}
+	}
+
+	todoOut, err := captureStdout(t, func() error {
+		return commandHelp(context.Background(), globals{}, []string{"agent", "iteration", "todo"})
+	})
+	if err != nil {
+		t.Fatalf("loop help agent iteration todo: %v", err)
+	}
+	for _, want := range []string{
+		"cmd:loop iteration todo",
+		"sub:loop iteration todo complete",
+		"After the plan selects the review slice",
+		"same `<type> <message>` shape as `loop commit`",
+		"complete an item only after its matching commit exists",
+	} {
+		if !strings.Contains(todoOut, want) {
+			t.Fatalf("todo help output missing %q:\n%s", want, todoOut)
 		}
 	}
 }

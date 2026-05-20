@@ -64,13 +64,17 @@ var iterationArtifactAliases = map[string]string{
 
 func commandIteration(ctx context.Context, g globals, args []string) error {
 	if len(args) == 0 {
-		return codedError{2, fmt.Errorf("usage: loop iteration <path|read|write|append> <artifact> [--iteration-dir <dir>] | loop iteration result [flags]")}
+		return codedError{2, fmt.Errorf("usage: loop iteration <path|read|write|append|plan|todo|result> ...")}
 	}
 	switch args[0] {
 	case "path", "read":
 		return commandIterationReadPath(ctx, g, args[0], args[1:])
 	case "write", "append":
 		return commandIterationWriteAppend(ctx, g, args[0], args[1:])
+	case "plan":
+		return commandIterationPlan(ctx, g, args[1:])
+	case "todo":
+		return commandIterationTodo(ctx, g, args[1:])
 	case "result":
 		return commandIterationResult(ctx, g, args[1:])
 	default:
@@ -116,6 +120,9 @@ func commandIterationReadPath(ctx context.Context, g globals, action string, arg
 			return codedError{2, fmt.Errorf("artifact %q path is not exposed; use `loop iteration read %s`", artifact.Name, artifact.Name)}
 		}
 		if artifact.Database {
+			if artifact.Name == "plan" || artifact.Name == "todo" {
+				return codedError{2, fmt.Errorf("artifact %q is stored in the loop artifact database; use the dedicated `loop iteration %s` commands", artifact.Name, artifact.Name)}
+			}
 			return codedError{2, fmt.Errorf("artifact %q is stored in the loop artifact database; use `loop iteration read %s` or `loop iteration write %s`", artifact.Name, artifact.Name, artifact.Name)}
 		}
 		return printResult(g, map[string]any{"artifact": artifact.Name, "path": path}, path+"\n")
@@ -178,6 +185,9 @@ func commandIterationWriteAppend(ctx context.Context, g globals, action string, 
 	path, artifact, err := resolveIterationArtifact(ctx, resolvedDir, fs.Arg(0))
 	if err != nil {
 		return codedError{2, err}
+	}
+	if artifact.Name == "plan" || artifact.Name == "todo" {
+		return codedError{2, dedicatedArtifactWriteError(artifact.Name)}
 	}
 	if !artifact.Writable {
 		return codedError{2, fmt.Errorf("artifact %q is read-only", artifact.Name)}

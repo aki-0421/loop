@@ -36,7 +36,7 @@ Files are created as needed. `prompt.md`, `agent-events.jsonl`, and the `result`
 
 `plan` is runtime memory. It is stored in `iteration.db`, ignored by Git, and must not be committed as part of the iteration work.
 
-Agents access runtime artifacts through `loop iteration` commands instead of manually constructing paths. Writable agent artifacts are `plan`, `todo`, `worklog`, `summary`, `result`, `pr-title`, and `pr-body`. Agents should generate the `result` artifact with `loop iteration result --write` so the CLI owns the mechanical JSON shape.
+Agents access runtime artifacts through `loop iteration` commands instead of manually constructing paths. Writable agent artifacts are `plan`, `todo`, `worklog`, `summary`, `result`, `pr-title`, and `pr-body`. `plan` uses `loop iteration plan`, `todo` uses `loop iteration todo`, and remaining writable artifacts use `loop iteration write` or `loop iteration append`. Agents should generate the `result` artifact with `loop iteration result --write` so the CLI owns the mechanical JSON shape.
 
 ## Live renderer
 
@@ -112,7 +112,7 @@ Required agent outputs:
 - `summary` artifact with a concise iteration summary.
 - `result` artifact matching the schema.
 
-The agent writes TODOs so that one completed TODO equals one `loop commit` invocation, except no-change confirmations. Before the iteration ends, the agent confirms that commits are complete and `git status --short` shows no changed files.
+The agent first uses the plan to select the review slice, then manages TODOs one item at a time to decompose that slice into commit-sized tasks. Each TODO uses the same type and message shape as `loop commit`, and one completed TODO equals one `loop commit` invocation except no-change confirmations. Before the iteration ends, the agent confirms that commits are complete and `git status --short` shows no changed files.
 
 ## Result handling
 

@@ -87,6 +87,155 @@ func TestIterationCommandRejectsReadOnlyArtifactWrites(t *testing.T) {
 	}
 }
 
+func TestIterationCommandRejectsGenericPlanTodoWrites(t *testing.T) {
+	for _, args := range [][]string{
+		{"write", "--iteration-dir", t.TempDir(), "plan", "--value", "nope"},
+		{"append", "--iteration-dir", t.TempDir(), "plan", "--value", "nope"},
+		{"write", "--iteration-dir", t.TempDir(), "todo", "--value", "- [ ] nope\n"},
+		{"append", "--iteration-dir", t.TempDir(), "todo", "--value", "- [ ] nope\n"},
+	} {
+		err := commandIteration(context.Background(), globals{}, args)
+		if err == nil {
+			t.Fatalf("commandIteration(%v) succeeded, want dedicated command error", args)
+		}
+		if !strings.Contains(err.Error(), "dedicated commands") {
+			t.Fatalf("commandIteration(%v) error = %q", args, err)
+		}
+	}
+}
+
+func TestIterationPlanCommandTemplateWriteRead(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+
+	template, err := captureStdout(t, func() error {
+		return commandIteration(ctx, globals{}, []string{"plan", "template"})
+	})
+	if err != nil {
+		t.Fatalf("plan template: %v", err)
+	}
+	if !strings.Contains(template, "# Iteration Plan") || strings.Contains(template, "## TODO") {
+		t.Fatalf("unexpected plan template:\n%s", template)
+	}
+
+	if _, err := captureStdout(t, func() error {
+		return commandIteration(ctx, globals{}, []string{"plan", "write", "--iteration-dir", dir, "--value", "filled plan\n"})
+	}); err != nil {
+		t.Fatalf("plan write: %v", err)
+	}
+	out, err := captureStdout(t, func() error {
+		return commandIteration(ctx, globals{}, []string{"plan", "read", "--iteration-dir", dir})
+	})
+	if err != nil {
+		t.Fatalf("plan read: %v", err)
+	}
+	if out != "filled plan\n" {
+		t.Fatalf("plan read = %q", out)
+	}
+
+	jsonOut, err := captureStdout(t, func() error {
+		return commandIteration(ctx, globals{JSON: true}, []string{"plan", "read", "--iteration-dir", dir})
+	})
+	if err != nil {
+		t.Fatalf("plan read json: %v", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(jsonOut), &payload); err != nil {
+		t.Fatalf("plan json should parse: %v\n%s", err, jsonOut)
+	}
+	if payload["artifact"] != "plan" || payload["content"] != "filled plan\n" {
+		t.Fatalf("plan json = %#v", payload)
+	}
+}
+
+func TestIterationTodoCommandMutatesOneItemAtATime(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+
+	if _, err := captureStdout(t, func() error {
+		return commandIteration(ctx, globals{}, []string{"todo", "insert", "--iteration-dir", dir, "F", "add", "feature", "shell"})
+	}); err != nil {
+		t.Fatalf("todo insert first: %v", err)
+	}
+	if _, err := captureStdout(t, func() error {
+		return commandIteration(ctx, globals{}, []string{"todo", "insert", "--iteration-dir", dir, "--after", "0", "T", "add", "feature", "tests"})
+	}); err != nil {
+		t.Fatalf("todo insert at top: %v", err)
+	}
+	if _, err := captureStdout(t, func() error {
+		return commandIteration(ctx, globals{}, []string{"todo", "edit", "--iteration-dir", dir, "2", "F", "add", "revised", "feature", "shell"})
+	}); err != nil {
+		t.Fatalf("todo edit: %v", err)
+	}
+	if _, err := captureStdout(t, func() error {
+		return commandIteration(ctx, globals{}, []string{"todo", "complete", "--iteration-dir", dir, "1"})
+	}); err != nil {
+		t.Fatalf("todo complete: %v", err)
+	}
+
+	out, err := captureStdout(t, func() error {
+		return commandIteration(ctx, globals{}, []string{"todo", "list", "--iteration-dir", dir})
+	})
+	if err != nil {
+		t.Fatalf("todo list: %v", err)
+	}
+	want := "1. [x] T: add feature tests\n2. [ ] F: add revised feature shell\n"
+	if out != want {
+		t.Fatalf("todo list = %q, want %q", out, want)
+	}
+
+	raw, err := artifactdb.Read(dir, "todo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if raw != "- [x] T: add feature tests\n- [ ] F: add revised feature shell\n" {
+		t.Fatalf("stored todo = %q", raw)
+	}
+
+	jsonOut, err := captureStdout(t, func() error {
+		return commandIteration(ctx, globals{JSON: true}, []string{"todo", "list", "--iteration-dir", dir})
+	})
+	if err != nil {
+		t.Fatalf("todo list json: %v", err)
+	}
+	var payload struct {
+		Artifact string `json:"artifact"`
+		Items    []struct {
+			Index   int    `json:"index"`
+			Status  string `json:"status"`
+			Text    string `json:"text"`
+			Type    string `json:"type"`
+			Message string `json:"message"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal([]byte(jsonOut), &payload); err != nil {
+		t.Fatalf("todo json should parse: %v\n%s", err, jsonOut)
+	}
+	if payload.Artifact != "todo" || len(payload.Items) != 2 || payload.Items[0].Index != 1 || payload.Items[0].Status != "done" || payload.Items[0].Type != "T" || payload.Items[1].Text != "F: add revised feature shell" || payload.Items[1].Message != "add revised feature shell" {
+		t.Fatalf("todo json = %#v", payload)
+	}
+}
+
+func TestIterationTodoCommandRejectsInvalidTextAndIndexes(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+
+	for _, args := range [][]string{
+		{"todo", "insert", "--iteration-dir", dir},
+		{"todo", "insert", "--iteration-dir", dir, "nope", "add", "feature"},
+		{"todo", "insert", "--iteration-dir", dir, "F", "Add", "feature"},
+		{"todo", "insert", "--iteration-dir", dir, "F", "add", "feature."},
+		{"todo", "edit", "--iteration-dir", dir, "1", "F", "add", "missing"},
+		{"todo", "complete", "--iteration-dir", dir, "1"},
+		{"todo", "complete", "--iteration-dir", dir},
+	} {
+		err := commandIteration(ctx, globals{}, args)
+		if err == nil {
+			t.Fatalf("commandIteration(%v) succeeded, want error", args)
+		}
+	}
+}
+
 func TestIterationCommandReadsPullRequestTemplate(t *testing.T) {
 	ctx := context.Background()
 	repo := newCleanupRepo(t)

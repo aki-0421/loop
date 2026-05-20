@@ -34,7 +34,9 @@ The built-in `loop` skill consolidates the default iteration, memory, commit, pu
 - Search older memory with `loop memory search <query>`.
 - Read pull request template text with `loop iteration read pr-template`.
 - Create, check, repair, and merge pull requests with `loop pr` before writing completed PR-mode results.
-- Write runtime artifacts with `loop iteration write` or `loop iteration append`.
+- Write the plan through `loop iteration plan` using the CLI-owned template.
+- Manage TODO items one at a time with `loop iteration todo`, using the same type and message shape as `loop commit`.
+- Write remaining runtime artifacts with `loop iteration write` or `loop iteration append`.
 - Keep one iteration to a reviewer-sized slice.
 - Size TODO items so one completed TODO maps to one `loop commit` invocation, except no-change confirmations.
 - Inspect `loop help agent commit`, then create commits with `loop commit <type> <message>` instead of direct Git commit commands.

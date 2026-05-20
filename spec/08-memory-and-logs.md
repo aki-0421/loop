@@ -65,7 +65,7 @@ Every iteration writes structured artifacts into its local SQLite DB, `.loop/run
 - `pr-title` and `pr-body`: pull request text.
 - `pr-state`, `pr-checks`, and `pr-check-log`: pull request lifecycle state and check diagnostics written by `loop pr`.
 
-Agents should read and write these artifacts through `loop iteration read`, `loop iteration write`, or `loop iteration append` so path resolution and artifact boundaries stay in the CLI.
+Agents should read and write these artifacts through `loop iteration` commands so path resolution and artifact boundaries stay in the CLI. `plan` and `todo` have dedicated `loop iteration plan` and `loop iteration todo` commands; other writable artifacts use `loop iteration write` or `loop iteration append`.
 
 The prompt never loads every historical file. The default context load is:
 
