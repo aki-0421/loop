@@ -101,6 +101,8 @@ func Run(args []string) error {
 		return commandCommit(ctx, g, rest[1:])
 	case "branch":
 		return commandBranch(ctx, g, rest[1:])
+	case "pr":
+		return commandPR(ctx, g, rest[1:])
 	case "iteration":
 		return commandIteration(ctx, g, rest[1:])
 	case "skills":
@@ -520,41 +522,20 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 		_ = runstate.Write(statePath, state)
 		renderer.Stage(runstate.StageIntegrating, "integrating "+finalBranch)
 		if cfg.Git.Integration.Mode == "pr" {
-			prMergePrepared := false
-			preparePRMergeOnce := func() error {
-				if prMergePrepared {
-					return nil
-				}
-				if err := preparePRMerge(ctx, runner, cleanup, worktreePath, root, cfg.Git.BaseBranch); err != nil {
-					return err
-				}
-				worktreePath = ""
-				prMergePrepared = true
-				return nil
+			if !prStateMerged(iterDir) {
+				state.Stage = runstate.StageFailed
+				_ = runstate.Write(statePath, state)
+				return codedError{6, fmt.Errorf("completed pull request iteration was not merged; run `loop pr merge` before writing the result")}
 			}
-			repairResult, err := integratePR(ctx, root, workDir, cfg, finalBranch, paths, renderer.AgentEvent, preparePRMergeOnce)
-			if repairResult != nil {
-				lastResult = repairResult
-				result = repairResult
-				state.Iterations[len(state.Iterations)-1].SummarySentence = result.SummarySentence
-				state.Iterations[len(state.Iterations)-1].ShouldFullyStop = result.ShouldFullyStop
-			}
-			if err != nil {
-				if repairResult != nil && repairResult.Status == "blocked" {
-					state.Stage = runstate.StageBlocked
-					_ = runstate.Write(statePath, state)
-					return codedError{7, err}
-				}
+			mergedCount++
+			renderer.Merged(mergedCount)
+			if err := finalizeAgentOwnedPR(ctx, runner, cleanup, worktreePath, root, cfg, finalBranch); err != nil {
 				state.Stage = runstate.StageFailed
 				_ = runstate.Write(statePath, state)
 				return codedError{6, err}
 			}
-			mergedCount++
-			renderer.Merged(mergedCount)
+			worktreePath = ""
 			cleanup.Integrated = true
-			if err := preparePRMergeOnce(); err != nil {
-				return codedError{6, err}
-			}
 		} else if len(commits) > 0 {
 			if worktreePath != "" {
 				if err := runner.RemoveWorktree(ctx, worktreePath, false); err != nil {
@@ -1306,6 +1287,9 @@ func validateResultBranchContract(result *validation.IterationResult, paths path
 	}
 	if paths.BranchRenamed && result.Branch.FinalName != "" && currentBranch != "" && result.Branch.FinalName != currentBranch {
 		return fmt.Errorf("result branch.final_name is %q, but loop runtime tracks %q", result.Branch.FinalName, currentBranch)
+	}
+	if result.Status == "completed" && paths.PullRequestMode && !prStateMerged(filepath.Dir(paths.Result)) {
+		return errors.New("completed pull request results require a merged PR; run `loop pr merge` before writing the result")
 	}
 	return nil
 }

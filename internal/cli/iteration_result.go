@@ -252,6 +252,9 @@ func buildIterationResult(ctx context.Context, iterationDir string, opts iterati
 	if err := validateResultCommandState(ctx, workDir, initialBranch, currentBranch, opts.Status, commits); err != nil {
 		return validation.IterationResult{}, err
 	}
+	if strings.TrimSpace(opts.Status) == "completed" && runtime["integration_mode"] == "pr" && !prStateMerged(iterationDir) {
+		return validation.IterationResult{}, errors.New("completed pull request results require a merged PR; run `loop pr merge` before `loop iteration result --write`")
+	}
 
 	commands, err := parseValidationCommandInputs(opts.ValidationCommandInputs)
 	if err != nil {

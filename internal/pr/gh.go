@@ -113,6 +113,13 @@ func (r Runner) Create(ctx context.Context, opts CreateOptions) (CommandResult, 
 	return r.run(ctx, r.ghPath(), "gh", args...)
 }
 
+func (r Runner) View(ctx context.Context, branch string) (CommandResult, error) {
+	if strings.TrimSpace(branch) == "" {
+		return CommandResult{}, errors.New("branch is required")
+	}
+	return r.run(ctx, r.ghPath(), "gh", "pr", "view", branch, "--json", "url", "--jq", ".url")
+}
+
 type CreateOptions struct {
 	Base      string
 	Head      string
@@ -174,6 +181,55 @@ func (r Runner) Checks(ctx context.Context, pr string, watch bool) (CommandResul
 		return result, nil
 	}
 	return result, err
+}
+
+func (r Runner) Logs(ctx context.Context, ref string) (CommandResult, error) {
+	runID, jobID := ParseJobRef(ref)
+	if jobID == "" {
+		return CommandResult{}, errors.New("job id is required")
+	}
+	args := []string{"run", "view"}
+	if runID != "" {
+		args = append(args, runID)
+	}
+	args = append(args, "--job", jobID, "--log")
+	return r.run(ctx, r.ghPath(), "gh", args...)
+}
+
+func ParseJobRef(ref string) (string, string) {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return "", ""
+	}
+	lower := strings.ToLower(strings.TrimSuffix(ref, "/"))
+	runMarker := "/actions/runs/"
+	jobMarker := "/job/"
+	runIndex := strings.Index(lower, runMarker)
+	jobIndex := strings.Index(lower, jobMarker)
+	if runIndex >= 0 && jobIndex > runIndex {
+		runStart := runIndex + len(runMarker)
+		runPart := ref[runStart:jobIndex]
+		jobStart := jobIndex + len(jobMarker)
+		jobPart := ref[jobStart:]
+		if slash := strings.Index(jobPart, "/"); slash >= 0 {
+			jobPart = jobPart[:slash]
+		}
+		if query := strings.IndexAny(jobPart, "?#"); query >= 0 {
+			jobPart = jobPart[:query]
+		}
+		return keepDigits(runPart), keepDigits(jobPart)
+	}
+	return "", keepDigits(ref)
+}
+
+func keepDigits(value string) string {
+	var b strings.Builder
+	for _, r := range value {
+		if r >= '0' && r <= '9' {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 func isNoChecksReported(err error) bool {

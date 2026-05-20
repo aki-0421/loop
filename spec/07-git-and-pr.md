@@ -105,26 +105,23 @@ After commit, the CLI may delete the iteration branch according to cleanup setti
 
 ## Pull request mode
 
-Pull request mode uses `gh`:
+Pull request mode is driven by the agent through `loop pr` commands:
 
-1. Push the tracked iteration branch.
-2. Generate PR title and body through the agent.
-3. Create PR.
-4. Wait for checks when configured.
-5. Prepare the local checkout for branch deletion by removing the iteration worktree when present and checking out the base branch.
-6. Merge through squash merge when checks pass and auto-merge is enabled. The squash commit subject is the generated PR title with the PR number suffix when available, such as `(#123)`.
-7. Pull the base branch.
-8. Delete branch according to cleanup settings.
+1. Generate PR title and body through the agent.
+2. Run `loop pr create` to push the tracked branch and create or reuse the PR.
+3. Run `loop pr checks` to push current commits and wait for checks when configured.
+4. If checks fail, inspect `pr-checks`, fetch logs with `loop pr logs <job-url-or-id>`, repair in the same agent context, commit through `loop commit`, and rerun `loop pr checks`.
+5. Run `loop pr merge` after checks pass. The command runs configured validation, performs a final check wait, and merges through squash merge. The squash commit subject is the generated PR title with the PR number suffix when available, such as `(#123)`.
+6. Write the final result only after `loop pr merge` records `pr-state.status=merged`.
+7. The run loop pulls the base branch and deletes local runtime resources according to cleanup settings after accepting the merged result.
 
 Command shape:
 
 ```bash
-git push -u origin <branch>
-gh pr create --base <base> --head <branch> --title "<title>" --body-file <body-file>
-gh pr checks <pr> --watch
-git checkout <base>
-gh pr merge <pr> --squash --subject "<title> (#123)" --body-file <body-file> --delete-branch
-git pull --ff-only
+loop pr create
+loop pr checks
+loop pr logs <job-url-or-id>
+loop pr merge
 ```
 
 The implementation stores command outputs in the iteration directory.
@@ -137,14 +134,13 @@ If the agent does not write the `pr-body` artifact, the CLI fallback reads the r
 
 ## Check waiting
 
-When pull request mode has `waitChecks=true`, the CLI waits for provider checks through `gh`. After PR creation or a repair push, the CLI waits `checksStartupDelaySeconds` before the first check query. If GitHub reports no checks for the PR branch, the CLI polls until `checksDiscoveryTimeoutSeconds` expires, using `checksPollIntervalSeconds` between attempts. Reported pending checks are watched until they pass, fail, are canceled, or `checksWatchTimeoutSeconds` expires. GitHub CLI pending exit code 8 is treated as pending rather than failure. If no checks are reported after the discovery timeout, the wait step is treated as skipped rather than failed. If checks fail:
+When pull request mode has `waitChecks=true`, `loop pr checks` and `loop pr merge` wait for provider checks through `gh`. After PR creation or a repair push, the command waits `checksStartupDelaySeconds` before the first check query. If GitHub reports no checks for the PR branch, the CLI polls until `checksDiscoveryTimeoutSeconds` expires, using `checksPollIntervalSeconds` between attempts. Reported pending checks are watched until they pass, fail, are canceled, or `checksWatchTimeoutSeconds` expires. GitHub CLI pending exit code 8 is treated as pending rather than failure. If no checks are reported after the discovery timeout, the wait step is treated as skipped rather than failed. If checks fail:
 
-- The CLI records the failing checks.
-- The CLI starts a new repair iteration on the same branch when configured.
-- The check-failure repair prompt is embedded by the CLI, not implemented as a skill. It includes the failing check output and instructs the agent to search the web for the exact error or likely root cause before editing, then record the search queries and findings in the worklog.
-- If no repair attempts remain, the run stops with a failed integration state.
+- `loop pr checks` records full check output in the `pr-checks` artifact and writes only a concise pointer to `errors.log`.
+- The agent fetches detailed job logs with `loop pr logs <job-url-or-id>` when needed.
+- The agent repairs the failure in the same context, validates locally, commits through `loop commit`, and reruns `loop pr checks`.
 
-When `mergeWhenChecksPass=true`, the CLI merges without asking the user.
+`mergeWhenChecksPass` is retained for configuration compatibility, but PR-mode merge is now triggered by `loop pr merge`.
 
 ## Cleanup
 

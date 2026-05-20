@@ -36,9 +36,9 @@ Use this section as the working order and section map for one loop iteration:
 6. Stop after the chosen slice is complete; do not begin a follow-up slice.
 7. Write `worklog` and `summary`. See [Handoff artifacts](#handoff-artifacts).
 8. If the result will be `completed`, rename the branch with `loop branch rename`. See [Branch naming](#branch-naming).
-9. If pull request mode is enabled, write PR artifacts. See [PR artifacts](#pr-artifacts).
+9. If pull request mode is enabled, write PR artifacts, create the PR, wait for checks, repair CI failures in this same context, and merge through `loop pr`. See [PR artifacts and merge](#pr-artifacts-and-merge).
 10. Before writing `result`, confirm commits are complete and `git status --short` shows no changed files; commit complete work with `loop commit` or revert incomplete work.
-11. Write the final `result` artifact. See [Repair and result JSON](#repair-and-result-json).
+11. Write the final `result` artifact only after the PR is merged in pull request mode. See [Repair and result JSON](#repair-and-result-json).
 
 ## Getting oriented
 
@@ -149,7 +149,7 @@ Every completed iteration must leave enough structured context for the next iter
 
 If follow-up slices remain, the iteration can still be `completed`, but `should_fully_stop` must be `false`.
 
-## PR artifacts
+## PR artifacts and merge
 
 If pull request mode is enabled, get template text with `loop iteration read pr-template`. The CLI returns the repository template when present and CLI-owned fallback text otherwise.
 
@@ -162,6 +162,10 @@ If pull request mode is enabled, get template text with `loop iteration read pr-
 - Keep the title concise and action-oriented.
 - Describe only what this PR changes.
 - Mention deferred work briefly when the original instruction is broader than the chosen slice.
+- Run `loop pr create` after PR title and body are ready.
+- Run `loop pr checks`. If it fails, read `loop iteration read pr-checks`, fetch needed logs with `loop pr logs <job-url-or-id>`, repair in the same branch, validate locally, commit with `loop commit`, update worklog and PR body when useful, then rerun `loop pr checks`.
+- Run `loop pr merge` only after checks pass. It performs configured validation, performs a final check wait, merges through `gh`, and records the merged PR state.
+- Do not write a `completed` result in pull request mode until `loop pr merge` has succeeded.
 
 ## Branch naming
 
@@ -173,7 +177,7 @@ loop branch rename feat/add-password-reset-tests
 loop branch rename --kind fix handle-empty-search-query
 ```
 
-Use one of the kinds shown by the help output. If the rename command prints a collision-adjusted branch, keep using that printed branch. Do not run direct Git branch switch, rename, push, PR, or merge commands.
+Use one of the kinds shown by the help output. If the rename command prints a collision-adjusted branch, keep using that printed branch. Do not run direct Git branch switch, rename, push, PR, or merge commands; use `loop pr` for pull request operations.
 
 Skip branch rename only for `no_change`, `blocked`, or `failed` results.
 

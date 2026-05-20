@@ -33,6 +33,7 @@ The built-in `loop` skill consolidates the default iteration, memory, commit, pu
 - Read recent memory with `loop memory recent`.
 - Search older memory with `loop memory search <query>`.
 - Read pull request template text with `loop iteration read pr-template`.
+- Create, check, repair, and merge pull requests with `loop pr` before writing completed PR-mode results.
 - Write runtime artifacts with `loop iteration write` or `loop iteration append`.
 - Keep one iteration to a reviewer-sized slice.
 - Size TODO items so one completed TODO maps to one `loop commit` invocation, except no-change confirmations.

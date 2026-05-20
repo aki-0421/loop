@@ -148,13 +148,13 @@ Validation output is saved to the `validation` artifact and structured events ar
 A completed iteration with changes is integrated through the configured mode:
 
 - Local merge mode: local squash merge into base branch.
-- Pull request mode: push branch, create PR, wait for checks when configured, merge, pull base branch.
+- Pull request mode: require that the agent has already created, checked, repaired, and merged the PR through `loop pr`; then pull the base branch and clean up local runtime resources.
 
 The one-sentence `summary_sentence` from result JSON becomes the squash commit message subject or the PR merge subject.
 
 ## Stop condition
 
-`should_fully_stop=true` means the goal is fully satisfied after this iteration is integrated, or no change is needed. The CLI stops after the current integration action completes.
+`should_fully_stop=true` means the goal is fully satisfied after this iteration is integrated, or no change is needed. In pull request mode, the agent must make this decision after `loop pr merge` succeeds, so CI repair prompts cannot replace the original run-goal evaluation. The CLI stops after the current integration action completes.
 
 If `should_fully_stop=false`, the CLI starts the next iteration until the iteration limit or terminal state is reached.
 

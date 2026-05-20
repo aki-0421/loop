@@ -10,7 +10,7 @@
 4. Let the agent plan, edit, validate, and request commits for complete work.
 5. Read the agent result JSON.
 6. Repair incomplete work when possible.
-7. Integrate the iteration through local squash merge or pull request mode.
+7. Integrate the iteration through local squash merge, or verify that the agent merged the pull request through `loop pr`.
 8. Repeat until the agent reports `should_fully_stop=true`, the iteration limit is reached, or a terminal error is recorded.
 
 ## Fully automated default
@@ -21,7 +21,7 @@ Runs are fully automated:
 - The agent must not ask the user questions.
 - Missing information is handled by making a local, explicit assumption and continuing.
 - If no safe assumption exists, the agent records a blocked result in JSON.
-- Push, pull request creation, check waiting, merge, pull, cleanup, repair, and resume operations are performed by the CLI according to configuration.
+- Local merge, pull, cleanup, repair, and resume operations are performed by the CLI according to configuration. In pull request mode, the agent performs PR creation, check waiting, CI repair, and PR merge through `loop pr` commands.
 
 ## Language default
 
@@ -49,8 +49,8 @@ The CLI owns:
 - Iteration directories.
 - JSON validation.
 - Git, commit, and pull request commands.
-- Branch creation, branch rename command validation/tracking, push, PR creation, merge, and cleanup.
-- Repair retries.
+- Branch creation, branch rename command validation/tracking, PR command validation/tracking, and cleanup.
+- Repair retries before PR creation. Pull request check repair happens inside the agent context through `loop pr checks`, local edits, commits, and `loop pr merge`.
 - Resume state.
 - Exit codes.
 

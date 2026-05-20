@@ -15,7 +15,7 @@ import (
 	"github.com/aki-0421/loop/internal/artifactdb"
 )
 
-func TestPRChecksFailureLaunchesRepairAgentBeforeRetry(t *testing.T) {
+func TestAgentOwnedPRChecksRepairAndMergeInSingleAgentInvocation(t *testing.T) {
 	ctx := context.Background()
 	repo := newCleanupRepo(t)
 	addBareOrigin(t, repo)
@@ -35,12 +35,14 @@ agent:
       prompt: stdin
       env:
         LOOP_TEST_FAKE_AGENT: "1"
+        LOOP_FAKE_AGENT_MODE: pr_owned_repair
 
 run:
-  repairAttempts: 1
+  repairAttempts: 0
 
 git:
   baseBranch: develop
+  worktree: true
   integration:
     mode: pr
     pr:
@@ -49,8 +51,8 @@ git:
       checksStartupDelaySeconds: 0
       checksDiscoveryTimeoutSeconds: 0
       checksPollIntervalSeconds: 1
-      mergeWhenChecksPass: false
-      deleteBranch: false
+      mergeWhenChecksPass: true
+      deleteBranch: true
 `, yamlSingleQuote(agentCommand)))
 	git(t, repo, "add", "task.md", ".loop/config.yaml")
 	git(t, repo, "commit", "-m", "T: add loop pr repair fixture")
@@ -86,8 +88,11 @@ git:
 	if got := strings.Count(gh, "pr create "); got != 1 {
 		t.Fatalf("pr create count = %d, log:\n%s", got, gh)
 	}
-	if got := strings.Count(gh, "pr checks 1 --watch"); got != 2 {
+	if got := strings.Count(gh, "pr checks 1 --watch"); got != 3 {
 		t.Fatalf("pr checks count = %d, log:\n%s", got, gh)
+	}
+	if got := strings.Count(gh, "pr merge 1 --squash"); got != 1 {
+		t.Fatalf("pr merge count = %d, log:\n%s", got, gh)
 	}
 
 	runID, err := latestRun(filepath.Join(repo, ".loop", "runs"))
@@ -99,7 +104,7 @@ git:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Count(string(events), `"type":"agent.started"`); got != 2 {
+	if got := strings.Count(string(events), `"type":"agent.started"`); got != 1 {
 		t.Fatalf("agent.started count = %d, events:\n%s", got, events)
 	}
 	promptBytes, err := os.ReadFile(filepath.Join(iterDir, "prompt.md"))
@@ -110,22 +115,38 @@ git:
 	if prompt != "# Task\n\nMake the fake change.\n" {
 		t.Fatalf("prompt.md should remain the instruction snapshot, got:\n%s", prompt)
 	}
-	audit, err := artifactdb.Read(iterDir, "agent-prompt-audit")
+	prState, err := artifactdb.Read(iterDir, "pr-state")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{
-		"Pull Request Check Repair Contract",
-		"perform a web search",
-		"unit test failed: missing dependency",
-	} {
-		if !strings.Contains(audit, want) {
-			t.Fatalf("repair prompt audit missing %q:\n%s", want, audit)
-		}
+	if !strings.Contains(prState, `"status": "merged"`) {
+		t.Fatalf("pr-state should record merged PR:\n%s", prState)
 	}
+	stateBytes, err := os.ReadFile(filepath.Join(repo, ".loop", "runs", runID, "run-state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var state struct {
+		Iterations []struct {
+			ShouldFullyStop bool `json:"should_fully_stop"`
+		} `json:"iterations"`
+	}
+	if err := json.Unmarshal(stateBytes, &state); err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Iterations) != 1 {
+		t.Fatalf("iterations = %d, want 1", len(state.Iterations))
+	}
+	if state.Iterations[0].ShouldFullyStop {
+		t.Fatal("PR check repair should not overwrite the original stop decision")
+	}
+	if _, err := os.Stat(filepath.Join(repo, ".loop", "worktrees", runID, "0001")); !os.IsNotExist(err) {
+		t.Fatalf("worktree should be removed after agent-owned PR merge, err=%v", err)
+	}
+	assertBranchMissing(t, repo, "test/fake-agent")
 }
 
-func TestPRPollsUntilChecksAppearBeforeMerge(t *testing.T) {
+func TestAgentOwnedPRPollsUntilChecksAppearBeforeMerge(t *testing.T) {
 	ctx := context.Background()
 	repo := newCleanupRepo(t)
 	addBareOrigin(t, repo)
@@ -145,6 +166,7 @@ agent:
       prompt: stdin
       env:
         LOOP_TEST_FAKE_AGENT: "1"
+        LOOP_FAKE_AGENT_MODE: pr_owned_simple
 
 run:
   repairAttempts: 0
@@ -171,15 +193,6 @@ git:
 	writeDelayedChecksFakeGH(t, ghDir, ghLog, ghChecks)
 	t.Setenv("PATH", ghDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	oldSleep := prChecksSleep
-	var sleeps []time.Duration
-	prChecksSleep = func(ctx context.Context, d time.Duration) error {
-		sleeps = append(sleeps, d)
-		return ctx.Err()
-	}
-	t.Cleanup(func() {
-		prChecksSleep = oldSleep
-	})
 	withWorkingDir(t, repo)
 
 	if _, err := captureStdout(t, func() error {
@@ -193,7 +206,7 @@ git:
 		t.Fatal(err)
 	}
 	gh := string(logBytes)
-	if got := strings.Count(gh, "pr checks 1 --watch"); got != 3 {
+	if got := strings.Count(gh, "pr checks 1 --watch"); got != 4 {
 		t.Fatalf("pr checks count = %d, log:\n%s", got, gh)
 	}
 	if got := strings.Count(gh, "pr merge 1 --squash"); got != 1 {
@@ -201,14 +214,6 @@ git:
 	}
 	if strings.Index(gh, "pr merge 1 --squash") < strings.LastIndex(gh, "pr checks 1 --watch") {
 		t.Fatalf("merge ran before final checks poll:\n%s", gh)
-	}
-	if got := len(sleeps); got != 3 {
-		t.Fatalf("sleep count = %d, want startup delay plus two polls: %#v", got, sleeps)
-	}
-	for _, sleep := range sleeps {
-		if sleep != time.Second {
-			t.Fatalf("sleep duration = %s, want 1s: %#v", sleep, sleeps)
-		}
 	}
 }
 
@@ -313,6 +318,126 @@ git:
 	}
 }
 
+func TestPRModeRejectsCompletedResultBeforePRMerge(t *testing.T) {
+	ctx := context.Background()
+	repo := newCleanupRepo(t)
+	addBareOrigin(t, repo)
+	mustWrite(t, filepath.Join(repo, "task.md"), "# Task\n\nMake the fake change.\n")
+	agentCommand, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, filepath.Join(repo, ".loop", "config.yaml"), fmt.Sprintf(`version: 1
+
+agent:
+  default: prunmerged
+  adapters:
+    prunmerged:
+      command: %s
+      args: [-test.run=TestHelperProcessFakeAgent, --]
+      prompt: stdin
+      env:
+        LOOP_TEST_FAKE_AGENT: "1"
+        LOOP_FAKE_AGENT_MODE: pr_unmerged_result
+
+run:
+  repairAttempts: 0
+
+git:
+  baseBranch: develop
+  worktree: false
+  integration:
+    mode: pr
+`, yamlSingleQuote(agentCommand)))
+	git(t, repo, "add", "task.md", ".loop/config.yaml")
+	git(t, repo, "commit", "-m", "T: add unmerged pr fixture")
+	git(t, repo, "push", "origin", "develop")
+	withWorkingDir(t, repo)
+
+	_, err = captureStdout(t, func() error {
+		return commandRun(ctx, globals{Agent: "prunmerged", JSON: true, NoColor: true}, []string{"task.md", "--max-iterations", "1"})
+	})
+	if err == nil {
+		t.Fatal("expected run to reject completed PR result before merge")
+	}
+	if !strings.Contains(err.Error(), "loop pr merge") {
+		t.Fatalf("error should point to loop pr merge: %v", err)
+	}
+}
+
+func TestPRChecksWritesArtifactAndConciseErrorLog(t *testing.T) {
+	ctx := context.Background()
+	repo := newCleanupRepo(t)
+	addBareOrigin(t, repo)
+	mustWrite(t, filepath.Join(repo, ".loop", "config.yaml"), `version: 1
+
+git:
+  baseBranch: develop
+  integration:
+    mode: pr
+    pr:
+      push: true
+      waitChecks: true
+      checksStartupDelaySeconds: 0
+      checksDiscoveryTimeoutSeconds: 0
+      checksPollIntervalSeconds: 1
+      deleteBranch: false
+`)
+	git(t, repo, "add", ".loop/config.yaml")
+	git(t, repo, "commit", "-m", "T: add pr checks fixture config")
+	git(t, repo, "push", "origin", "develop")
+	git(t, repo, "checkout", "-b", "test/fake-agent", "develop")
+	mustWrite(t, filepath.Join(repo, "change.txt"), "change\n")
+	git(t, repo, "add", "change.txt")
+	git(t, repo, "commit", "-m", "F: add fake change")
+
+	runDir := filepath.Join(repo, ".loop", "runs", "run", "iterations", "0001")
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mustWriteRuntimeArtifact(t, runDir, map[string]any{
+		"run_id":            "run",
+		"iteration_id":      "0001",
+		"base_branch":       "develop",
+		"initial_branch":    "wip/0001",
+		"current_branch":    "test/fake-agent",
+		"branch_renamed":    true,
+		"integration_mode":  "pr",
+		"pull_request_mode": true,
+		"workdir":           repo,
+	})
+	if err := writePRState(runDir, prState{SchemaVersion: 1, Status: "created", PR: "1", Branch: "test/fake-agent", Base: "develop"}); err != nil {
+		t.Fatal(err)
+	}
+
+	ghDir := t.TempDir()
+	ghLog := filepath.Join(ghDir, "gh.log")
+	writeFailingChecksFakeGH(t, ghDir, ghLog)
+	t.Setenv("PATH", ghDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	withWorkingDir(t, repo)
+
+	_, err := captureStdout(t, func() error {
+		return commandPR(ctx, globals{JSON: true, NoColor: true}, []string{"checks", "--iteration-dir", runDir})
+	})
+	if err == nil {
+		t.Fatal("expected loop pr checks to fail")
+	}
+	checks, err := artifactdb.Read(runDir, "pr-checks")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(checks, `"status": "failed"`) || !strings.Contains(checks, "unit test failed: missing dependency") {
+		t.Fatalf("pr-checks artifact missing failure details:\n%s", checks)
+	}
+	errorsLog := readText(t, filepath.Join(runDir, "errors.log"))
+	if !strings.Contains(errorsLog, "see pr-checks artifact") {
+		t.Fatalf("errors.log missing concise pointer:\n%s", errorsLog)
+	}
+	if strings.Contains(errorsLog, "Refreshing checks status") || strings.Contains(errorsLog, "unit test failed: missing dependency") {
+		t.Fatalf("errors.log should not duplicate full check output:\n%s", errorsLog)
+	}
+}
+
 func TestHelperProcessFakeAgent(t *testing.T) {
 	if os.Getenv("LOOP_TEST_FAKE_AGENT") != "1" {
 		return
@@ -354,6 +479,20 @@ func runTestFakeAgent() int {
 		_ = artifactdb.Write(iterDir, "summary", "# Iteration Summary\n\n- Fake agent repaired validation.\n")
 		writeTestFakeResult(iterDir, "completed", testFakeCommit(workDir))
 		return 0
+	case "pr_owned_repair":
+		return runTestFakeAgentOwnedPR(iterDir, true)
+	case "pr_owned_simple":
+		return runTestFakeAgentOwnedPR(iterDir, false)
+	case "pr_unmerged_result":
+		workDir := getenvForTestAgent("LOOP_WORKDIR", ".")
+		_ = commandBranch(context.Background(), globals{}, []string{"rename", "test/fake-agent"})
+		changePath := filepath.Join(workDir, "loop-fake-change.txt")
+		_ = os.WriteFile(changePath, []byte("fake agent completed without pr merge at "+time.Now().UTC().Format(time.RFC3339Nano)+"\n"), 0o644)
+		_ = gitForTestAgent(workDir, "add", "loop-fake-change.txt")
+		_ = gitForTestAgent(workDir, "commit", "-m", "F: run fake agent behavior")
+		_ = artifactdb.Write(iterDir, "summary", "# Iteration Summary\n\n- Fake agent completed without PR merge.\n")
+		writeTestFakeResult(iterDir, "completed", testFakeCommit(workDir))
+		return 0
 	case "completed_unrenamed":
 		workDir := getenvForTestAgent("LOOP_WORKDIR", ".")
 		changePath := filepath.Join(workDir, "loop-fake-change.txt")
@@ -374,6 +513,44 @@ func runTestFakeAgent() int {
 		writeTestFakeResult(iterDir, "completed", testFakeCommit(workDir))
 		return 0
 	}
+}
+
+func runTestFakeAgentOwnedPR(iterDir string, repair bool) int {
+	ctx := context.Background()
+	workDir := getenvForTestAgent("LOOP_WORKDIR", ".")
+	_ = commandBranch(ctx, globals{}, []string{"rename", "test/fake-agent"})
+	changePath := filepath.Join(workDir, "loop-fake-change.txt")
+	_ = os.WriteFile(changePath, []byte("fake agent completed at "+time.Now().UTC().Format(time.RFC3339Nano)+"\n"), 0o644)
+	_ = gitForTestAgent(workDir, "add", "loop-fake-change.txt")
+	_ = gitForTestAgent(workDir, "commit", "-m", "F: run fake agent behavior")
+	_ = artifactdb.Write(iterDir, "pr-title", "Run fake agent behavior\n")
+	_ = artifactdb.Write(iterDir, "pr-body", "## Summary\n\nFake agent PR.\n")
+	if err := commandPR(ctx, globals{JSON: true, NoColor: true}, []string{"create"}); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	if err := commandPR(ctx, globals{JSON: true, NoColor: true}, []string{"checks"}); err != nil {
+		if !repair {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		repairPath := filepath.Join(workDir, "loop-fake-pr-repair.txt")
+		_ = os.WriteFile(repairPath, []byte("fake pr repair at "+time.Now().UTC().Format(time.RFC3339Nano)+"\n"), 0o644)
+		_ = gitForTestAgent(workDir, "add", "loop-fake-pr-repair.txt")
+		_ = gitForTestAgent(workDir, "commit", "-m", "C: repair fake pr checks")
+		_ = artifactdb.Append(iterDir, "worklog", "Repaired fake PR checks after loop pr checks failed.\n")
+		if err := commandPR(ctx, globals{JSON: true, NoColor: true}, []string{"checks"}); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+	}
+	if err := commandPR(ctx, globals{JSON: true, NoColor: true}, []string{"merge"}); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	_ = artifactdb.Write(iterDir, "summary", "# Iteration Summary\n\n- Fake agent completed and merged PR.\n")
+	writeTestFakeResult(iterDir, "completed", testFakeCommit(workDir))
+	return 0
 }
 
 func testFakeAgentMode() string {
@@ -596,6 +773,42 @@ fi
 exit 0
 `
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeFailingChecksFakeGH(t *testing.T, dir, logPath string) {
+	t.Helper()
+	path := filepath.Join(dir, "gh")
+	script := `#!/bin/sh
+echo "$@" >> ` + shellQuote(logPath) + `
+
+if [ "$1" = "--version" ]; then
+  echo "gh version fake"
+  exit 0
+fi
+
+if [ "$1" = "pr" ] && [ "$2" = "checks" ]; then
+  echo "Refreshing checks status every 5 seconds. Press Ctrl+C to quit."
+  echo "unit test failed: missing dependency" >&2
+  exit 1
+fi
+
+exit 0
+`
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func mustWriteRuntimeArtifact(t *testing.T, iterDir string, value map[string]any) {
+	t.Helper()
+	data, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data = append(data, '\n')
+	if err := artifactdb.Write(iterDir, "runtime", string(data)); err != nil {
 		t.Fatal(err)
 	}
 }

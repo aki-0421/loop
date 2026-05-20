@@ -173,6 +173,39 @@ exit 8
 	}
 }
 
+func TestGHWrapperLogsParsesJobURL(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "gh.log")
+	r := Runner{Dir: dir, GHPath: fakeGH(t, logPath, 0)}
+
+	if _, err := r.Logs(ctx, "https://github.com/acme/app/actions/runs/12345/job/67890"); err != nil {
+		t.Fatalf("Logs: %v", err)
+	}
+	logBytes, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(logBytes), "run view 12345 --job 67890 --log") {
+		t.Fatalf("logs command was not recorded correctly:\n%s", logBytes)
+	}
+}
+
+func TestParseJobRef(t *testing.T) {
+	runID, jobID := ParseJobRef("https://github.com/acme/app/actions/runs/12345/job/67890")
+	if runID != "12345" || jobID != "67890" {
+		t.Fatalf("ParseJobRef URL = %q, %q", runID, jobID)
+	}
+	runID, jobID = ParseJobRef("67890")
+	if runID != "" || jobID != "67890" {
+		t.Fatalf("ParseJobRef id = %q, %q", runID, jobID)
+	}
+	runID, jobID = ParseJobRef("https://github.com/acme/app/actions/runs/12345/job/67890?pr=4")
+	if runID != "12345" || jobID != "67890" {
+		t.Fatalf("ParseJobRef query URL = %q, %q", runID, jobID)
+	}
+}
+
 func fakeGH(t *testing.T, logPath string, checksExit int) string {
 	t.Helper()
 	script := `#!/bin/sh

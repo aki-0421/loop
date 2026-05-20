@@ -63,6 +63,7 @@ Every iteration writes structured artifacts into its local SQLite DB, `.loop/run
 - `summary`: concise summary for future context.
 - `result`: JSON iteration result.
 - `pr-title` and `pr-body`: pull request text.
+- `pr-state`, `pr-checks`, and `pr-check-log`: pull request lifecycle state and check diagnostics written by `loop pr`.
 
 Agents should read and write these artifacts through `loop iteration read`, `loop iteration write`, or `loop iteration append` so path resolution and artifact boundaries stay in the CLI.
 

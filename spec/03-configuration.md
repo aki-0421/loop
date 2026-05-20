@@ -114,7 +114,7 @@ Modes:
 | Mode | Behavior |
 | --- | --- |
 | `local_merge` | Squash merge the iteration branch into the base branch locally. |
-| `pr` | Push the branch, create a pull request, wait for checks when configured, merge through `gh`, pull the base branch, and continue. |
+| `pr` | Require the agent to create, check, repair, and merge the pull request through `loop pr`; then pull the base branch and continue. |
 
 Pull request mode uses `gh` commands. The CLI writes the generated title and body to files before invoking `gh`.
 
@@ -122,7 +122,7 @@ Pull request check timing:
 
 | Field | Built-in value | Behavior |
 | --- | ---: | --- |
-| `git.integration.pr.waitChecks` | `true` | Run `gh pr checks <pr> --watch` before merge. |
+| `git.integration.pr.waitChecks` | `true` | Make `loop pr checks` and `loop pr merge` run `gh pr checks <pr> --watch`. |
 | `git.integration.pr.checksRequiredOnly` | `false` | Pass `--required` so only required checks affect the wait. |
 | `git.integration.pr.checksStartupDelaySeconds` | `5` | Wait after PR creation or repair push before asking GitHub for checks. |
 | `git.integration.pr.checksDiscoveryTimeoutSeconds` | `60` | Keep polling when GitHub reports no checks for the PR branch. |
@@ -130,6 +130,8 @@ Pull request check timing:
 | `git.integration.pr.checksWatchTimeoutSeconds` | `3600` | Maximum time for a reported pending check set to complete before the run fails without launching repair. |
 
 If no checks are reported after the discovery timeout, the check wait is treated as skipped.
+
+`git.integration.pr.mergeWhenChecksPass` is accepted for compatibility with older configs, but PR merges are initiated by `loop pr merge`.
 
 ## `validation`
 

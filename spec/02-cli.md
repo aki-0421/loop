@@ -101,6 +101,7 @@ Runtime rules:
 - A completed iteration with changes is integrated before the next iteration starts.
 - A completed iteration with `should_fully_stop=true` stops after integration.
 - A no-change iteration with `should_fully_stop=true` stops without integration.
+- In PR mode, a completed iteration is accepted only after `loop pr merge` records a merged PR.
 
 Example:
 
@@ -197,6 +198,7 @@ loop iteration result [--iteration-dir <dir>|--run <run-id> --iteration <n>] --s
 If `--iteration-dir` is omitted, commands resolve the current agent iteration automatically. If `--run` is supplied, the CLI resolves `.loop/runs/<run-id>/iterations/<n>` using the configured log directory; `--iteration latest` selects the newest iteration.
 
 Writable artifacts are `plan`, `todo`, `worklog`, `summary`, `result`, `pr-title`, and `pr-body`. Read-only artifacts include `runtime`, `instruction`, `prompt`, `effective-config`, `validation`, `events`, `stdout`, and `stderr`.
+PR command artifacts `pr-state`, `pr-checks`, and `pr-check-log` are read-only to the agent and written by `loop pr`.
 
 `pr-template` is a read-only artifact. `loop iteration read pr-template` prints the selected repository pull request template when present, otherwise it prints the CLI-owned fallback template. `loop iteration path pr-template` prints a path only when a repository template file exists.
 
@@ -212,6 +214,19 @@ loop branch rename --kind <kind> <slug words...> [--iteration-dir <dir>|--run <r
 ```
 
 `loop branch rename` validates the branch kind against loop's fixed preset, slugifies the branch subject, applies the configured collision suffix when needed, renames the checked-out iteration branch, updates runtime context, and prints the actual branch name. Agents must use this command instead of direct Git branch switching or renaming. The command is rejected after integration has started.
+
+## `loop pr`
+
+Manage the current iteration pull request through agent-facing CLI commands.
+
+```bash
+loop pr create [--iteration-dir <dir>|--run <run-id> --iteration <n>]
+loop pr checks [--iteration-dir <dir>|--run <run-id> --iteration <n>]
+loop pr logs <job-url-or-id> [--iteration-dir <dir>|--run <run-id> --iteration <n>]
+loop pr merge [--iteration-dir <dir>|--run <run-id> --iteration <n>]
+```
+
+`loop pr create` reads `pr-title` and `pr-body`, pushes the tracked branch when configured, creates or reuses the pull request, and writes `pr-state`. `loop pr checks` pushes current commits, waits for checks, writes `pr-checks`, and exits non-zero on failed checks with only a concise `errors.log` pointer. `loop pr logs` writes `pr-check-log`. `loop pr merge` runs configured validation, performs a final check wait, merges through `gh`, and records `pr-state.status=merged`.
 
 ## `loop skills`
 
