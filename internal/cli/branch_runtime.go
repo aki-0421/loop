@@ -118,7 +118,8 @@ func refreshTrackedBranch(ctx context.Context, workDir string, paths *pathSet) e
 	if err != nil {
 		return err
 	}
-	if tracked.Current != "" && gitx.IsRepository(ctx, workDir) {
+	allowDetachedAfterPRMerge := paths.PullRequestMode && prStateMerged(iterDir)
+	if tracked.Current != "" && gitx.IsRepository(ctx, workDir) && !allowDetachedAfterPRMerge {
 		current, err := (gitx.Runner{Dir: workDir}).CurrentBranch(ctx)
 		if err != nil {
 			return err

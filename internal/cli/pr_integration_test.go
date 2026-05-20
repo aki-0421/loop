@@ -146,6 +146,69 @@ git:
 	assertBranchMissing(t, repo, "test/fake-agent")
 }
 
+func TestAgentOwnedPRMergeAllowsDetachedWorktreeAfterMerge(t *testing.T) {
+	ctx := context.Background()
+	repo := newCleanupRepo(t)
+	addBareOrigin(t, repo)
+	mustWrite(t, filepath.Join(repo, "task.md"), "# Task\n\nMake the fake change.\n")
+	agentCommand, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, filepath.Join(repo, ".loop", "config.yaml"), fmt.Sprintf(`version: 1
+
+agent:
+  default: detachtest
+  adapters:
+    detachtest:
+      command: %s
+      args: [-test.run=TestHelperProcessFakeAgent, --]
+      prompt: stdin
+      env:
+        LOOP_TEST_FAKE_AGENT: "1"
+        LOOP_FAKE_AGENT_MODE: pr_owned_simple
+
+run:
+  repairAttempts: 0
+
+git:
+  baseBranch: develop
+  worktree: true
+  integration:
+    mode: pr
+    pr:
+      push: true
+      waitChecks: true
+      checksStartupDelaySeconds: 0
+      checksDiscoveryTimeoutSeconds: 0
+      checksPollIntervalSeconds: 1
+      deleteBranch: true
+`, yamlSingleQuote(agentCommand)))
+	git(t, repo, "add", "task.md", ".loop/config.yaml")
+	git(t, repo, "commit", "-m", "T: add detached pr merge fixture")
+	git(t, repo, "push", "origin", "develop")
+	ghDir := t.TempDir()
+	ghLog := filepath.Join(ghDir, "gh.log")
+	writeDetachOnMergeFakeGH(t, ghDir, ghLog)
+	t.Setenv("PATH", ghDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	withWorkingDir(t, repo)
+
+	if _, err := captureStdout(t, func() error {
+		return commandRun(ctx, globals{Agent: "detachtest", JSON: true, NoColor: true}, []string{"task.md", "--max-iterations", "1"})
+	}); err != nil {
+		t.Fatalf("loop run: %v", err)
+	}
+
+	runID, err := latestRun(filepath.Join(repo, ".loop", "runs"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(repo, ".loop", "worktrees", runID, "0001")); !os.IsNotExist(err) {
+		t.Fatalf("worktree should be removed after detached PR merge, err=%v", err)
+	}
+	assertBranchMissing(t, repo, "test/fake-agent")
+}
+
 func TestAgentOwnedPRPollsUntilChecksAppearBeforeMerge(t *testing.T) {
 	ctx := context.Background()
 	repo := newCleanupRepo(t)
@@ -621,6 +684,9 @@ func testFakeBranchResult(status string) map[string]any {
 	initial := getenvForTestAgent("LOOP_INITIAL_BRANCH", "wip/0001")
 	current := currentBranchForTestAgent(workDir)
 	if current == "" {
+		current = runtimeCurrentBranchForTestAgent()
+	}
+	if current == "" {
 		current = getenvForTestAgent("LOOP_CURRENT_BRANCH", initial)
 	}
 	kind := "test"
@@ -648,6 +714,18 @@ func currentBranchForTestAgent(dir string) string {
 		return ""
 	}
 	return strings.TrimSpace(string(out))
+}
+
+func runtimeCurrentBranchForTestAgent() string {
+	iterDir, err := resolveIterationDir(context.Background(), globals{}, "", os.Getenv("LOOP_RUN_ID"), os.Getenv("LOOP_ITERATION_ID"))
+	if err != nil {
+		return ""
+	}
+	runtime, err := readRuntimeMap(iterDir)
+	if err != nil {
+		return ""
+	}
+	return runtimeString(runtime, "current_branch")
 }
 
 func splitTestBranchName(branch string) (string, string, bool) {
@@ -767,6 +845,40 @@ if [ "$1" = "pr" ] && [ "$2" = "checks" ]; then
 fi
 
 if [ "$1" = "pr" ] && [ "$2" = "merge" ]; then
+  exit 0
+fi
+
+exit 0
+`
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeDetachOnMergeFakeGH(t *testing.T, dir, logPath string) {
+	t.Helper()
+	path := filepath.Join(dir, "gh")
+	script := `#!/bin/sh
+echo "$@" >> ` + shellQuote(logPath) + `
+
+if [ "$1" = "--version" ]; then
+  echo "gh version fake"
+  exit 0
+fi
+
+if [ "$1" = "pr" ] && [ "$2" = "create" ]; then
+  echo "1"
+  exit 0
+fi
+
+if [ "$1" = "pr" ] && [ "$2" = "checks" ]; then
+  echo "checks passed"
+  exit 0
+fi
+
+if [ "$1" = "pr" ] && [ "$2" = "merge" ]; then
+  git checkout --detach HEAD >/dev/null 2>&1
+  git branch -D test/fake-agent >/dev/null 2>&1
   exit 0
 fi
 

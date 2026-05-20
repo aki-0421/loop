@@ -427,29 +427,33 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 		cleanup.Branch = paths.CurrentBranch
 		state.Iterations[len(state.Iterations)-1].BranchCurrent = paths.CurrentBranch
 		lastResult = result
+		mergedPR := paths.PullRequestMode && prStateMerged(iterDir)
 		state.Stage = runstate.StageValidating
 		_ = runstate.Write(statePath, state)
 		renderer.Stage(runstate.StageValidating, "running validation")
-		if err := ensureIterationBranch(ctx, branchRunner, paths.CurrentBranch); err != nil {
-			return codedError{4, err}
-		}
-		validationResults, validationErr := runConfiguredValidation(ctx, workDir, paths, cfg.Validation.Commands)
-		if validationErr != nil && cfg.Run.RepairAttempts > 0 {
-			result, validationResults, validationErr = repairValidation(ctx, cfg, workDir, root, &paths, validationErr, renderer.AgentEvent)
-			if result != nil {
-				lastResult = result
-				renderer.Branch(paths.CurrentBranch)
-				cleanup.Branch = paths.CurrentBranch
-				state.Iterations[len(state.Iterations)-1].BranchCurrent = paths.CurrentBranch
+		if !mergedPR {
+			if err := ensureIterationBranch(ctx, branchRunner, paths.CurrentBranch); err != nil {
+				return codedError{4, err}
 			}
-		}
-		if validationErr != nil {
-			appendErrorLog(paths.Errors, fmt.Sprintf("validation error: %v", validationErr))
-			return codedError{5, validationErr}
-		}
-		if validation.StatusFromResults(validationResults) == "failed" {
-			appendErrorLog(paths.Errors, "required validation failed")
-			return codedError{5, fmt.Errorf("required validation failed")}
+			validationResults, validationErr := runConfiguredValidation(ctx, workDir, paths, cfg.Validation.Commands)
+			if validationErr != nil && cfg.Run.RepairAttempts > 0 {
+				result, validationResults, validationErr = repairValidation(ctx, cfg, workDir, root, &paths, validationErr, renderer.AgentEvent)
+				if result != nil {
+					lastResult = result
+					renderer.Branch(paths.CurrentBranch)
+					cleanup.Branch = paths.CurrentBranch
+					state.Iterations[len(state.Iterations)-1].BranchCurrent = paths.CurrentBranch
+					mergedPR = paths.PullRequestMode && prStateMerged(iterDir)
+				}
+			}
+			if validationErr != nil {
+				appendErrorLog(paths.Errors, fmt.Sprintf("validation error: %v", validationErr))
+				return codedError{5, validationErr}
+			}
+			if validation.StatusFromResults(validationResults) == "failed" {
+				appendErrorLog(paths.Errors, "required validation failed")
+				return codedError{5, fmt.Errorf("required validation failed")}
+			}
 		}
 		if result.Status == "blocked" {
 			state.Stage = runstate.StageBlocked
@@ -482,9 +486,14 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 		}
 		state.Iterations[len(state.Iterations)-1].SummarySentence = result.SummarySentence
 		state.Iterations[len(state.Iterations)-1].ShouldFullyStop = result.ShouldFullyStop
-		commits, err := runner.ListCommits(ctx, cfg.Git.BaseBranch, paths.CurrentBranch)
-		if err != nil {
-			return codedError{1, err}
+		var commits []gitx.Commit
+		if mergedPR {
+			commits = commitsFromResult(result)
+		} else {
+			commits, err = runner.ListCommits(ctx, cfg.Git.BaseBranch, paths.CurrentBranch)
+			if err != nil {
+				return codedError{1, err}
+			}
 		}
 		renderer.Commits(len(commits))
 		if len(commits) == 0 && cfg.Git.Commits.RequireAgentCommits {
@@ -497,7 +506,7 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 		if err != nil {
 			return codedError{1, err}
 		}
-		if !clean.Clean && cfg.Run.RepairAttempts > 0 {
+		if !clean.Clean && !mergedPR && cfg.Run.RepairAttempts > 0 {
 			result, clean, err = repairDirty(ctx, cfg, workDir, &paths, clean, renderer.AgentEvent)
 			if err == nil && result != nil {
 				lastResult = result
@@ -506,13 +515,16 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 				state.Iterations[len(state.Iterations)-1].BranchCurrent = paths.CurrentBranch
 				state.Iterations[len(state.Iterations)-1].SummarySentence = result.SummarySentence
 				state.Iterations[len(state.Iterations)-1].ShouldFullyStop = result.ShouldFullyStop
+				mergedPR = paths.PullRequestMode && prStateMerged(iterDir)
 			}
 		}
 		if !clean.Clean {
 			return codedError{4, fmt.Errorf("working tree is dirty after agent: %s", dirtyList(clean.Dirty))}
 		}
-		if err := ensureIterationBranch(ctx, branchRunner, paths.CurrentBranch); err != nil {
-			return codedError{4, err}
+		if !mergedPR {
+			if err := ensureIterationBranch(ctx, branchRunner, paths.CurrentBranch); err != nil {
+				return codedError{4, err}
+			}
 		}
 		finalBranch := paths.CurrentBranch
 		renderer.Branch(finalBranch)
@@ -1263,6 +1275,17 @@ func validateResultArtifact(paths pathSet) (*validation.IterationResult, error) 
 		return nil, err
 	}
 	return result, nil
+}
+
+func commitsFromResult(result *validation.IterationResult) []gitx.Commit {
+	if result == nil {
+		return nil
+	}
+	commits := make([]gitx.Commit, 0, len(result.Commits))
+	for _, commit := range result.Commits {
+		commits = append(commits, gitx.Commit{Hash: commit.SHA, Subject: commit.Message})
+	}
+	return commits
 }
 
 func validateResultBranchContract(result *validation.IterationResult, paths pathSet) error {
