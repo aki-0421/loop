@@ -29,7 +29,7 @@ If a `loop` command fails, read the error, fix the arguments or state, and rerun
 Use this section as the working order and section map for one loop iteration:
 
 1. Establish context. See [Getting oriented](#getting-oriented).
-2. Choose exactly one reviewer-sized slice, then write `plan` and `todo` before any repository file edits. See [Review scope and planning](#review-scope-and-planning).
+2. Choose exactly one implementation slice, then write `plan` and `todo` before any repository file edits. See [Implementation scope planning](#implementation-scope-planning) and [TODO planning](#todo-planning).
 3. Implement only that slice by editing normal repository files.
 4. Validate the relevant behavior. See [Validation](#validation).
 5. Commit each completed TODO immediately with `loop commit` before moving to unrelated work. See [Commit contract](#commit-contract).
@@ -42,56 +42,53 @@ Use this section as the working order and section map for one loop iteration:
 
 ## Getting oriented
 
-At the start of every iteration, establish context first:
+Start each iteration by collecting operational context and recent-work context. Keep this phase shallow; detailed codebase exploration happens during planning.
 
-1. List agent commands with `loop help agent`.
+1. Run `loop help agent`.
 2. Run `pwd`.
 3. Run `git status --short --branch`.
-4. Run `loop iteration read runtime` to load integration mode, pull request mode, branch context, and goal.
+4. Run `loop iteration read runtime` to load integration mode, pull request mode, branch context, configured validation, and goal.
 5. Run `loop iteration read instruction` to load the current task text.
 6. Run `loop memory recent --limit 30` to review recent iteration summaries.
-7. If recent memory suggests relevant older context, search it with `loop memory search <query>`.
-8. Inspect recent commits with `git log --oneline -20` when history exists.
-9. Inspect the repository structure narrowly.
-10. For large specs or docs, read the index, README, overview, or table of contents first.
-11. Read only the spec files needed to understand the instruction and immediate context.
+7. If recent memory points to older relevant context, run `loop memory search <query>`.
+8. If commit history exists, run `git log --oneline -20`.
+9. Inspect broad repository landmarks only when needed to identify planning entry points: root files, package directories, README or index files, and test or CI entry points.
+10. Carry forward the planning inputs: current goal, branch and mode, validation settings, recent changes, unfinished or broken work, constraints, and assumptions.
+11. If required operational context is missing or unsafe to interpret, return `blocked` with the missing evidence.
 
-Capture unfinished or broken work found during orientation as planning input.
+## Implementation scope planning
 
-## Review scope and planning
-
-Keep the iteration small enough that a reviewer can understand the intent, design, risk, and validation without reconstructing the whole project.
-
-Use these PR-slicing heuristics:
-
-- One PR should answer one reviewer question.
-- Prefer small batches; small reviews move faster, get deeper review, merge easier, and roll back easier.
-- Choose vertical only when it is tiny; otherwise split by boundary first, then UI, then polish.
-- Keep the branch short-lived and avoid accumulating unrelated decisions.
-- Separate scaffolding, product behavior, refactors, tests, CI, and documentation unless one directly proves the other.
-- A review slice should be independently useful, or explicitly prepare the next independently useful slice.
-- If the diff is becoming hard to summarize in one sentence, shrink the slice.
-- If validation requires unrelated systems, shrink to the nearest testable boundary.
-- If dependent work is needed, stack it as follow-up slices instead of merging it into this PR.
-- Prefer boring, reversible changes over impressive completeness.
-
-Write the `plan` and `todo` artifacts before code edits; they are runtime memory only and must not be committed.
-
-Planning gate: stay in planning until both artifacts have been written. Before that point, only inspect, read, and reason; do not edit repository files, run formatting/codegen that writes files, validate with mutating commands, or call `loop commit`.
-
-Use orientation findings when selecting the review slice. If memory, git history, or progress artifacts identify unfinished or broken work, prefer finishing or repairing that slice before starting new behavior.
-
-Inspect the CLI-owned planning help and template before writing artifacts:
+Plan after orientation and before any repository file edits. Use targeted codebase exploration to choose exactly one reviewer-sized slice.
 
 ```bash
 loop help agent iteration plan
-loop help agent iteration todo
 loop iteration plan template
 ```
 
-Use the plan template to choose exactly one selected review slice first. After the plan has fixed the work target, use the TODO workflow described by the help output to decompose that slice into commit-sized tasks. TODOs must contain only the current slice, and each TODO uses the same `--type` and message shape as `loop commit`, for example `loop iteration todo insert --type F add password reset flow`.
+Use the CLI-owned template when writing the `plan` artifact.
 
-`Out of Scope` is required when the instruction is broad. It should briefly name deferred specs, features, tooling, or docs without expanding them into a roadmap.
+1. Start from the concrete entry point named or implied by the instruction or recent work, such as a failing test, route, endpoint, command, job, schema, migration, package, or configuration boundary.
+2. Identify the highest-risk affected path: unknown behavior, integration boundary, data contract, migration, generated artifact, shared abstraction, or failing validation.
+3. Inspect only the evidence needed to understand that path: relevant code, tests, docs or specs, schemas, fixtures, callers, consumers, runtime errors, and validation entry points.
+4. For shared models, types, configuration, repository interfaces, adapters, or other cross-cutting contracts, verify the shape against existing usage from at least one caller and one consumer when available.
+5. Prefer a narrow vertical slice through the riskiest path over completing one layer across packages.
+6. Use a horizontal slice when the task itself is horizontal or the contract is already proven, such as renaming one API, updating one generated schema, fixing one shared utility, repairing one CI rule, or changing one established interface.
+7. Let observed behavior and existing contracts shape new abstractions; introduce shared abstractions only with an immediate caller, consumer, or validation path.
+8. Cross package boundaries when needed to prove the selected behavior, and keep each cross-package change tied to that behavior.
+9. Keep the slice small enough to answer one reviewer question. If it grows, shrink to a characterization, repair, migration step, or proof slice that is independently reviewable.
+10. Separate scaffolding, product behavior, refactors, tests, CI, and documentation unless one directly proves the other inside the selected slice.
+11. Write the `plan` with the selected slice, why it was chosen, evidence used, expected files or subsystems, validation strategy, assumptions, and `Out of Scope`.
+12. When the original instruction is broad, `Out of Scope` must briefly name deferred specs, features, layers, packages, tooling, or docs without turning them into a roadmap.
+
+## TODO planning
+
+After the plan has fixed the work target, decompose only that selected slice into TODOs.
+
+```bash
+loop help agent iteration todo
+```
+
+Planning gate: stay in planning until both the `plan` and `todo` artifacts have been written. Before that point, only inspect, read, and reason; do not edit repository files, run formatting/codegen that writes files, validate with mutating commands, or call `loop commit`.
 
 ## Validation
 
@@ -145,7 +142,7 @@ If pull request mode is enabled, get template text with `loop iteration read pr-
 - Write `pr-body` with `loop iteration write pr-body`.
 - Write PR title and body content in English by default.
 - Preserve visible template headings and checklist labels.
-- Fill visible template sections with the chosen review slice, validation results, review notes, and intentionally deferred work.
+- Fill visible template sections with the chosen implementation slice, validation results, review notes, and intentionally deferred work.
 - Keep the title concise and action-oriented.
 - Describe only what this PR changes.
 - Mention deferred work briefly when the original instruction is broader than the chosen slice.
