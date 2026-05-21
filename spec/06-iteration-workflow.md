@@ -26,17 +26,16 @@ Each iteration has its own directory:
 ```text
 .loop/runs/<run-id>/iterations/0001/
   effective-config.yaml
-  iteration.db
   prompt.md
   agent-events.jsonl
   errors.log        # only when an error occurs
 ```
 
-Files are created as needed. `prompt.md`, `agent-events.jsonl`, and the `result` artifact in `iteration.db` are required after the agent phase completes.
+Files are created as needed. `prompt.md`, `effective-config.yaml`, `agent-events.jsonl`, `errors.log`, and run state are durable audit/replay files. Result handoff state is stored in `.loop/loop.db`.
 
-`plan` is runtime memory. It is stored in `iteration.db`, ignored by Git, and must not be committed as part of the iteration work.
+`plan`, `todo`, and `worklog` are active runtime files. They are ignored by Git, must not be committed as iteration work, and are disposable after the iteration completes.
 
-Agents access runtime artifacts through `loop iteration` commands instead of manually constructing paths. Writable agent artifacts are `plan`, `todo`, `worklog`, `summary`, `result`, `pr-title`, and `pr-body`. `plan` uses `loop iteration plan`, `todo` uses `loop iteration todo`, and remaining writable artifacts use `loop iteration write` or `loop iteration append`. Agents should generate the `result` artifact with `loop iteration result --write` so the CLI owns the mechanical JSON shape.
+Agents access runtime artifacts through `loop iteration` commands instead of manually constructing paths. Writable agent artifacts are `plan`, `todo`, `worklog`, `pr-title`, and `pr-body`. `plan` uses `loop iteration plan`, `todo` uses `loop iteration todo`, and remaining writable artifacts use `loop iteration write` or `loop iteration append`. Agents generate the result handoff with `loop iteration result --write` so the CLI owns the mechanical JSON shape.
 
 ## Live renderer
 

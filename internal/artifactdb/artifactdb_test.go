@@ -10,21 +10,21 @@ func TestWriteAppendReadUsesIterationFilesOnly(t *testing.T) {
 	root := t.TempDir()
 	iterDir := filepath.Join(root, ".loop", "runs", "run-1", "iterations", "0001")
 
-	if err := Write(iterDir, "summary", "Added password"); err != nil {
+	if err := Write(iterDir, "worklog", "Added password"); err != nil {
 		t.Fatal(err)
 	}
-	if err := Append(iterDir, "summary", " reset tests.\n"); err != nil {
+	if err := Append(iterDir, "worklog", " reset tests.\n"); err != nil {
 		t.Fatal(err)
 	}
-	got, err := Read(iterDir, "summary")
+	got, err := Read(iterDir, "worklog")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got != "Added password reset tests.\n" {
-		t.Fatalf("summary = %q", got)
+		t.Fatalf("worklog = %q", got)
 	}
-	if _, err := os.Stat(filepath.Join(iterDir, "summary.md")); err != nil {
-		t.Fatalf("summary file missing: %v", err)
+	if _, err := os.Stat(filepath.Join(iterDir, "worklog.md")); err != nil {
+		t.Fatalf("worklog file missing: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(iterDir, "iteration.db")); !os.IsNotExist(err) {
 		t.Fatalf("iteration db should not be created by runtime artifacts, err=%v", err)
@@ -40,7 +40,7 @@ func TestRebuildGlobalFromRunsDoesNotIndexRuntimeArtifacts(t *testing.T) {
 	if err := os.MkdirAll(iterDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(iterDir, "summary.md"), []byte("file artifact should be ignored\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(iterDir, "worklog.md"), []byte("file artifact should be ignored\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if count, err := RebuildGlobalFromRuns(filepath.Join(root, ".loop", "runs")); err != nil {
@@ -49,7 +49,7 @@ func TestRebuildGlobalFromRunsDoesNotIndexRuntimeArtifacts(t *testing.T) {
 		t.Fatalf("indexed %d file records, want 0", count)
 	}
 
-	if err := Write(iterDir, "summary", "Stored in file artifacts.\n"); err != nil {
+	if err := Write(iterDir, "worklog", "Stored in file artifacts.\n"); err != nil {
 		t.Fatal(err)
 	}
 	if count, err := RebuildGlobalFromRuns(filepath.Join(root, ".loop", "runs")); err != nil {
@@ -57,7 +57,7 @@ func TestRebuildGlobalFromRunsDoesNotIndexRuntimeArtifacts(t *testing.T) {
 	} else if count != 0 {
 		t.Fatalf("indexed %d records, want 0", count)
 	}
-	hits, err := SearchGlobal(filepath.Join(root, ".loop", GlobalDBName), SearchOptions{Query: "sqlite", RunID: "run-1", Artifact: "summary", Limit: 10})
+	hits, err := SearchGlobal(filepath.Join(root, ".loop", GlobalDBName), SearchOptions{Query: "sqlite", RunID: "run-1", Artifact: "worklog", Limit: 10})
 	if err != nil {
 		t.Fatal(err)
 	}

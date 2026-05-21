@@ -43,7 +43,6 @@ func RunFakeAgentFromEnv() int {
 		_ = os.WriteFile(changePath, []byte("validation repaired at "+time.Now().UTC().Format(time.RFC3339Nano)+"\n"), 0o644)
 		_ = git(workDir, "add", "validation-ok.txt")
 		_ = git(workDir, "commit", "-m", "F: repair validation fixture")
-		_ = writeFakeArtifact(iterationDir, "summary", "# Iteration Summary\n\n- Fake agent repaired validation.\n")
 		writeFakeResult(iterationDir, "completed", fakeCommit(workDir))
 		return 0
 	case "completed_unrenamed":
@@ -52,7 +51,6 @@ func RunFakeAgentFromEnv() int {
 		_ = os.WriteFile(changePath, []byte("fake agent completed without branch rename at "+time.Now().UTC().Format(time.RFC3339Nano)+"\n"), 0o644)
 		_ = git(workDir, "add", "loop-fake-change.txt")
 		_ = git(workDir, "commit", "-m", "F: run fake agent behavior")
-		_ = writeFakeArtifact(iterationDir, "summary", "# Iteration Summary\n\n- Fake agent completed without renaming.\n")
 		writeFakeResult(iterationDir, "completed", fakeCommit(workDir))
 		return 0
 	default:
@@ -62,7 +60,6 @@ func RunFakeAgentFromEnv() int {
 		_ = os.WriteFile(changePath, []byte("fake agent completed at "+time.Now().UTC().Format(time.RFC3339Nano)+"\n"), 0o644)
 		_ = git(workDir, "add", "loop-fake-change.txt")
 		_ = git(workDir, "commit", "-m", "F: run fake agent behavior")
-		_ = writeFakeArtifact(iterationDir, "summary", "# Iteration Summary\n\n- Fake agent completed.\n")
 		writeFakeResult(iterationDir, "completed", fakeCommit(workDir))
 		return 0
 	}
@@ -139,7 +136,7 @@ func writeFakeResultHandoff(iterationDir, status string, commits ...map[string]a
 		"branch":               fakeBranchResult(status),
 		"commits":              commitList,
 		"validation":           map[string]any{"status": validationStatus, "commands": []map[string]any{}},
-		"artifacts":            map[string]any{"summary": "summary"},
+		"artifacts":            map[string]any{},
 		"assumptions":          []string{},
 		"blocked_reason":       "",
 		"follow_up_issue_refs": []string{},
@@ -215,19 +212,6 @@ func splitBranch(branch string) (string, string, bool) {
 		return "", "", false
 	}
 	return strings.TrimSpace(kind), strings.TrimSpace(slug), true
-}
-
-func writeFakeArtifact(iterationDir, name, content string) error {
-	if iterationDir != "" {
-		return artifactdb.Write(iterationDir, name, content)
-	}
-	exe, err := os.Executable()
-	if err != nil {
-		return err
-	}
-	cmd := exec.Command(exe, "iteration", "write", name, "--value", content)
-	cmd.Env = os.Environ()
-	return cmd.Run()
 }
 
 func git(dir string, args ...string) error {

@@ -358,8 +358,6 @@ func inferResultArtifacts(iterationDir string) validation.ArtifactResult {
 			out.Plan = "plan"
 		case "todo":
 			out.Todo = "todo"
-		case "summary":
-			out.Summary = "summary"
 		case "worklog":
 			out.Worklog = "worklog"
 		case "pr-title":

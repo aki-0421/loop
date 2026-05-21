@@ -20,7 +20,7 @@ Runs are fully automated:
 - `loop` never asks the user for confirmation during `run`.
 - The agent must not ask the user questions directly.
 - Important product, policy, or large blocking specification clarifications are asked through `loop issue ask`, which creates GitHub Issues in the repository.
-- Missing agent affordances are reported through `loop issue report`, which creates GitHub improvement Issues for tools, docs, guardrails, observability, environment setup, or workflow gaps.
+- Concrete repository or harness improvement proposals are reported through `loop issue report`. Unsupported agent capability findings are rediscovered each iteration and are not persisted as Issues.
 - Missing information is handled by making a local, explicit assumption and continuing.
 - After creating a clarification Issue, the agent continues unrelated work. If no safe independent work remains, the agent records a blocked result in JSON and references the blocking Issue URL.
 - A blocked result that references an open `loop:blocking` Issue puts the current run process into in-memory sleep mode. Sleep mode polls GitHub Issue/PR updates and relaunches the agent in the same iteration when new context appears.

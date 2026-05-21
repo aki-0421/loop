@@ -540,8 +540,8 @@ func allHelpCommands() []helpCommand {
 		{
 			Path:        []string{"issue"},
 			Usage:       "loop issue <ask|report> ...",
-			Summary:     "Create GitHub clarification and capability-gap issues",
-			Description: "Agent-facing Issue commands. Use ask for important product, policy, or blocking specification questions. Use report when missing tools, docs, guardrails, observability, environment support, or workflow support made the agent less effective.",
+			Summary:     "Create GitHub clarification and improvement issues",
+			Description: "Agent-facing Issue commands. Use ask for important product, policy, or blocking specification questions. Use report for repository or harness improvement proposals. Unsupported agent capabilities are rediscovered each iteration instead of persisted.",
 			Agent:       true,
 			AgentOnly:   true,
 		},
@@ -562,8 +562,8 @@ func allHelpCommands() []helpCommand {
 		{
 			Path:        []string{"issue", "report"},
 			Usage:       "loop issue report --title <text> --body <text> [--kind <kind>] [--blocking]",
-			Summary:     "Create a GitHub Issue for an agent capability gap",
-			Description: "Creates labels `loop:agent-gap` and `loop:proposal`, applies optional `loop:blocking`, embeds loop metadata, and prints the Issue reference. Use GitHub-flavored Markdown for the body. Use when the agent cannot inspect, validate, repair, or decide well because the repository is missing a tool, doc, guardrail, signal, environment affordance, or workflow.",
+			Summary:     "Create a GitHub Issue for a repository improvement proposal",
+			Description: "Creates the `loop:proposal` label, applies optional `loop:blocking`, embeds loop metadata, and prints the Issue reference. Use GitHub-flavored Markdown for the body. Use for concrete repository or harness improvements, not ephemeral unsupported-agent findings.",
 			Flags: append(iterationLocatorFlags(),
 				helpFlag{Name: "--title <text>", Description: "Issue title"},
 				helpFlag{Name: "--body <text>", Description: "Markdown Issue body with evidence and proposed improvement"},

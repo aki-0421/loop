@@ -19,7 +19,7 @@ func TestValidateResultJSON(t *testing.T) {
 		"branch": {"initial_name": "wip/0001"},
 		"commits": [{"message": "T: add checkout validation"}],
 		"validation": {"status": "passed", "commands": []},
-		"artifacts": {"summary": "summary.md"}
+		"artifacts": {"worklog": "worklog.md"}
 	}`)
 	if _, err := ValidateResultJSON(valid); err != nil {
 		t.Fatal(err)

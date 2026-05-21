@@ -26,9 +26,6 @@ func TestIterationResultCommandBuildsAndWritesResult(t *testing.T) {
 	if err := artifactdb.Write(iterDir, "plan", "plan\n"); err != nil {
 		t.Fatal(err)
 	}
-	if err := artifactdb.Write(iterDir, "summary", "summary\n"); err != nil {
-		t.Fatal(err)
-	}
 	if err := artifactdb.Write(iterDir, "worklog", "worklog\n"); err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +68,7 @@ func TestIterationResultCommandBuildsAndWritesResult(t *testing.T) {
 	if result.Validation.Status != "passed" || len(result.Validation.Commands) != 1 {
 		t.Fatalf("validation = %#v", result.Validation)
 	}
-	if result.Artifacts.Plan != "plan" || result.Artifacts.Summary != "summary" || result.Artifacts.Worklog != "worklog" {
+	if result.Artifacts.Plan != "plan" || result.Artifacts.Worklog != "worklog" {
 		t.Fatalf("artifacts = %#v", result.Artifacts)
 	}
 	if len(result.Assumptions) != 1 {

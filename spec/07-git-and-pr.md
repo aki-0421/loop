@@ -60,7 +60,7 @@ The agent requests commits during the iteration by running:
 loop commit --type <type> <short imperative message>
 ```
 
-The CLI stages repository changes, validates the message, creates the commit on the current iteration branch, and prints the resulting commit SHA and subject. Runtime files under `.loop/runs/`, including `iteration.db`, `prompt.md`, `agent-events.jsonl`, and `errors.log`, are not committed.
+The CLI stages repository changes, validates the message, creates the commit on the current iteration branch, and prints the resulting commit SHA and subject. Runtime files under `.loop/runs/`, including `prompt.md`, `effective-config.yaml`, `agent-events.jsonl`, and `errors.log`, are not committed.
 
 Agents must not run `git add` or `git commit` directly. If `loop commit` rejects the type or message, the command exits non-zero with a human-readable validation error so the agent can immediately retry with corrected arguments.
 

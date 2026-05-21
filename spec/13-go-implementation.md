@@ -88,7 +88,7 @@ Responsibilities:
 
 ### Iteration artifact commands
 
-The CLI exposes `loop iteration path/read/write/append` for fixed artifact names, plus dedicated `loop iteration plan` and `loop iteration todo` namespaces for planning artifacts. Agent-writable artifacts are limited to `plan`, `todo`, `worklog`, `summary`, `result`, `pr-title`, and `pr-body`; CLI-owned logs, prompt, runtime context, effective config, and validation output are read-only. `loop iteration result` builds valid result JSON from runtime data plus semantic flags, and should be preferred over hand-authored `result` JSON. The CLI also exposes `loop commit --type <type> <message>` and `loop branch rename ...` so agents request validated commits and tracked branch renames without running raw Git lifecycle commands.
+The CLI exposes `loop iteration path/read/write/append` for fixed artifact names, plus dedicated `loop iteration plan` and `loop iteration todo` namespaces for planning artifacts. Agent-writable artifacts are limited to `plan`, `todo`, `worklog`, `pr-title`, and `pr-body`; CLI-owned logs, prompt, runtime context, effective config, and validation output are read-only. `loop iteration result` builds valid result JSON from runtime data plus semantic flags and writes the master-DB result handoff. The CLI also exposes `loop commit --type <type> <message>` and `loop branch rename ...` so agents request validated commits and tracked branch renames without running raw Git lifecycle commands.
 
 ### `internal/gitx`
 
@@ -129,7 +129,7 @@ Responsibilities:
 - Resolve the GitHub repository from `origin`.
 - Sync open and merged pull request titles and bodies through `gh api graphql`.
 - Sync repository Issues and Issue/PR comment diffs through `gh api graphql`.
-- Create clarification and capability-gap Issues and ensure `loop:question`, `loop:agent-gap`, `loop:proposal`, and `loop:blocking` labels.
+- Create clarification and improvement proposal Issues and ensure `loop:question`, `loop:proposal`, and `loop:blocking` labels.
 - Store PR memory and GitHub context in the rebuildable `.loop/loop.db` cache.
 - Search recent and older PR, Issue, and comment context with SQLite FTS.
 - Fetch and upsert a merged PR after `loop pr merge`.

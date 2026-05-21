@@ -13,7 +13,7 @@ func TestAssembleIncludesOnlyBootstrap(t *testing.T) {
 		CurrentBranch:      "wip/0001",
 		Skills:             []Skill{{Name: "loop", Path: ".agents/skills/loop/SKILL.md"}},
 		Paths:              Paths{IterationDir: ".loop/runs/r/iterations/0001", Result: ".loop/runs/r/iterations/0001/result.json"},
-		RecentSummaries:    []MemoryItem{{Path: "summary.md", Content: "Previous work."}},
+		RecentSummaries:    []MemoryItem{{Path: "https://github.com/acme/app/pull/1", Content: "Previous work."}},
 		InstructionContent: "Implement the feature.",
 		Goal:               "Feature is complete.",
 		EffectiveConfig:    "version: 1\n",

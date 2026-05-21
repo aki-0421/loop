@@ -75,7 +75,7 @@ Then:
 
 ## Clarifications
 
-Use GitHub Issues for important product, policy, or large blocking specification questions:
+Use GitHub Issues for important product, policy, or large blocking specification questions and concrete repository or harness improvement proposals:
 
 ```bash
 loop issue ask --title "Clarify ..." --body "..." [--blocking]
@@ -85,8 +85,8 @@ loop issue report --title "Improve ..." --body "..." [--kind tool|docs|guardrail
 - Use `--blocking` only when the answer can block a large implementation choice or no safe final decision exists.
 - After creating an Issue, record the URL in `worklog` and continue TODOs unrelated to that clarification.
 - Do not use Issues for minor local uncertainties that can be resolved from code, tests, docs, or a safe explicit assumption.
-- Use `loop issue report` when you could not inspect, validate, repair, or decide well because the repository is missing a tool, documentation, guardrail, observability signal, environment setup, or workflow affordance.
-- Write Issue bodies as GitHub-flavored Markdown. For capability reports, use clear sections for evidence from the current run, impact on agent work, and a suggested harness or repository change.
+- Use `loop issue report` only for concrete repository or harness improvement proposals. Do not persist unsupported-agent findings; rediscover them each iteration.
+- Write Issue bodies as GitHub-flavored Markdown. For improvement proposals, use clear sections for evidence from the current run, impact, and a suggested harness or repository change.
 - Return `blocked` only when no safe independent work remains; include the blocking Issue URL in `--blocked-reason`.
 - If `loop iteration read github-updates` contains Issue or PR updates after a sleep wake cycle, read and apply them before deciding whether to continue or remain blocked.
 

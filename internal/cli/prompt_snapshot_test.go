@@ -202,7 +202,7 @@ func TestHelperProcessCaptureAgent(t *testing.T) {
   "branch": {"initial_name": "wip/0001", "kind": "test", "slug": "capture-agent"},
   "commits": [],
   "validation": {"status": "skipped", "commands": []},
-  "artifacts": {"summary": "summary"},
+  "artifacts": {"worklog": "worklog"},
   "assumptions": []
 }
 `

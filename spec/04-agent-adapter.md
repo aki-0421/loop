@@ -59,11 +59,11 @@ errors.log        # only on non-successful phases
 
 Raw agent transcripts are not persisted. File contents, diffs, and thinking text may be shown transiently by the renderer after filtering, but must not be written to disk. `agent.stdout.log`, `agent.stderr.log`, and `agent-exit.json` are not created.
 
-## Result artifact contract
+## Result handoff contract
 
-The agent writes the `result` artifact before exiting. The CLI validates it against `schemas/iteration-result.schema.json`.
+The agent writes the master-DB result handoff with `loop iteration result --write`. The CLI validates it against `schemas/iteration-result.schema.json`.
 
-If the result artifact is missing or invalid, the CLI runs the repair flow when repair attempts remain. The code-generated repair contract includes the validation error and the required schema path.
+If the result handoff is missing or invalid, the CLI runs the repair flow when repair attempts remain. The code-generated repair contract includes the validation error and the required schema path.
 
 ## Agent exit interpretation
 

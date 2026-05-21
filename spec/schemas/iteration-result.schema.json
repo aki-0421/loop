@@ -135,9 +135,6 @@
         "todo": {
           "type": "string"
         },
-        "summary": {
-          "type": "string"
-        },
         "worklog": {
           "type": "string"
         },

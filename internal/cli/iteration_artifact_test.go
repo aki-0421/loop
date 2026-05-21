@@ -17,23 +17,23 @@ func TestIterationCommandWritesReadsAndAppendsArtifact(t *testing.T) {
 	dir := t.TempDir()
 
 	if _, err := captureStdout(t, func() error {
-		return commandIteration(ctx, globals{}, []string{"write", "--iteration-dir", dir, "summary", "--value", "one\n"})
+		return commandIteration(ctx, globals{}, []string{"write", "--iteration-dir", dir, "worklog", "--value", "one\n"})
 	}); err != nil {
-		t.Fatalf("write summary: %v", err)
+		t.Fatalf("write worklog: %v", err)
 	}
 	if _, err := captureStdout(t, func() error {
-		return commandIteration(ctx, globals{}, []string{"append", "summary", "--iteration-dir", dir, "--value", "two\n"})
+		return commandIteration(ctx, globals{}, []string{"append", "worklog", "--iteration-dir", dir, "--value", "two\n"})
 	}); err != nil {
-		t.Fatalf("append summary: %v", err)
+		t.Fatalf("append worklog: %v", err)
 	}
 	out, err := captureStdout(t, func() error {
-		return commandIteration(ctx, globals{}, []string{"read", "summary", "--iteration-dir", dir})
+		return commandIteration(ctx, globals{}, []string{"read", "worklog", "--iteration-dir", dir})
 	})
 	if err != nil {
-		t.Fatalf("read summary: %v", err)
+		t.Fatalf("read worklog: %v", err)
 	}
 	if out != "one\ntwo\n" {
-		t.Fatalf("summary content = %q", out)
+		t.Fatalf("worklog content = %q", out)
 	}
 }
 
@@ -371,7 +371,7 @@ func TestIterationCommandResolvesRunAndIteration(t *testing.T) {
 	if err := os.MkdirAll(iterDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := artifactdb.Write(iterDir, "summary", "stored summary\n"); err != nil {
+	if err := artifactdb.Write(iterDir, "worklog", "stored worklog\n"); err != nil {
 		t.Fatal(err)
 	}
 	oldwd, err := os.Getwd()
@@ -386,13 +386,13 @@ func TestIterationCommandResolvesRunAndIteration(t *testing.T) {
 	}()
 
 	out, err := captureStdout(t, func() error {
-		return commandIteration(context.Background(), globals{ConfigPath: ".loop/config.yaml", Agent: "codex"}, []string{"read", "summary", "--run", "run-1", "--iteration", "0002"})
+		return commandIteration(context.Background(), globals{ConfigPath: ".loop/config.yaml", Agent: "codex"}, []string{"read", "worklog", "--run", "run-1", "--iteration", "0002"})
 	})
 	if err != nil {
 		t.Fatalf("read by run and iteration: %v", err)
 	}
-	if strings.TrimSpace(out) != "stored summary" {
-		t.Fatalf("summary output = %q", out)
+	if strings.TrimSpace(out) != "stored worklog" {
+		t.Fatalf("worklog output = %q", out)
 	}
 }
 

@@ -1218,8 +1218,8 @@ func commandIssueReport(ctx context.Context, g globals, args []string) error {
 	title := fs.String("title", "", "issue title")
 	body := fs.String("body", "", "issue body")
 	bodyFile := fs.String("body-file", "", "read issue body from file")
-	kind := fs.String("kind", "other", "gap kind: tool, docs, guardrail, observability, environment, workflow, or other")
-	blocking := fs.Bool("blocking", false, "mark the capability gap as blocking")
+	kind := fs.String("kind", "other", "proposal kind: tool, docs, guardrail, observability, environment, workflow, or other")
+	blocking := fs.Bool("blocking", false, "mark the improvement proposal as blocking")
 	iterDir := fs.String("iteration-dir", "", "iteration directory")
 	dirAlias := fs.String("dir", "", "iteration directory")
 	runID := fs.String("run", os.Getenv("LOOP_RUN_ID"), "run id")
@@ -1614,7 +1614,6 @@ type pathSet struct {
 	Todo            string
 	Worklog         string
 	Validation      string
-	Summary         string
 	Result          string
 	Events          string
 	Stdout          string
@@ -1646,7 +1645,6 @@ func promptPaths(iterDir string) pathSet {
 		Todo:            filepath.Join(iterDir, "todo.md"),
 		Worklog:         filepath.Join(iterDir, "worklog.md"),
 		Validation:      filepath.Join(iterDir, "validation.md"),
-		Summary:         filepath.Join(iterDir, "summary.md"),
 		Result:          filepath.Join(iterDir, "result.json"),
 		Events:          filepath.Join(iterDir, "agent-events.jsonl"),
 		Stdout:          filepath.Join(iterDir, "agent.stdout.log"),

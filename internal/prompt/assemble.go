@@ -19,7 +19,6 @@ type Paths struct {
 	Todo         string
 	Worklog      string
 	Validation   string
-	Summary      string
 	Result       string
 	EventLog     string
 	StdoutLog    string
