@@ -355,17 +355,6 @@ type MergeOptions struct {
 	DeleteBranch bool
 }
 
-func (r Runner) PullBase(ctx context.Context, base string) error {
-	if base == "" {
-		return errors.New("base branch is required")
-	}
-	if _, err := r.run(ctx, r.gitPath(), "git", "checkout", base); err != nil {
-		return err
-	}
-	_, err := r.run(ctx, r.gitPath(), "git", "pull", "--ff-only")
-	return err
-}
-
 func (r Runner) run(ctx context.Context, path, tool string, args ...string) (CommandResult, error) {
 	return r.runWithTimeout(ctx, r.timeout(), path, tool, args...)
 }

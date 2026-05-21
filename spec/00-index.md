@@ -27,10 +27,9 @@ The specification defines what to implement. It does not include source comparis
 | `08-memory-and-logs.md` | `.loop/` storage, GitHub context memory, runtime artifacts, and logs |
 | `09-json-contracts.md` | Iteration close JSON and state files |
 | `10-security.md` | Permission, shell, file, and merge controls |
-| `11-error-resume.md` | Error handling, GitHub sleep, and resume states |
+| `11-error-resume.md` | Error handling, GitHub sleep, and stored run state |
 | `12-testing.md` | Test areas and fake-agent test harness |
 | `13-go-implementation.md` | Go package layout and implementation notes |
-| `schemas/*.schema.json` | JSON Schema definitions |
 | `templates/*` | Default configuration and skill examples |
 
 ## Primary command shape

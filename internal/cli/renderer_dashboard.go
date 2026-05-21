@@ -460,21 +460,6 @@ func colorize(s rendererSnapshot, style, text string) string {
 	return style + text + ansiReset
 }
 
-func phaseColor(stage string) string {
-	switch stage {
-	case "completed":
-		return ansiGreen
-	case "failed", "cancelled", "stopped":
-		return ansiRed
-	case "sleeping":
-		return ansiCyan
-	case "validating":
-		return ansiCyan
-	default:
-		return ansiYellow
-	}
-}
-
 func minInt(a, b int) int {
 	if a < b {
 		return a
@@ -628,50 +613,6 @@ func symbolsForEnvironment() dashboardSymbols {
 		Done: "✓", Active: "▶", Pending: "◦", Blocked: "!", Retrying: "↻",
 		Bullet: "•", Sep: "·", BarFull: "█", BarEmpty: "░", Join: "›", FooterSep: " · ",
 	}
-}
-
-func wrapText(text string, width int) []string {
-	text = strings.TrimSpace(text)
-	if text == "" {
-		return []string{""}
-	}
-	if width <= 0 {
-		return []string{text}
-	}
-	words := strings.Fields(text)
-	if len(words) == 0 {
-		return []string{""}
-	}
-	var lines []string
-	line := ""
-	for _, word := range words {
-		if line == "" {
-			line = word
-			continue
-		}
-		if displayWidth(line)+1+displayWidth(word) <= width {
-			line += " " + word
-			continue
-		}
-		lines = append(lines, line)
-		line = word
-	}
-	if line != "" {
-		lines = append(lines, line)
-	}
-	for i, line := range lines {
-		lines[i] = truncateDisplay(line, width)
-	}
-	return lines
-}
-
-func padRight(text string, width int) string {
-	text = truncateDisplay(text, width)
-	padding := width - displayWidth(text)
-	if padding <= 0 {
-		return text
-	}
-	return text + strings.Repeat(" ", padding)
 }
 
 func padRightPreserve(text string, width int) string {

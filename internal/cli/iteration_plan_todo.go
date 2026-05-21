@@ -19,7 +19,7 @@ type todoArtifactItem struct {
 
 func commandIterationPlan(ctx context.Context, g globals, args []string) error {
 	if len(args) == 0 {
-		return codedError{2, fmt.Errorf("usage: loop iteration plan <template|read|write> ...")}
+		return codedError{2, fmt.Errorf("usage: loop iteration plan <template|read|write>")}
 	}
 	switch args[0] {
 	case "template":
@@ -101,7 +101,7 @@ func commandIterationPlanWrite(ctx context.Context, g globals, args []string) er
 
 func commandIterationTodo(ctx context.Context, g globals, args []string) error {
 	if len(args) == 0 {
-		return codedError{2, fmt.Errorf("usage: loop iteration todo <list|insert|edit|complete> ...")}
+		return codedError{2, fmt.Errorf("usage: loop iteration todo <list|insert|edit|complete>")}
 	}
 	switch args[0] {
 	case "list":

@@ -17,15 +17,10 @@ type AgentAdapter interface {
 }
 
 type PrepareRequest struct {
-	WorkDir      string
-	PromptText   string
-	PromptFile   string
-	ResultPath   string
-	IterationDir string
-	Harness      string
-	UserContent  string
-	Timeout      time.Duration
-	Environment  map[string]string
+	WorkDir     string
+	PromptText  string
+	Timeout     time.Duration
+	Environment map[string]string
 }
 
 type PreparedAgent struct {
@@ -38,13 +33,9 @@ type PreparedAgent struct {
 type RunRequest struct {
 	WorkDir       string
 	Env           map[string]string
-	PromptFile    string
 	PromptText    string
-	ResultPath    string
 	IterationDir  string
 	EventLogPath  string
-	StdoutLogPath string
-	StderrLogPath string
 	ErrorsLogPath string
 	Timeout       time.Duration
 	OnEvent       func(runstate.Event)
@@ -54,9 +45,6 @@ type RunResult struct {
 	ExitCode   int
 	StartedAt  time.Time
 	FinishedAt time.Time
-	StdoutPath string
-	StderrPath string
 	EventPath  string
-	ResultPath string
 	Err        error
 }

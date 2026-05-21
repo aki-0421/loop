@@ -20,7 +20,7 @@ flags that no longer exist and are already rejected by the standard flag parser.
 The Go implementation includes tests for:
 
 - Config loading and precedence.
-- JSON Schema validation.
+- Typed JSON and YAML contract validation.
 - Code-generated skill bootstrap and prompt assembly.
 - Skill installation and sync.
 - Branch naming and rename rules.
@@ -29,7 +29,7 @@ The Go implementation includes tests for:
 - Pull request command construction.
 - Check waiting behavior.
 - Memory recent and search behavior.
-- Resume stages.
+- Run-state reads and resume status reporting.
 - Fully automated run contract violations.
 - Value-critical run resilience:
   - continuing from one merge iteration into the next until

@@ -138,17 +138,6 @@ func (r Runner) Head(ctx context.Context) (string, error) {
 	return head, nil
 }
 
-// DefaultBaseBranch follows the legacy branch preference: develop, main, current.
-func (r Runner) DefaultBaseBranch(ctx context.Context) (string, error) {
-	if ok, err := r.BranchExists(ctx, "develop"); err == nil && ok {
-		return "develop", nil
-	}
-	if ok, err := r.BranchExists(ctx, "main"); err == nil && ok {
-		return "main", nil
-	}
-	return r.CurrentBranch(ctx)
-}
-
 // MainBranch returns the repository's primary branch from configured remote HEADs.
 func (r Runner) MainBranch(ctx context.Context) (string, error) {
 	for _, ref := range []string{"refs/remotes/origin/HEAD", "refs/remotes/upstream/HEAD"} {

@@ -3,9 +3,7 @@ package validation
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"os"
 	"strings"
 )
 
@@ -62,14 +60,6 @@ type ResultValidationError struct {
 
 func (e *ResultValidationError) Error() string {
 	return "invalid iteration close: " + fmt.Sprint(e.Problems)
-}
-
-func ValidateResultFile(path string) (*IterationResult, error) {
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	return ValidateResultJSON(b)
 }
 
 func ValidateResultJSON(data []byte) (*IterationResult, error) {
@@ -167,18 +157,4 @@ func logicalArtifactName(value string) string {
 	default:
 		return value
 	}
-}
-
-func EnsureResultExists(path string) error {
-	if path == "" {
-		return errors.New("result path is empty")
-	}
-	info, err := os.Stat(path)
-	if err != nil {
-		return err
-	}
-	if info.IsDir() {
-		return fmt.Errorf("%s is a directory", path)
-	}
-	return nil
 }

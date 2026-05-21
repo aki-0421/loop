@@ -276,8 +276,8 @@ func commandPRMerge(ctx context.Context, g globals, args []string) error {
 
 	body := strings.TrimSpace(readArtifactOptional(prCtx.iterDir, "pr-body"))
 	bodyFile := ""
-	cleanupBody := func() {}
 	if body != "" {
+		var cleanupBody func()
 		bodyFile, cleanupBody, err = materializePRBody(prCtx.root, body)
 		if err != nil {
 			return codedError{1, err}

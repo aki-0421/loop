@@ -83,10 +83,10 @@ Flags:
 | `--max-iterations <n>` | config value | Stop after `n` iterations; `0` means unlimited |
 | `--pr` | config value | Use pull request integration instead of local squash merge |
 | `--base <branch>` | current branch at run start | Base branch for integration |
-| `--resume <run-id>` | empty | Resume an existing run |
-| `--from-iteration <n>` | latest | Resume from a specific iteration |
-| `--keep-branches <mode>` | config value | `always`, `failed`, `never` |
-| `--keep-worktrees <mode>` | config value | `always`, `failed`, `never` |
+| `--resume <run-id>` | empty | Accepted for older scripts; use `loop resume <run-id>` |
+| `--from-iteration <n>` | latest | Accepted for older scripts with `--resume`; currently ignored |
+| `--keep-branches <mode>` | empty | Accepted for older scripts; cleanup is automatic |
+| `--keep-worktrees <mode>` | empty | Accepted for older scripts; cleanup is automatic |
 | `--dry-run` | false | Build prompt and state files without launching the agent |
 
 Runtime rules:
@@ -131,7 +131,7 @@ Rules:
 
 ## `loop resume`
 
-Resume a stored run.
+Show the stored state for a run through the resume entry point.
 
 ```bash
 loop resume <run-id> [flags]
@@ -141,9 +141,9 @@ Flags:
 
 | Flag | Default | Behavior |
 | --- | --- | --- |
-| `--from-iteration <n>` | latest incomplete | Resume from iteration `n` |
+| `--from-iteration <n>` | latest incomplete | Accepted for older scripts; currently ignored |
 
-Resume loads `.loop/runs/<run-id>/run-state.json`, validates the current Git state, and continues from the recorded stage.
+`loop resume` currently loads `.loop/runs/<run-id>/run-state.json` and prints the same run summary as `loop status <run-id>`. It does not relaunch agent, validation, or integration phases.
 
 ## `loop status`
 
@@ -156,12 +156,9 @@ loop status [run-id] [flags]
 Output includes:
 
 - Run id.
-- Instruction path.
 - Base branch.
 - Current iteration.
 - Current stage.
-- Iteration branch.
-- Last close action.
 - Last summary sentence.
 - Next action.
 - Log directory.
@@ -179,7 +176,7 @@ Flags:
 | Flag | Default | Behavior |
 | --- | --- | --- |
 | `--iteration <n>` | latest | Select an iteration |
-| `--follow` | false | Follow agent event stream |
+| `--follow` | false | Accepted for older scripts; currently ignored |
 | `--file <name>` | empty | Print a specific file from the iteration directory |
 
 ## `loop iteration`
@@ -198,7 +195,7 @@ loop iteration close (--merge|--skip-merge) [--iteration-dir <dir>|--run <run-id
 
 If `--iteration-dir` is omitted, commands resolve the current agent iteration automatically. If `--run` is supplied, the CLI resolves `.loop/runs/<run-id>/iterations/<n>` using the configured log directory; `--iteration latest` selects the newest iteration.
 
-Writable artifacts are `plan`, `todo`, `pr-title`, and `pr-body`. Read-only artifacts include `runtime`, `instruction`, `prompt`, `effective-config`, `validation`, `events`, `stdout`, `stderr`, and `github-updates`. The terminal close is written through the master-DB result handoff, not a local artifact.
+Writable artifacts are `plan`, `todo`, `pr-title`, and `pr-body`. Read-only artifacts include `runtime`, `instruction`, `prompt`, `effective-config`, `validation`, `events`, `errors`, `github-updates`, `pr-state`, `pr-checks`, and `pr-check-log`. The terminal close is written through the master-DB result handoff, not a local artifact.
 PR command artifacts `pr-state`, `pr-checks`, and `pr-check-log` are read-only to the agent and written by `loop pr`. `github-updates` is written by the CLI when new GitHub Issue, PR, or comment diffs are observed at an iteration boundary or sleep wake cycle.
 
 `plan` and `todo` use dedicated namespaces instead of generic bulk writes. `loop iteration plan template` prints the CLI-owned plan template, `loop iteration plan write` stores the filled plan, and `loop iteration plan read` reads it. After the plan selects the review slice, `loop iteration todo list` prints numbered TODOs; `insert --type <type> <message>`, `edit <n> --type <type> <message>`, and `complete <n>` mutate one TODO item at a time by the 1-based index shown by `list`. TODO `type` and `message` use the same validation as `loop commit`. Generic `loop iteration write plan`, `append plan`, `write todo`, and `append todo` are rejected with guidance to these commands.

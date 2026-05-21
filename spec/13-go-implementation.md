@@ -6,30 +6,32 @@
 cmd/loop/
   main.go
 internal/cli/
-  root.go
-  init.go
-  run.go
-  resume.go
-  status.go
-  skills.go
-  memory.go
-  doctor.go
+  cli.go
+  help.go
+  commit.go
+  branch.go
+  branch_runtime.go
+  iteration_artifact.go
+  iteration_plan_todo.go
+  iteration_result.go
+  pr_command.go
+  renderer.go
+  renderer_dashboard.go
+  sleep_input.go
+  terminal_size_*.go
 internal/config/
-  load.go
-  schema.go
-  defaults.go
+  config.go
 internal/agent/
   adapter.go
   process.go
-  codex.go
   fake.go
+  output_filter.go
+  process_*.go
 internal/prompt/
   assemble.go
-  templates.go
 internal/skills/
-  install.go
-  sync.go
-  validate.go
+  skills.go
+  discovery.go
 internal/gitx/
   repo.go
   branch.go
@@ -40,15 +42,17 @@ internal/pr/
 internal/runstate/
   state.go
   events.go
-  resume.go
 internal/memory/
-  recent.go
-  search.go
-  compact.go
+  memory.go
+  github.go
+  github_context.go
 internal/validation/
+  result.go
   runner.go
-internal/logging/
-  redact.go
+internal/artifactdb/
+  artifactdb.go
+internal/assets/
+  assets.go
 ```
 
 ## Main packages
@@ -59,7 +63,7 @@ Responsibilities:
 
 - Load config files.
 - Merge defaults, user config, repo config, environment, and flags.
-- Validate against JSON Schema.
+- Validate with known-field YAML decoding and contract-specific Go checks.
 - Write effective config per iteration.
 
 ### `internal/agent`
@@ -71,7 +75,6 @@ Responsibilities:
 - Launch process.
 - Capture stdout and stderr as sanitized audit events.
 - Normalize events.
-- Validate terminal close handoff presence.
 
 The built-in default adapter name is `codex`. It runs `codex exec --json` rather than the interactive Codex TUI because loop does not allocate a terminal to agent subprocesses and must avoid persisting raw agent transcripts.
 
@@ -82,7 +85,7 @@ Responsibilities:
 - Build the compact code-generated skill bootstrap.
 - Avoid duplicating the full skill contract in the prompt.
 - Keep runtime metadata, goal text, instruction paths, and iteration paths out of the prompt.
-- Direct agents to `loop iteration` artifact commands.
+- Direct agents to `loop iteration`, `loop memory`, `loop issue`, `loop commit`, and PR-mode `loop pr` commands.
 
 ### Iteration artifact commands
 
@@ -95,9 +98,8 @@ Responsibilities:
 - Check repository cleanliness.
 - Create initial branches.
 - Rename branches.
-- Manage worktrees.
+- Remove worktrees during cleanup.
 - List commits.
-- Create validated commits for dirty repository changes.
 - Squash merge.
 - Cleanup branches and worktrees.
 
@@ -109,7 +111,7 @@ Responsibilities:
 - Create pull requests.
 - Wait for checks.
 - Merge pull requests.
-- Pull base branch after merge.
+- Fetch check logs and parse pull request references.
 
 ### `internal/runstate`
 
@@ -118,7 +120,7 @@ Responsibilities:
 - Create run ids.
 - Read and write `run-state.json` atomically.
 - Append JSONL events.
-- Support resume and reconstruction.
+- Support run-state reads for status and resume reporting.
 
 ### `internal/memory`
 
@@ -132,6 +134,14 @@ Responsibilities:
 - Search recent and older PR, Issue, and comment context with SQLite FTS.
 - Fetch and upsert a merged PR after `loop pr merge`.
 
+### `internal/validation`
+
+Responsibilities:
+
+- Validate iteration close JSON.
+- Run configured validation commands.
+- Format validation Markdown and derive validation status.
+
 ## Atomic writes
 
 State files are written through temp files and atomic rename:
@@ -141,7 +151,7 @@ run-state.json.tmp
 run-state.json
 ```
 
-The same rule applies when the CLI writes terminal close metadata. Agent-written artifacts are validated after process exit.
+Ordinary state files use atomic writes. The terminal close handoff is stored in `.loop/loop.db` through `loop iteration close` rather than as a local JSON file.
 
 ## Locking
 
@@ -156,15 +166,14 @@ Only one `loop run` may integrate into the same repository at a time. Multiple r
 
 ## Timeouts
 
-Configurable timeouts:
+Publicly configurable timeout behavior is currently limited to pull request check timing:
 
-- Agent process timeout.
-- Repair process timeout.
-- Validation command timeout.
-- PR check wait timeout.
-- Git command timeout.
+- `checksStartupDelaySeconds`
+- `checksDiscoveryTimeoutSeconds`
+- `checksPollIntervalSeconds`
+- `checksWatchTimeoutSeconds`
 
-Timeouts are recorded as events and mapped to the relevant error category.
+Internal Git and GitHub command runners also use bounded default timeouts. Validation command timeout support exists in the runner but is not exposed as a config key.
 
 ## Output
 
@@ -172,12 +181,9 @@ Human-readable CLI output is concise by default:
 
 ```text
 Run: 20260517-000000-a1b2c3
-Iteration: 0001
-Branch: feat/add-login-flow
 Status: completed
 Summary: Add login flow
-Next: integrating into develop
 Logs: .loop/runs/20260517-000000-a1b2c3
 ```
 
-`--json` prints a structured object with the same fields.
+`--json` prints a structured object with the corresponding run id, status, summary, and log path fields.

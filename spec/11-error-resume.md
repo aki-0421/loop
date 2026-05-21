@@ -1,4 +1,4 @@
-# Error Handling and Resume
+# Error Handling and Stored State
 
 ## Error Categories
 
@@ -10,7 +10,7 @@
 | Dirty merge close | Uncommitted changes before `--merge` | Reject the close command before handoff |
 | Validation error | Required validation failed | Do not integrate; clean up the branch and continue |
 | Integration error | Merge conflict, push failure, check failure | Record state and stop |
-| Resume error | Branch missing, state file invalid | Stop with diagnostic |
+| State read error | Missing or invalid run-state file | Stop with diagnostic |
 
 ## Close Contract Errors
 
@@ -37,29 +37,27 @@ Sleep mode is entered only when the agent explicitly closes with `loop iteration
 - The next agent decides whether to implement, comment or reopen an Issue, merge, skip merge again, or return to sleep.
 - The CLI does not ask the user.
 
-## Resume State
+## Stored Run State
 
-The CLI must be able to resume from these stages:
+`loop resume <run-id>` currently reports stored run state and does not relaunch a run stage. Stored stages still describe where a run stopped:
 
-- `branch_created`: continue agent phase.
-- `agent_running`: inspect process marker; if no process exists, restart the agent phase or fail the contract.
-- `validating`: rerun validation.
-- `integrating`: inspect Git and PR state, then complete integration or stop.
-- `failed`: resume only with explicit iteration selection after the user has corrected the underlying state.
+- `branch_created`: the iteration branch was created before the agent phase completed.
+- `agent_running`: the agent phase was in progress when state was last written.
+- `validating`: configured validation was in progress when state was last written.
+- `integrating`: merge or pull request integration was in progress when state was last written.
+- `failed`: the run stopped after an error and needs manual inspection.
 
 Sleep mode itself is not persisted as a run-state stage.
 
 ## State Reconstruction
 
-When `run-state.json` is incomplete but iteration files exist, `loop resume` may reconstruct state from:
+State reconstruction is not currently performed. If `run-state.json` is incomplete or invalid, the command stops with a diagnostic rather than inferring replacement state from:
 
 - Git branch list.
 - Git commits on iteration branch.
 - Terminal close handoff.
 - `agent-events.jsonl`.
 - PR state files.
-
-Reconstruction writes a backup of the old state file before overwriting it.
 
 ## Exit Codes
 

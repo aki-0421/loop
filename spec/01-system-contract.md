@@ -23,7 +23,7 @@ Runs are fully automated:
 - Missing information is handled by making a local, explicit assumption and continuing.
 - After creating a clarification Issue, the agent continues unrelated work. If no safe mergeable work remains and GitHub updates are needed before continuing, the agent closes with `loop iteration close --skip-merge --sleep --should-stop false` and references the relevant Issue URL in the reason.
 - GitHub sleep mode polls GitHub Issue/PR updates and starts the next iteration when new context appears. In an interactive terminal, any keypress triggers an immediate fetch. Sleep mode is an explicit skip-merge choice and does not reuse the goal-completion stop decision.
-- Local merge, pull, cleanup, and resume operations are performed by the CLI according to configuration. In pull request mode, the agent performs PR creation, check waiting, check failure fixes, and PR merge through `loop pr` commands.
+- Local merge, pull, cleanup, and run-state inspection are performed by the CLI according to configuration. In pull request mode, the agent performs PR creation, check waiting, check failure fixes, and PR merge through `loop pr` commands.
 
 ## Language default
 
@@ -38,7 +38,7 @@ English is the default for all machine-generated human-readable output. This inc
 - Pull request titles and bodies.
 - Skill instructions installed by `loop init`.
 
-A repository may override output language through configuration or custom skills. Even when another output language is configured, JSON keys, status values, command names, and schema fields stay in English.
+A repository may override output language through configuration or custom skills. Even when another output language is configured, JSON keys, status values, command names, and contract fields stay in English.
 
 ## Thin wrapper rule
 
@@ -52,7 +52,7 @@ The CLI owns:
 - JSON validation.
 - Git, commit, and pull request commands.
 - Branch creation, branch rename command validation/tracking, PR command validation/tracking, and cleanup.
-- Resume state.
+- Run state.
 - Exit codes.
 - GitHub PR, Issue, and comment context synchronization.
 

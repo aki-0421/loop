@@ -634,53 +634,6 @@ func cloneRendererConfirmation(in *rendererConfirmation) *rendererConfirmation {
 	return &out
 }
 
-func todoLines(todos []todoItem, limit int) []string {
-	done, total := 0, len(todos)
-	for _, item := range todos {
-		if item.Done {
-			done++
-		}
-	}
-	if total == 0 {
-		return []string{"todo: waiting for todo artifact"}
-	}
-	lines := []string{fmt.Sprintf("todo: %d/%d done", done, total)}
-	count := 0
-	for _, item := range todos {
-		if count >= limit {
-			break
-		}
-		mark := " "
-		if item.Done {
-			mark = "x"
-		}
-		lines = append(lines, fmt.Sprintf("[%s] %s", mark, item.Text))
-		count++
-	}
-	if total > limit {
-		lines = append(lines, fmt.Sprintf("... %d more", total-limit))
-	}
-	return lines
-}
-
-func activityLines(activity []string, limit int) []string {
-	if limit <= 0 {
-		return nil
-	}
-	lines := []string{"activity:"}
-	if len(activity) == 0 {
-		return append(lines, "waiting for agent activity")
-	}
-	start := 0
-	if len(activity) > limit-1 {
-		start = len(activity) - (limit - 1)
-	}
-	for _, item := range activity[start:] {
-		lines = append(lines, "- "+item)
-	}
-	return lines
-}
-
 func readTodoItems(path string) []todoItem {
 	if path == "" {
 		return nil

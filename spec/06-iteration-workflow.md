@@ -95,9 +95,10 @@ The base checkout remains untouched during agent execution. Integration happens 
 The agent bootstrap prompt is built in memory for every agent launch. It is intentionally compact and only bootstraps the loop skill workflow. It includes:
 
 - A short instruction to use the `loop` skill.
-- A short instruction to use `loop iteration`, `loop memory`, and `loop issue` commands.
+- A short instruction to use `loop iteration`, `loop memory`, `loop issue`, and `loop commit` commands.
+- In pull request mode, a short instruction to use `loop pr` after reading `loop iteration read pr-template`.
 
-The agent bootstrap prompt does not inline runtime metadata, effective config, schema summaries, full path lists, GitHub context memory, goal text, instruction file content, or instruction file paths. The `loop` skill tells the agent which CLI commands expose runtime context, writable artifacts, and GitHub Issues.
+The agent bootstrap prompt does not inline runtime metadata, effective config, JSON contract details, full path lists, GitHub context memory, goal text, instruction file content, or instruction file paths. The `loop` skill tells the agent which CLI commands expose runtime context, writable artifacts, and GitHub Issues.
 
 ## Agent phase
 
@@ -144,7 +145,7 @@ Validation output is saved to the `validation` artifact and structured events ar
 A merge close with changes is integrated through the configured mode:
 
 - Local merge mode: local squash merge into base branch.
-- Pull request mode: require that the agent has already created, checked, fixed any check failures, and merged the PR through `loop pr`; then pull the base branch and clean up local runtime resources.
+- Pull request mode: require that the agent has already created, checked, fixed any check failures, and merged the PR through `loop pr`; then refresh the base branch and clean up local runtime resources.
 
 The one-sentence `summary_sentence` from the close handoff becomes the squash commit message subject or the PR merge subject.
 

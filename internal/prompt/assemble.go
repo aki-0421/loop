@@ -7,46 +7,9 @@ import (
 	"strings"
 )
 
-type Skill struct {
-	Name string
-	Path string
-}
-
-type Paths struct {
-	IterationDir string
-	Prompt       string
-	Plan         string
-	Todo         string
-	Validation   string
-	Result       string
-	EventLog     string
-	StdoutLog    string
-	StderrLog    string
-	PRTitle      string
-	PRBody       string
-}
-
 type Request struct {
-	Language           string
-	IterationID        string
-	BaseBranch         string
-	CurrentBranch      string
-	Agent              string
-	PullRequestMode    bool
-	Skills             []Skill
-	Paths              Paths
-	RecentSummaries    []MemoryItem
-	SearchResults      []MemoryItem
-	InstructionContent string
-	Goal               string
-	EffectiveConfig    string
-	SchemaSummary      string
-}
-
-type MemoryItem struct {
-	Path    string
-	Title   string
-	Content string
+	Language        string
+	PullRequestMode bool
 }
 
 func HarnessContract(pullRequestMode bool) string {

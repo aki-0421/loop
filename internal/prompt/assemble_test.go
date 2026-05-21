@@ -7,17 +7,7 @@ import (
 
 func TestAssembleIncludesOnlyBootstrap(t *testing.T) {
 	text := Assemble(Request{
-		Language:           "en",
-		IterationID:        "0001",
-		BaseBranch:         "develop",
-		CurrentBranch:      "wip/0001",
-		Skills:             []Skill{{Name: "loop", Path: ".agents/skills/loop/SKILL.md"}},
-		Paths:              Paths{IterationDir: ".loop/runs/r/iterations/0001", Result: ".loop/runs/r/iterations/0001/result.json"},
-		RecentSummaries:    []MemoryItem{{Path: "https://github.com/acme/app/pull/1", Content: "Previous work."}},
-		InstructionContent: "Implement the feature.",
-		Goal:               "Feature is complete.",
-		EffectiveConfig:    "version: 1\n",
-		SchemaSummary:      "large schema summary",
+		Language: "en",
 	})
 	for _, want := range []string{
 		"Use the `loop` skill",
@@ -48,9 +38,7 @@ func TestAssembleIncludesOnlyBootstrap(t *testing.T) {
 
 func TestAssembleMentionsPRWriterOnlyInPullRequestMode(t *testing.T) {
 	normal := Assemble(Request{
-		Language:    "ja",
-		IterationID: "0001",
-		Paths:       Paths{IterationDir: ".loop/runs/r/iterations/0001"},
+		Language: "ja",
 	})
 	if strings.Contains(normal, oldSkill("pr-writer")) || strings.Contains(normal, "Pull request mode") || strings.Contains(normal, "LOOP_") {
 		t.Fatalf("non-PR prompt should not mention PR-specific instructions:\n%s", normal)
@@ -58,9 +46,7 @@ func TestAssembleMentionsPRWriterOnlyInPullRequestMode(t *testing.T) {
 
 	text := Assemble(Request{
 		Language:        "ja",
-		IterationID:     "0001",
 		PullRequestMode: true,
-		Paths:           Paths{IterationDir: ".loop/runs/r/iterations/0001"},
 	})
 	for _, want := range []string{
 		"loop iteration read pr-template",

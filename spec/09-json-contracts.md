@@ -1,5 +1,9 @@
 # JSON Contracts
 
+## Contract Source
+
+This Markdown file is the source of truth for JSON and YAML contracts. Do not maintain duplicate `schemas/*.schema.json` files. Runtime validation is implemented with Go struct decoding, known-field YAML decoding, and contract-specific validators.
+
 ## Iteration Close
 
 The agent writes the master-DB terminal handoff through `loop iteration close`. There is no local `result` artifact and there is no public non-merge status enum.
@@ -19,6 +23,50 @@ Required fields:
 | `commits` | array | Commits created through `loop commit` during the iteration. |
 | `validation` | object | Validation commands and results. |
 | `artifacts` | object | Logical names for active plan, TODO, and PR text files. |
+
+The close JSON rejects unknown fields. `merge` requires `summary_sentence`, disallows `sleep_until_github_update=true`, and requires validation status `passed` or `skipped`. `skip_merge` requires `skip_merge_reason`. When `sleep_until_github_update=true`, `action` must be `skip_merge` and `should_fully_stop` must be `false`.
+
+`branch` fields:
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `initial_name` | string | Required initial numbered branch created by loop. |
+| `kind` | string | Optional tracked branch kind derived from `loop branch rename`. |
+| `slug` | string | Optional tracked branch slug derived from `loop branch rename`. |
+| `final_name` | string | Optional tracked branch name after rename. Required for merge by the builder. |
+
+`commits` item fields:
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `sha` | string | Optional commit SHA. |
+| `message` | string | Required commit subject. |
+
+`validation` fields:
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `status` | enum | `passed`, `failed`, `skipped`, or `partial`. |
+| `commands` | array | Command log entries. |
+
+`validation.commands` item fields:
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `name` | string | Required validation command label. |
+| `command` | string | Required shell command string. |
+| `exit_code` | integer | Process exit code. |
+| `required` | boolean | Whether a non-zero exit code blocks integration. |
+| `output_path` | string | Optional path to captured output. |
+
+`artifacts` fields:
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `plan` | string | Optional logical name for the active plan artifact. |
+| `todo` | string | Optional logical name for the active TODO artifact. |
+| `pr_title` | string | Optional logical name for the pull request title artifact. |
+| `pr_body` | string | Optional logical name for the pull request body artifact. |
 
 Merge example:
 
@@ -165,6 +213,19 @@ A `merge` close with `validation.status=failed` or `partial` is rejected before 
 }
 ```
 
+Run state fields:
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `schema_version` | integer | Required schema version. Current value is `1`. |
+| `run_id` | string | Required stable run identifier. |
+| `goal` | string | Optional run goal supplied by the user. |
+| `base_branch` | string | Required integration branch. |
+| `agent` | string | Required agent adapter name. |
+| `current_iteration` | string | Required current iteration id. |
+| `stage` | enum | Required run stage. |
+| `iterations` | array | Required iteration records. |
+
 Stages:
 
 - `created`
@@ -176,6 +237,39 @@ Stages:
 - `failed`
 - `cancelled`
 
-## Config Schema
+Iteration record fields:
 
-`.loop/config.yaml` is validated by converting YAML to JSON-compatible values and applying `schemas/loop.config.schema.json`.
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `iteration_id` | string | Required numbered iteration id. |
+| `branch_initial` | string | Required initial branch name. |
+| `branch_current` | string | Optional current tracked branch name. |
+| `branch_final` | string | Optional final branch name after integration. |
+| `stage` | string | Required iteration stage. |
+| `result_path` | string | Optional legacy result path. Current runs leave it empty because the close handoff is stored in `.loop/loop.db`. |
+| `summary_sentence` | string | Optional merge summary. |
+| `should_fully_stop` | boolean | Optional final stop decision from the iteration close. |
+
+## Config Contract
+
+Configuration fields and defaults are documented in `03-configuration.md`. `.loop/config.yaml` and user config are merged with the built-in defaults, decoded with known fields enabled, normalized, and validated by the Go implementation.
+
+Validation requirements:
+
+| Area | Requirement |
+| --- | --- |
+| `version` | Required value `1`. |
+| `language.default` | Required string. |
+| `agent.default` | Required string with a matching `agent.adapters.<name>` entry. |
+| `agent.adapters.*.command` | Required string. |
+| `agent.adapters.*.prompt` | Must be `stdin` or `arg`. |
+| `agent.adapters.*.args` | Must not contain `{prompt_file}`, `{result_file}`, or `{iteration_dir}`. |
+| `run.maxIterations` | Must be `0` or greater. |
+| `skills.sourceDir` | Required string. |
+| `skills.targets.*.mode` | Must be `copy`, `symlink`, or `off`. |
+| `git.integration.mode` | Must be `local_merge` or `pr`. |
+| `git.integration.pr.checksStartupDelaySeconds` | Must be non-negative. |
+| `git.integration.pr.checksDiscoveryTimeoutSeconds` | Must be non-negative. |
+| `git.integration.pr.checksPollIntervalSeconds` | Must be non-negative. |
+| `git.integration.pr.checksWatchTimeoutSeconds` | Must be positive. |
+| `logs.dir` | Required string. |

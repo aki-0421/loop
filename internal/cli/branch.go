@@ -16,7 +16,7 @@ import (
 
 func commandBranch(ctx context.Context, g globals, args []string) error {
 	if len(args) == 0 {
-		return codedError{2, fmt.Errorf("usage: loop branch <rename> ...")}
+		return codedError{2, fmt.Errorf("usage: loop branch <rename>")}
 	}
 	switch args[0] {
 	case "rename":

@@ -63,7 +63,7 @@ var iterationArtifactAliases = map[string]string{
 
 func commandIteration(ctx context.Context, g globals, args []string) error {
 	if len(args) == 0 {
-		return codedError{2, fmt.Errorf("usage: loop iteration <path|read|write|append|plan|todo|close> ...")}
+		return codedError{2, fmt.Errorf("usage: loop iteration <path|read|write|append|plan|todo|close>")}
 	}
 	switch args[0] {
 	case "path", "read":
