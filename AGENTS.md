@@ -31,4 +31,4 @@ If a needed development command is missing from the Makefile, consider adding an
 
 - Follow the testing guidance in `spec/12-testing.md`.
 - For changes involving commits or branch operations, prioritize Git integration tests.
-- SQLite-backed tests should follow the Makefile settings, including the `sqlite_fts5` tag and CGO requirement.
+- SQLite-backed tests should follow the Makefile settings and must stay CGO-free by default.

@@ -10,7 +10,7 @@ import (
 	"time"
 	"unicode"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 )
 
 const (
@@ -1136,7 +1136,7 @@ func openLocal(path string) (*sql.DB, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, err
 	}
-	return sql.Open("sqlite3", path+"?_busy_timeout=5000")
+	return sql.Open("sqlite", sqliteDSN(path))
 }
 
 func openGlobal(path string) (*sql.DB, error) {
@@ -1152,7 +1152,11 @@ func openGlobal(path string) (*sql.DB, error) {
 			return nil, err
 		}
 	}
-	return sql.Open("sqlite3", path+"?_busy_timeout=5000")
+	return sql.Open("sqlite", sqliteDSN(path))
+}
+
+func sqliteDSN(path string) string {
+	return path + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)"
 }
 
 func ensureLocal(db *sql.DB) error {
