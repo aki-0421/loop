@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestWriteAppendReadDoesNotMirrorToGlobalMemory(t *testing.T) {
+func TestWriteAppendReadUsesIterationFilesOnly(t *testing.T) {
 	root := t.TempDir()
 	iterDir := filepath.Join(root, ".loop", "runs", "run-1", "iterations", "0001")
 
@@ -23,8 +23,11 @@ func TestWriteAppendReadDoesNotMirrorToGlobalMemory(t *testing.T) {
 	if got != "Added password reset tests.\n" {
 		t.Fatalf("summary = %q", got)
 	}
-	if _, err := os.Stat(filepath.Join(iterDir, LocalDBName)); err != nil {
-		t.Fatalf("local db missing: %v", err)
+	if _, err := os.Stat(filepath.Join(iterDir, "summary.md")); err != nil {
+		t.Fatalf("summary file missing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(iterDir, "iteration.db")); !os.IsNotExist(err) {
+		t.Fatalf("iteration db should not be created by runtime artifacts, err=%v", err)
 	}
 	if _, err := os.Stat(filepath.Join(root, ".loop", GlobalDBName)); !os.IsNotExist(err) {
 		t.Fatalf("global db should not be created by runtime artifacts, err=%v", err)
@@ -46,7 +49,7 @@ func TestRebuildGlobalFromRunsDoesNotIndexRuntimeArtifacts(t *testing.T) {
 		t.Fatalf("indexed %d file records, want 0", count)
 	}
 
-	if err := Write(iterDir, "summary", "Stored in sqlite.\n"); err != nil {
+	if err := Write(iterDir, "summary", "Stored in file artifacts.\n"); err != nil {
 		t.Fatal(err)
 	}
 	if count, err := RebuildGlobalFromRuns(filepath.Join(root, ".loop", "runs")); err != nil {

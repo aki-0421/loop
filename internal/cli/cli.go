@@ -1936,7 +1936,7 @@ func runConfiguredValidation(ctx context.Context, root string, paths pathSet, co
 			name = "command"
 		}
 		outputName := sanitizeValidationOutputName(name)
-		results[i].OutputPath = "validation:" + outputName
+		results[i].OutputPath = "validation-output-" + outputName + ".log"
 		_ = artifactdb.WriteValidationOutput(iterDir, outputName, result.Output)
 	}
 	if writeErr := artifactdb.Write(iterDir, "validation", validation.FormatMarkdown(results)); writeErr != nil && err == nil {

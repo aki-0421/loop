@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 	"unicode"
@@ -13,10 +14,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const (
-	LocalDBName  = "iteration.db"
-	GlobalDBName = "loop.db"
-)
+const GlobalDBName = "loop.db"
 
 var ErrNotFound = errors.New("artifact not found")
 
@@ -93,10 +91,6 @@ type GitHubContextSearchHit struct {
 	Rank   float64
 }
 
-func LocalDBPath(iterationDir string) string {
-	return filepath.Join(iterationDir, LocalDBName)
-}
-
 func GlobalDBPathForIteration(iterationDir string) string {
 	clean := filepath.Clean(iterationDir)
 	parts := splitPath(clean)
@@ -132,74 +126,144 @@ func ParseIterationDir(iterationDir string) (string, string) {
 	return "", ""
 }
 
+var artifactFileNames = map[string]string{
+	"runtime":            "runtime.json",
+	"plan":               "plan.md",
+	"todo":               "todo.md",
+	"worklog":            "worklog.md",
+	"validation":         "validation.md",
+	"summary":            "summary.md",
+	"result":             "result.json",
+	"pr-title":           "pr-title.txt",
+	"pr-body":            "pr-body.md",
+	"pr-state":           "pr-state.json",
+	"pr-checks":          "pr-checks.json",
+	"pr-check-log":       "pr-check-log.txt",
+	"github-updates":     "github-updates.md",
+	"agent-prompt-audit": "agent-prompt-audit.md",
+}
+
+func ArtifactPath(iterationDir, name string) (string, error) {
+	if strings.TrimSpace(iterationDir) == "" {
+		return "", errors.New("iteration directory is required")
+	}
+	file, ok := artifactFileNames[name]
+	if !ok {
+		return "", fmt.Errorf("%w: %s", ErrNotFound, name)
+	}
+	return filepath.Join(iterationDir, file), nil
+}
+
+func ArtifactNames() []string {
+	names := make([]string, 0, len(artifactFileNames))
+	for name := range artifactFileNames {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+func ValidationOutputPath(iterationDir, name string) (string, error) {
+	name = sanitizeArtifactFilePart(name)
+	if name == "" {
+		name = "command"
+	}
+	return filepath.Join(iterationDir, "validation-output-"+name+".log"), nil
+}
+
+func sanitizeArtifactFilePart(name string) string {
+	name = strings.ToLower(strings.TrimSpace(name))
+	var b strings.Builder
+	lastDash := false
+	for _, r := range name {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+			lastDash = false
+			continue
+		}
+		if !lastDash {
+			b.WriteByte('-')
+			lastDash = true
+		}
+	}
+	return strings.Trim(b.String(), "-")
+}
+
 func Read(iterationDir, name string) (string, error) {
-	dbPath := LocalDBPath(iterationDir)
-	if _, err := os.Stat(dbPath); err == nil {
-		db, err := openLocal(dbPath)
-		if err != nil {
-			return "", err
-		}
-		defer db.Close()
-		var content string
-		err = db.QueryRow(`SELECT content FROM artifacts WHERE name = ?`, name).Scan(&content)
-		if err == nil {
-			return content, nil
-		}
-		if !errors.Is(err, sql.ErrNoRows) {
-			return "", err
-		}
-	} else if err != nil && !os.IsNotExist(err) {
+	path, err := ArtifactPath(iterationDir, name)
+	if err != nil {
 		return "", err
 	}
-	return "", fmt.Errorf("%w: %s", ErrNotFound, name)
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return "", fmt.Errorf("%w: %s", ErrNotFound, name)
+	}
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
 }
 
 func Write(iterationDir, name, content string) error {
-	return write(iterationDir, name, content, false)
-}
-
-func Append(iterationDir, name, content string) error {
-	return write(iterationDir, name, content, true)
-}
-
-func WriteValidationOutput(iterationDir, name, output string) error {
-	db, err := openLocal(LocalDBPath(iterationDir))
+	path, err := ArtifactPath(iterationDir, name)
 	if err != nil {
 		return err
 	}
-	defer db.Close()
-	if err := ensureLocal(db); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	_, err = db.Exec(`INSERT INTO validation_outputs(name, output, updated_at) VALUES(?, ?, ?)
-ON CONFLICT(name) DO UPDATE SET output = excluded.output, updated_at = excluded.updated_at`, name, output, now())
+	return os.WriteFile(path, []byte(content), 0o644)
+}
+
+func Append(iterationDir, name, content string) error {
+	path, err := ArtifactPath(iterationDir, name)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	_, err = f.WriteString(content)
 	return err
 }
 
-func List(iterationDir string) ([]Artifact, error) {
-	dbPath := LocalDBPath(iterationDir)
-	if _, err := os.Stat(dbPath); err == nil {
-		db, err := openLocal(dbPath)
-		if err != nil {
-			return nil, err
-		}
-		defer db.Close()
-		rows, err := db.Query(`SELECT name, content, updated_at FROM artifacts ORDER BY name`)
-		if err != nil {
-			return nil, err
-		}
-		defer rows.Close()
-		var out []Artifact
-		for rows.Next() {
-			var item Artifact
-			if err := rows.Scan(&item.Name, &item.Content, &item.UpdatedAt); err != nil {
-				return nil, err
-			}
-			out = append(out, item)
-		}
-		return out, rows.Err()
+func WriteValidationOutput(iterationDir, name, output string) error {
+	path, err := ValidationOutputPath(iterationDir, name)
+	if err != nil {
+		return err
 	}
-	return nil, nil
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte(output), 0o644)
+}
+
+func List(iterationDir string) ([]Artifact, error) {
+	var out []Artifact
+	for _, name := range ArtifactNames() {
+		path, err := ArtifactPath(iterationDir, name)
+		if err != nil {
+			return nil, err
+		}
+		data, err := os.ReadFile(path)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		info, err := os.Stat(path)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, Artifact{Name: name, Content: string(data), UpdatedAt: info.ModTime().UTC().Format(time.RFC3339)})
+	}
+	return out, nil
 }
 
 func MirrorGlobal(globalDBPath, runID, iterationID, artifact, content string) error {
@@ -395,50 +459,6 @@ func RebuildGlobalFromRuns(runsDir string) (int, error) {
 		}
 	}
 	return 0, nil
-}
-
-func write(iterationDir, name, content string, appendMode bool) error {
-	db, err := openLocal(LocalDBPath(iterationDir))
-	if err != nil {
-		return err
-	}
-	defer db.Close()
-	if err := ensureLocal(db); err != nil {
-		return err
-	}
-	updated := now()
-	tx, err := db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	if appendMode {
-		if _, err := tx.Exec(`INSERT INTO artifacts(name, content, updated_at) VALUES(?, ?, ?)
-ON CONFLICT(name) DO UPDATE SET content = artifacts.content || excluded.content, updated_at = excluded.updated_at`, name, content, updated); err != nil {
-			return err
-		}
-	} else {
-		if _, err := tx.Exec(`INSERT INTO artifacts(name, content, updated_at) VALUES(?, ?, ?)
-ON CONFLICT(name) DO UPDATE SET content = excluded.content, updated_at = excluded.updated_at`, name, content, updated); err != nil {
-			return err
-		}
-	}
-	var stored string
-	if err := tx.QueryRow(`SELECT content FROM artifacts WHERE name = ?`, name).Scan(&stored); err != nil {
-		return err
-	}
-	if _, err := tx.Exec(`DELETE FROM artifact_fts WHERE name = ?`, name); err != nil {
-		return err
-	}
-	if strings.TrimSpace(stored) != "" {
-		if _, err := tx.Exec(`INSERT INTO artifact_fts(name, content) VALUES(?, ?)`, name, stored); err != nil {
-			return err
-		}
-	}
-	if err := tx.Commit(); err != nil {
-		return err
-	}
-	return nil
 }
 
 func UpsertPRMemory(globalDBPath string, record PRMemoryRecord) error {
@@ -1132,13 +1152,6 @@ func normalizePRMemoryState(state string) string {
 	return strings.ToLower(strings.TrimSpace(state))
 }
 
-func openLocal(path string) (*sql.DB, error) {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return nil, err
-	}
-	return sql.Open("sqlite", sqliteDSN(path))
-}
-
 func openGlobal(path string) (*sql.DB, error) {
 	if path == "" {
 		return nil, os.ErrNotExist
@@ -1157,22 +1170,6 @@ func openGlobal(path string) (*sql.DB, error) {
 
 func sqliteDSN(path string) string {
 	return path + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)"
-}
-
-func ensureLocal(db *sql.DB) error {
-	stmts := []string{
-		`PRAGMA journal_mode = WAL`,
-		`CREATE TABLE IF NOT EXISTS metadata(key TEXT PRIMARY KEY, value TEXT NOT NULL)`,
-		`CREATE TABLE IF NOT EXISTS artifacts(name TEXT PRIMARY KEY, content TEXT NOT NULL, updated_at TEXT NOT NULL)`,
-		`CREATE TABLE IF NOT EXISTS validation_outputs(name TEXT PRIMARY KEY, output TEXT NOT NULL, updated_at TEXT NOT NULL)`,
-		`CREATE VIRTUAL TABLE IF NOT EXISTS artifact_fts USING fts5(name UNINDEXED, content, tokenize = 'unicode61')`,
-	}
-	for _, stmt := range stmts {
-		if _, err := db.Exec(stmt); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func ensureGlobal(db *sql.DB) error {

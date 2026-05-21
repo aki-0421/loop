@@ -337,14 +337,17 @@ func TestIterationCommandPathUsesArtifactName(t *testing.T) {
 	if err := artifactdb.Write(dir, "runtime", `{"integration_mode":"local_merge"}`+"\n"); err != nil {
 		t.Fatal(err)
 	}
-	_, err := captureStdout(t, func() error {
+	out, err := captureStdout(t, func() error {
 		return commandIteration(context.Background(), globals{}, []string{"path", "pr_body", "--iteration-dir", dir})
 	})
-	if err == nil || !strings.Contains(err.Error(), "stored in the loop artifact database") {
+	if err != nil {
 		t.Fatalf("path pr_body error = %v", err)
 	}
+	if strings.TrimSpace(out) != filepath.Join(dir, "pr-body.md") {
+		t.Fatalf("path pr_body output = %q", out)
+	}
 
-	out, err := captureStdout(t, func() error {
+	out, err = captureStdout(t, func() error {
 		return commandIteration(context.Background(), globals{}, []string{"path", "prompt", "--iteration-dir", dir})
 	})
 	if err == nil || !strings.Contains(err.Error(), "path is not exposed") {
