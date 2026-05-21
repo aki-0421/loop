@@ -37,9 +37,6 @@ agent:
         LOOP_TEST_FAKE_AGENT: "1"
         LOOP_FAKE_AGENT_MODE: pr_owned_repair
 
-run:
-  repairAttempts: 0
-
 git:
   baseBranch: develop
   integration:
@@ -170,9 +167,6 @@ agent:
         LOOP_TEST_FAKE_AGENT: "1"
         LOOP_FAKE_AGENT_MODE: pr_owned_simple
 
-run:
-  repairAttempts: 0
-
 git:
   baseBranch: develop
   integration:
@@ -232,9 +226,6 @@ agent:
         LOOP_TEST_FAKE_AGENT: "1"
         LOOP_FAKE_AGENT_MODE: pr_owned_non_loop_merge_result
 
-run:
-  repairAttempts: 0
-
 git:
   baseBranch: develop
   integration:
@@ -293,9 +284,6 @@ agent:
         LOOP_TEST_FAKE_AGENT: "1"
         LOOP_FAKE_AGENT_MODE: pr_owned_empty_dirty_after_merge
 
-run:
-  repairAttempts: 0
-
 git:
   baseBranch: develop
   integration:
@@ -352,9 +340,6 @@ agent:
         LOOP_TEST_FAKE_AGENT: "1"
         LOOP_FAKE_AGENT_MODE: pr_owned_simple
 
-run:
-  repairAttempts: 0
-
 git:
   baseBranch: develop
   integration:
@@ -408,9 +393,6 @@ agent:
       env:
         LOOP_TEST_FAKE_AGENT: "1"
         LOOP_FAKE_AGENT_MODE: pr_owned_simple
-
-run:
-  repairAttempts: 0
 
 git:
   baseBranch: develop
@@ -513,7 +495,7 @@ git:
 	assertBranchMissing(t, repo, "test/fake-agent")
 }
 
-func TestRunRejectsCompletedResultWithoutBranchRename(t *testing.T) {
+func TestRunRejectsMergeCloseWithoutBranchRename(t *testing.T) {
 	ctx := context.Background()
 	repo := newCleanupRepo(t)
 	mustWrite(t, filepath.Join(repo, "task.md"), "# Task\n\nMake the fake change.\n")
@@ -532,10 +514,7 @@ agent:
       prompt: stdin
       env:
         LOOP_TEST_FAKE_AGENT: "1"
-        LOOP_FAKE_AGENT_MODE: completed_unrenamed
-
-run:
-  repairAttempts: 0
+        LOOP_FAKE_AGENT_MODE: merge_unrenamed
 
 git:
   baseBranch: develop
@@ -550,14 +529,14 @@ git:
 		return commandRun(ctx, globals{Agent: "localtest", JSON: true, NoColor: true}, []string{"task.md", "--max-iterations", "1"})
 	})
 	if err == nil {
-		t.Fatal("expected run to reject completed result without branch rename")
+		t.Fatal("expected run to reject merge close without branch rename")
 	}
 	if !strings.Contains(err.Error(), "loop branch rename") {
 		t.Fatalf("error = %v", err)
 	}
 }
 
-func TestPRModeRejectsCompletedResultBeforePRMerge(t *testing.T) {
+func TestPRModeRejectsMergeCloseBeforePRMerge(t *testing.T) {
 	ctx := context.Background()
 	repo := newCleanupRepo(t)
 	addBareOrigin(t, repo)
@@ -579,9 +558,6 @@ agent:
         LOOP_TEST_FAKE_AGENT: "1"
         LOOP_FAKE_AGENT_MODE: pr_unmerged_result
 
-run:
-  repairAttempts: 0
-
 git:
   baseBranch: develop
   integration:
@@ -596,7 +572,7 @@ git:
 		return commandRun(ctx, globals{Agent: "prunmerged", JSON: true, NoColor: true}, []string{"task.md", "--max-iterations", "1"})
 	})
 	if err == nil {
-		t.Fatal("expected run to reject completed PR result before merge")
+		t.Fatal("expected run to reject merge close before PR merge")
 	}
 	if !strings.Contains(err.Error(), "loop pr merge") {
 		t.Fatalf("error should point to loop pr merge: %v", err)
@@ -888,20 +864,17 @@ func runTestFakeAgent() int {
 		return 0
 	case "dirty":
 		_ = os.WriteFile(filepath.Join(getenvForTestAgent("LOOP_WORKDIR", "."), "loop-fake-dirty.txt"), []byte("dirty\n"), 0o644)
-		writeTestFakeResult(iterDir, "completed", nil)
+		writeTestFakeResult(iterDir, "merge", nil)
 		return 0
-	case "blocked":
-		writeTestFakeResult(iterDir, "blocked", nil)
-		return 1
-	case "blocking_issue":
-		_ = commandIssue(context.Background(), globals{JSON: true, NoColor: true}, []string{"ask", "--title", "Clarify blocking fixture", "--body", "Can this blocked fixture continue?", "--blocking"})
-		writeTestFakeResult(iterDir, "blocked", nil)
+	case "issue_skip_merge":
+		_ = commandIssue(context.Background(), globals{JSON: true, NoColor: true}, []string{"ask", "--title", "Clarify skip-merge fixture", "--body", "Can this skipped fixture continue?"})
+		writeTestFakeResult(iterDir, "skip_merge", nil, true)
 		return 0
-	case "no_change":
-		writeTestFakeResult(iterDir, "no_change", nil)
+	case "sleep":
+		writeTestFakeResult(iterDir, "skip_merge", nil, true)
 		return 0
-	case "needs_repair":
-		writeTestFakeResult(iterDir, "needs_repair", nil)
+	case "skip_merge":
+		writeTestFakeResult(iterDir, "skip_merge", nil)
 		return 0
 	case "validation_fix":
 		workDir := getenvForTestAgent("LOOP_WORKDIR", ".")
@@ -909,8 +882,8 @@ func runTestFakeAgent() int {
 		changePath := filepath.Join(workDir, "validation-ok.txt")
 		_ = os.WriteFile(changePath, []byte("validation repaired at "+time.Now().UTC().Format(time.RFC3339Nano)+"\n"), 0o644)
 		_ = gitForTestAgent(workDir, "add", "validation-ok.txt")
-		_ = gitForTestAgent(workDir, "commit", "-m", "F: repair validation fixture")
-		writeTestFakeResult(iterDir, "completed", testFakeCommit(workDir))
+		_ = gitForTestAgent(workDir, "commit", "-m", "F: add validation fixture")
+		writeTestFakeResult(iterDir, "merge", testFakeCommit(workDir))
 		return 0
 	case "pr_owned_repair":
 		return runTestFakeAgentOwnedPR(iterDir, true, "", false, false)
@@ -924,27 +897,27 @@ func runTestFakeAgent() int {
 		workDir := getenvForTestAgent("LOOP_WORKDIR", ".")
 		_ = commandBranch(context.Background(), globals{}, []string{"rename", "test/fake-agent"})
 		changePath := filepath.Join(workDir, "loop-fake-change.txt")
-		_ = os.WriteFile(changePath, []byte("fake agent completed without pr merge at "+time.Now().UTC().Format(time.RFC3339Nano)+"\n"), 0o644)
+		_ = os.WriteFile(changePath, []byte("fake agent merge close without pr merge at "+time.Now().UTC().Format(time.RFC3339Nano)+"\n"), 0o644)
 		_ = gitForTestAgent(workDir, "add", "loop-fake-change.txt")
 		_ = gitForTestAgent(workDir, "commit", "-m", "F: run fake agent behavior")
-		writeTestFakeResult(iterDir, "completed", testFakeCommit(workDir))
+		writeTestFakeResult(iterDir, "merge", testFakeCommit(workDir))
 		return 0
-	case "completed_unrenamed":
+	case "merge_unrenamed":
 		workDir := getenvForTestAgent("LOOP_WORKDIR", ".")
 		changePath := filepath.Join(workDir, "loop-fake-change.txt")
-		_ = os.WriteFile(changePath, []byte("fake agent completed without branch rename at "+time.Now().UTC().Format(time.RFC3339Nano)+"\n"), 0o644)
+		_ = os.WriteFile(changePath, []byte("fake agent merge close without branch rename at "+time.Now().UTC().Format(time.RFC3339Nano)+"\n"), 0o644)
 		_ = gitForTestAgent(workDir, "add", "loop-fake-change.txt")
 		_ = gitForTestAgent(workDir, "commit", "-m", "F: run fake agent behavior")
-		writeTestFakeResult(iterDir, "completed", testFakeCommit(workDir))
+		writeTestFakeResult(iterDir, "merge", testFakeCommit(workDir))
 		return 0
 	default:
 		workDir := getenvForTestAgent("LOOP_WORKDIR", ".")
 		_ = commandBranch(context.Background(), globals{}, []string{"rename", "test/fake-agent"})
 		changePath := filepath.Join(workDir, "loop-fake-change.txt")
-		_ = os.WriteFile(changePath, []byte("fake agent completed at "+time.Now().UTC().Format(time.RFC3339Nano)+"\n"), 0o644)
+		_ = os.WriteFile(changePath, []byte("fake agent merge close at "+time.Now().UTC().Format(time.RFC3339Nano)+"\n"), 0o644)
 		_ = gitForTestAgent(workDir, "add", "loop-fake-change.txt")
 		_ = gitForTestAgent(workDir, "commit", "-m", "F: run fake agent behavior")
-		writeTestFakeResult(iterDir, "completed", testFakeCommit(workDir))
+		writeTestFakeResult(iterDir, "merge", testFakeCommit(workDir))
 		return 0
 	}
 }
@@ -954,7 +927,7 @@ func runTestFakeAgentOwnedPR(iterDir string, repair bool, resultCommitMessage st
 	workDir := getenvForTestAgent("LOOP_WORKDIR", ".")
 	_ = commandBranch(ctx, globals{}, []string{"rename", "test/fake-agent"})
 	changePath := filepath.Join(workDir, "loop-fake-change.txt")
-	_ = os.WriteFile(changePath, []byte("fake agent completed at "+time.Now().UTC().Format(time.RFC3339Nano)+"\n"), 0o644)
+	_ = os.WriteFile(changePath, []byte("fake agent merge close at "+time.Now().UTC().Format(time.RFC3339Nano)+"\n"), 0o644)
 	_ = gitForTestAgent(workDir, "add", "loop-fake-change.txt")
 	_ = gitForTestAgent(workDir, "commit", "-m", "F: run fake agent behavior")
 	_ = artifactdb.Write(iterDir, "pr-title", "Run fake agent behavior\n")
@@ -991,14 +964,14 @@ func runTestFakeAgentOwnedPR(iterDir string, repair bool, resultCommitMessage st
 			resultCommit["message"] = resultCommitMessage
 		}
 	}
-	writeTestFakeResult(iterDir, "completed", resultCommit)
+	writeTestFakeResult(iterDir, "merge", resultCommit)
 	return 0
 }
 
 func testFakeAgentMode() string {
 	sequence := strings.TrimSpace(os.Getenv("LOOP_FAKE_AGENT_SEQUENCE"))
 	if sequence == "" {
-		return getenvForTestAgent("LOOP_FAKE_AGENT_MODE", "completed")
+		return getenvForTestAgent("LOOP_FAKE_AGENT_MODE", "merge")
 	}
 	var modes []string
 	for _, item := range strings.Split(sequence, ",") {
@@ -1007,7 +980,7 @@ func testFakeAgentMode() string {
 		}
 	}
 	if len(modes) == 0 {
-		return getenvForTestAgent("LOOP_FAKE_AGENT_MODE", "completed")
+		return getenvForTestAgent("LOOP_FAKE_AGENT_MODE", "merge")
 	}
 	index := nextTestFakeAgentInvocationIndex()
 	if index >= len(modes) {
@@ -1028,31 +1001,37 @@ func nextTestFakeAgentInvocationIndex() int {
 	return count
 }
 
-func writeTestFakeResult(iterDir, status string, commit map[string]any) {
+func writeTestFakeResult(iterDir, action string, commit map[string]any, sleep ...bool) {
 	validationStatus := "passed"
-	if status == "blocked" {
+	if action == "skip_merge" {
 		validationStatus = "skipped"
+	}
+	sleepUntilGitHubUpdate := false
+	if len(sleep) > 0 {
+		sleepUntilGitHubUpdate = sleep[0]
 	}
 	commits := []map[string]any{}
 	if commit != nil {
 		commits = append(commits, commit)
 	}
-	branch := testFakeBranchResult(status)
+	branch := testFakeBranchResult(action)
 	result := map[string]any{
 		"schema_version":    1,
-		"status":            status,
+		"action":            action,
 		"summary_sentence":  "Run fake agent behavior",
-		"should_fully_stop": status != "completed",
+		"should_fully_stop": action != "merge" && !sleepUntilGitHubUpdate,
 		"goal_evaluation":   "Fake agent produced a deterministic test result.",
 		"branch":            branch,
 		"commits":           commits,
 		"validation":        map[string]any{"status": validationStatus, "commands": []map[string]any{}},
 		"artifacts":         map[string]any{},
 		"assumptions":       []string{},
-		"blocked_reason":    "",
 	}
-	if status == "blocked" {
-		result["blocked_reason"] = getenvForTestAgent("LOOP_FAKE_BLOCKED_REASON", "Fake agent blocked by requested mode.")
+	if action == "skip_merge" {
+		result["skip_merge_reason"] = "Fake agent chose not to merge this iteration."
+		if sleepUntilGitHubUpdate {
+			result["sleep_until_github_update"] = true
+		}
 	}
 	data, _ := json.MarshalIndent(result, "", "  ")
 	writeTestFakeRawResult(iterDir, string(append(data, '\n')))
@@ -1063,7 +1042,7 @@ func writeTestFakeRawResult(iterDir, resultJSON string) {
 	_ = artifactdb.WriteResultHandoff(artifactdb.GlobalDBPathForIteration(iterDir), runID, iterationID, resultJSON)
 }
 
-func testFakeBranchResult(status string) map[string]any {
+func testFakeBranchResult(action string) map[string]any {
 	workDir := getenvForTestAgent("LOOP_WORKDIR", ".")
 	initial := getenvForTestAgent("LOOP_INITIAL_BRANCH", "wip/0001")
 	current := currentBranchForTestAgent(workDir)
@@ -1076,7 +1055,7 @@ func testFakeBranchResult(status string) map[string]any {
 	kind := "test"
 	slug := "fake-agent"
 	final := ""
-	if status == "completed" && current != "" && current != initial {
+	if action == "merge" && current != "" && current != initial {
 		final = current
 		if parsedKind, parsedSlug, ok := splitTestBranchName(current); ok {
 			kind = parsedKind

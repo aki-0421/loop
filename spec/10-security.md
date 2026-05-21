@@ -42,7 +42,7 @@ The CLI may reject or pause destructive operations based on configuration:
 Integration requires:
 
 - A clean working tree except ignored runtime files.
-- Valid result JSON.
+- Valid merge close JSON.
 - Required validation commands not failed.
 - A non-empty summary sentence for changed iterations.
 - A branch name matching configured branch rules.

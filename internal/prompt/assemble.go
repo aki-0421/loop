@@ -55,7 +55,7 @@ func HarnessContract(pullRequestMode bool) string {
 		"Use `loop iteration`, `loop memory`, `loop issue`, and `loop commit` commands for runtime context, artifacts, GitHub Issues, and commits.",
 	}
 	if pullRequestMode {
-		lines = append(lines, "Before writing pull request artifacts, read template text with `loop iteration read pr-template`; create, check, repair, and merge the PR with `loop pr` before writing a completed result.")
+		lines = append(lines, "Before writing pull request artifacts, read template text with `loop iteration read pr-template`; create, check, fix check failures when needed, and merge the PR with `loop pr` before closing with `loop iteration close --merge`.")
 	}
 	return strings.TrimSpace(strings.Join(lines, "\n"))
 }

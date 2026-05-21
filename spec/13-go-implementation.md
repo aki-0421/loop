@@ -47,8 +47,6 @@ internal/memory/
   compact.go
 internal/validation/
   runner.go
-internal/repair/
-  repair.go
 internal/logging/
   redact.go
 ```
@@ -73,7 +71,7 @@ Responsibilities:
 - Launch process.
 - Capture stdout and stderr as sanitized audit events.
 - Normalize events.
-- Validate result file presence.
+- Validate terminal close handoff presence.
 
 The built-in default adapter name is `codex`. It runs `codex exec --json` rather than the interactive Codex TUI because loop does not allocate a terminal to agent subprocesses and must avoid persisting raw agent transcripts.
 
@@ -88,7 +86,7 @@ Responsibilities:
 
 ### Iteration artifact commands
 
-The CLI exposes `loop iteration path/read/write/append` for fixed artifact names, plus dedicated `loop iteration plan` and `loop iteration todo` namespaces for planning artifacts. Agent-writable artifacts are limited to `plan`, `todo`, `pr-title`, and `pr-body`; CLI-owned logs, prompt, runtime context, effective config, and validation output are read-only. `loop iteration result` builds valid result JSON from runtime data plus semantic flags and writes the master-DB result handoff. The CLI also exposes `loop commit --type <type> <message>` and `loop branch rename ...` so agents request validated commits and tracked branch renames without running raw Git lifecycle commands.
+The CLI exposes `loop iteration path/read/write/append` for fixed artifact names, plus dedicated `loop iteration plan` and `loop iteration todo` namespaces for planning artifacts. Agent-writable artifacts are limited to `plan`, `todo`, `pr-title`, and `pr-body`; CLI-owned logs, prompt, runtime context, effective config, and validation output are read-only. `loop iteration close` builds valid terminal JSON from runtime data plus semantic flags and writes the master-DB result handoff. The CLI also exposes `loop commit --type <type> <message>` and `loop branch rename ...` so agents request validated commits and tracked branch renames without running raw Git lifecycle commands.
 
 ### `internal/gitx`
 
@@ -129,7 +127,7 @@ Responsibilities:
 - Resolve the GitHub repository from `origin`.
 - Sync open and merged pull request titles and bodies through `gh api graphql`.
 - Sync repository Issues and Issue/PR comment diffs through `gh api graphql`.
-- Create clarification and improvement proposal Issues and ensure `loop:question`, `loop:proposal`, and `loop:blocking` labels.
+- Create clarification and improvement proposal Issues and ensure `loop:question` and `loop:proposal` labels.
 - Store PR memory and GitHub context in the rebuildable `.loop/loop.db` cache.
 - Search recent and older PR, Issue, and comment context with SQLite FTS.
 - Fetch and upsert a merged PR after `loop pr merge`.
@@ -143,7 +141,7 @@ run-state.json.tmp
 run-state.json
 ```
 
-The same rule applies when the CLI writes repaired result metadata. Agent-written artifacts are validated after process exit.
+The same rule applies when the CLI writes terminal close metadata. Agent-written artifacts are validated after process exit.
 
 ## Locking
 

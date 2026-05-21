@@ -15,7 +15,6 @@ import (
 
 const (
 	LabelQuestion = "loop:question"
-	LabelBlocking = "loop:blocking"
 	LabelProposal = "loop:proposal"
 )
 
@@ -34,7 +33,6 @@ type IssueQuestionOptions struct {
 	RunsDir     string
 	Title       string
 	Body        string
-	Blocking    bool
 	RunID       string
 	IterationID string
 	GHPath      string
@@ -46,16 +44,9 @@ type IssueReportOptions struct {
 	Title       string
 	Body        string
 	Kind        string
-	Blocking    bool
 	RunID       string
 	IterationID string
 	GHPath      string
-}
-
-type BlockingIssueOptions struct {
-	WorkDir string
-	RunsDir string
-	Numbers []int
 }
 
 func SyncIssues(ctx context.Context, opts SyncOptions) (ContextSyncResult, error) {
@@ -141,9 +132,6 @@ func CreateIssueQuestion(ctx context.Context, opts IssueQuestionOptions) (Record
 	}
 	runner := pr.Runner{Dir: opts.WorkDir, GHPath: opts.GHPath}
 	required := []string{LabelQuestion}
-	if opts.Blocking {
-		required = append(required, LabelBlocking)
-	}
 	repositoryID, labels, err := ensureLoopLabels(ctx, runner, owner, name, required)
 	if err != nil {
 		return Record{}, err
@@ -176,9 +164,6 @@ func CreateIssueReport(ctx context.Context, opts IssueReportOptions) (Record, er
 	}
 	runner := pr.Runner{Dir: opts.WorkDir, GHPath: opts.GHPath}
 	required := []string{LabelProposal}
-	if opts.Blocking {
-		required = append(required, LabelBlocking)
-	}
 	repositoryID, labels, err := ensureLoopLabels(ctx, runner, owner, name, required)
 	if err != nil {
 		return Record{}, err
@@ -194,18 +179,6 @@ func CreateIssueReport(ctx context.Context, opts IssueReportOptions) (Record, er
 		return Record{}, err
 	}
 	return recordFromGitHubContext(issue), nil
-}
-
-func OpenBlockingIssues(ctx context.Context, opts BlockingIssueOptions) ([]Record, error) {
-	repo, _, _, err := ResolveGitHubRepository(ctx, opts.WorkDir)
-	if err != nil {
-		return nil, err
-	}
-	records, err := artifactdb.OpenBlockingGitHubIssues(artifactdb.GlobalDBPathFromRunsPath(opts.RunsDir), repo, opts.Numbers)
-	if err != nil {
-		return nil, err
-	}
-	return recordsFromGitHubContext(records), nil
 }
 
 func IssueNumber(ref string) int {
@@ -533,8 +506,6 @@ func createLoopLabel(ctx context.Context, runner pr.Runner, repositoryID, name s
 
 func loopLabelPresentation(name string) (string, string) {
 	switch name {
-	case LabelBlocking:
-		return "D73A4A", "Blocking clarification or improvement proposal requested by loop"
 	case LabelProposal:
 		return "1D76DB", "Improvement proposal from loop agent"
 	default:
@@ -609,7 +580,6 @@ func appendQuestionMetadata(body string, opts IssueQuestionOptions) string {
 	if opts.IterationID != "" {
 		fmt.Fprintf(&b, "iteration_id: %s\n", opts.IterationID)
 	}
-	fmt.Fprintf(&b, "blocking: %t\n", opts.Blocking)
 	b.WriteString("-->\n")
 	return b.String()
 }
@@ -625,7 +595,6 @@ func appendReportMetadata(body string, opts IssueReportOptions) string {
 		fmt.Fprintf(&b, "iteration_id: %s\n", opts.IterationID)
 	}
 	fmt.Fprintf(&b, "kind: %s\n", normalizeReportKind(opts.Kind))
-	fmt.Fprintf(&b, "blocking: %t\n", opts.Blocking)
 	b.WriteString("-->\n")
 	return b.String()
 }

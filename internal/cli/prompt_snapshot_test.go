@@ -204,8 +204,8 @@ func TestHelperProcessCaptureAgent(t *testing.T) {
 	_ = os.WriteFile(filepath.Join(captureDir, "env.txt"), []byte(strings.Join(os.Environ(), "\n")), 0o644)
 	result := `{
   "schema_version": 1,
-  "status": "no_change",
-  "summary_sentence": "Capture agent context",
+  "action": "skip_merge",
+  "skip_merge_reason": "Capture agent context.",
   "should_fully_stop": true,
   "goal_evaluation": "Captured agent context for test.",
   "branch": {"initial_name": "wip/0001", "kind": "test", "slug": "capture-agent"},

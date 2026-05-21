@@ -176,7 +176,7 @@ func TestProcessAdapterCancelsProcessGroup(t *testing.T) {
 func TestFakeAgentWritesResultFromEnv(t *testing.T) {
 	root := t.TempDir()
 	dir := filepath.Join(root, ".loop", "runs", "run-1", "iterations", "0001")
-	t.Setenv("LOOP_FAKE_AGENT_MODE", "no_change")
+	t.Setenv("LOOP_FAKE_AGENT_MODE", "skip_merge")
 	t.Setenv("LOOP_ITERATION_DIR", dir)
 	t.Setenv("LOOP_RUN_ID", "run-1")
 	t.Setenv("LOOP_ITERATION_ID", "0001")
@@ -191,7 +191,7 @@ func TestFakeAgentWritesResultFromEnv(t *testing.T) {
 	if err := json.Unmarshal([]byte(data), &result); err != nil {
 		t.Fatal(err)
 	}
-	if result["status"] != "no_change" {
+	if result["action"] != "skip_merge" {
 		t.Fatalf("unexpected fake result: %+v", result)
 	}
 }

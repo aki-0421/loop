@@ -274,6 +274,13 @@ func (r Runner) Merge(ctx context.Context, opts MergeOptions) (CommandResult, er
 	return r.run(ctx, r.ghPath(), "gh", args...)
 }
 
+func (r Runner) Close(ctx context.Context, pr string) (CommandResult, error) {
+	if strings.TrimSpace(pr) == "" {
+		return CommandResult{}, errors.New("pr identifier is required")
+	}
+	return r.run(ctx, r.ghPath(), "gh", "pr", "close", pr)
+}
+
 func MergeArgs(opts MergeOptions) []string {
 	args := []string{"pr", "merge", opts.PR, "--squash"}
 	if subject := mergeSubject(opts.Subject, opts.PR); subject != "" {

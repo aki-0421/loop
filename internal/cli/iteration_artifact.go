@@ -63,7 +63,7 @@ var iterationArtifactAliases = map[string]string{
 
 func commandIteration(ctx context.Context, g globals, args []string) error {
 	if len(args) == 0 {
-		return codedError{2, fmt.Errorf("usage: loop iteration <path|read|write|append|plan|todo|result> ...")}
+		return codedError{2, fmt.Errorf("usage: loop iteration <path|read|write|append|plan|todo|close> ...")}
 	}
 	switch args[0] {
 	case "path", "read":
@@ -74,8 +74,8 @@ func commandIteration(ctx context.Context, g globals, args []string) error {
 		return commandIterationPlan(ctx, g, args[1:])
 	case "todo":
 		return commandIterationTodo(ctx, g, args[1:])
-	case "result":
-		return commandIterationResult(ctx, g, args[1:])
+	case "close":
+		return commandIterationClose(ctx, g, args[1:])
 	default:
 		return codedError{2, fmt.Errorf("unknown iteration subcommand %q", args[0])}
 	}

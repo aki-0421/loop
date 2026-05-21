@@ -18,11 +18,9 @@ const (
 	StageCreated       Stage = "created"
 	StageBranchCreated Stage = "branch_created"
 	StageAgentRunning  Stage = "agent_running"
-	StageRepairRunning Stage = "repair_running"
 	StageValidating    Stage = "validating"
 	StageIntegrating   Stage = "integrating"
 	StageCompleted     Stage = "completed"
-	StageBlocked       Stage = "blocked"
 	StageFailed        Stage = "failed"
 	StageCancelled     Stage = "cancelled"
 )
@@ -50,18 +48,18 @@ type IterationRecord struct {
 }
 
 type Result struct {
-	SchemaVersion   int               `json:"schema_version"`
-	Status          string            `json:"status"`
-	SummarySentence string            `json:"summary_sentence"`
-	ShouldFullyStop bool              `json:"should_fully_stop"`
-	GoalEvaluation  string            `json:"goal_evaluation"`
-	Branch          BranchResult      `json:"branch"`
-	Commits         []CommitResult    `json:"commits"`
-	Validation      ValidationResult  `json:"validation"`
-	Artifacts       map[string]string `json:"artifacts"`
-	Assumptions     []string          `json:"assumptions,omitempty"`
-	BlockedReason   string            `json:"blocked_reason,omitempty"`
-	Error           string            `json:"error,omitempty"`
+	SchemaVersion          int               `json:"schema_version"`
+	Action                 string            `json:"action"`
+	SummarySentence        string            `json:"summary_sentence,omitempty"`
+	ShouldFullyStop        bool              `json:"should_fully_stop"`
+	GoalEvaluation         string            `json:"goal_evaluation"`
+	Branch                 BranchResult      `json:"branch"`
+	Commits                []CommitResult    `json:"commits"`
+	Validation             ValidationResult  `json:"validation"`
+	Artifacts              map[string]string `json:"artifacts"`
+	Assumptions            []string          `json:"assumptions,omitempty"`
+	SkipMergeReason        string            `json:"skip_merge_reason,omitempty"`
+	SleepUntilGitHubUpdate bool              `json:"sleep_until_github_update,omitempty"`
 }
 
 type BranchResult struct {
@@ -155,7 +153,7 @@ func ValidateState(state State) error {
 	if state.CurrentIteration == "" {
 		errs = append(errs, "current_iteration is required")
 	}
-	if !oneOf(string(state.Stage), "created", "branch_created", "agent_running", "repair_running", "validating", "integrating", "completed", "blocked", "failed", "cancelled") {
+	if !oneOf(string(state.Stage), "created", "branch_created", "agent_running", "validating", "integrating", "completed", "failed", "cancelled") {
 		errs = append(errs, "stage is invalid")
 	}
 	if len(errs) > 0 {
@@ -193,14 +191,23 @@ func ValidateResult(result Result) error {
 	if result.SchemaVersion != 1 {
 		errs = append(errs, "schema_version must be 1")
 	}
-	if !oneOf(result.Status, "completed", "no_change", "needs_repair", "blocked", "failed") {
-		errs = append(errs, "status is invalid")
+	if !oneOf(result.Action, "merge", "skip_merge") {
+		errs = append(errs, "action is invalid")
 	}
-	if strings.TrimSpace(result.SummarySentence) == "" {
+	if result.Action == "merge" && strings.TrimSpace(result.SummarySentence) == "" {
 		errs = append(errs, "summary_sentence is required")
 	}
 	if len(result.SummarySentence) > 120 {
 		errs = append(errs, "summary_sentence must be at most 120 characters")
+	}
+	if result.Action == "skip_merge" && strings.TrimSpace(result.SkipMergeReason) == "" {
+		errs = append(errs, "skip_merge_reason is required")
+	}
+	if result.SleepUntilGitHubUpdate && result.Action != "skip_merge" {
+		errs = append(errs, "sleep_until_github_update is only valid with skip_merge")
+	}
+	if result.SleepUntilGitHubUpdate && result.ShouldFullyStop {
+		errs = append(errs, "sleep_until_github_update requires should_fully_stop=false")
 	}
 	if strings.TrimSpace(result.GoalEvaluation) == "" {
 		errs = append(errs, "goal_evaluation is required")

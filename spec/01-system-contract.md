@@ -8,10 +8,9 @@
 2. Load recent GitHub PR, Issue, and comment context from the local `.loop/loop.db` cache.
 3. Run the configured agent with a compact code-generated skill bootstrap.
 4. Let the agent plan, edit, validate, and request commits for complete work.
-5. Read the agent result JSON.
-6. Repair incomplete work when possible.
-7. Integrate the iteration through local squash merge, or verify that the agent merged the pull request through `loop pr`.
-8. Repeat until the agent reports `should_fully_stop=true`, the iteration limit is reached, or a terminal error is recorded.
+5. Read the agent terminal close JSON.
+6. Integrate a merge close or clean up a skip-merge close.
+7. Repeat until the agent reports `should_fully_stop=true`, the iteration limit is reached, or a terminal error is recorded. A skip-merge close may explicitly pause in GitHub sleep mode before the next iteration.
 
 ## Fully automated default
 
@@ -22,9 +21,9 @@ Runs are fully automated:
 - Important product, policy, or large blocking specification clarifications are asked through `loop issue ask`, which creates GitHub Issues in the repository.
 - Concrete repository or harness improvement proposals are reported through `loop issue report`. Unsupported agent capability findings are rediscovered each iteration and are not persisted as Issues.
 - Missing information is handled by making a local, explicit assumption and continuing.
-- After creating a clarification Issue, the agent continues unrelated work. If no safe independent work remains, the agent records a blocked result in JSON and references the blocking Issue URL.
-- A blocked result that references an open `loop:blocking` Issue puts the current run process into in-memory sleep mode. Sleep mode polls GitHub Issue/PR updates and relaunches the agent in the same iteration when new context appears.
-- Local merge, pull, cleanup, repair, and resume operations are performed by the CLI according to configuration. In pull request mode, the agent performs PR creation, check waiting, CI repair, and PR merge through `loop pr` commands.
+- After creating a clarification Issue, the agent continues unrelated work. If no safe mergeable work remains and GitHub updates are needed before continuing, the agent closes with `loop iteration close --skip-merge --sleep --should-stop false` and references the relevant Issue URL in the reason.
+- GitHub sleep mode polls GitHub Issue/PR updates and starts the next iteration when new context appears. Sleep mode is an explicit skip-merge choice and does not reuse the goal-completion stop decision.
+- Local merge, pull, cleanup, and resume operations are performed by the CLI according to configuration. In pull request mode, the agent performs PR creation, check waiting, check failure fixes, and PR merge through `loop pr` commands.
 
 ## Language default
 
@@ -53,7 +52,6 @@ The CLI owns:
 - JSON validation.
 - Git, commit, and pull request commands.
 - Branch creation, branch rename command validation/tracking, PR command validation/tracking, and cleanup.
-- Repair retries before PR creation. Pull request check repair happens inside the agent context through `loop pr checks`, local edits, commits, and `loop pr merge`.
 - Resume state.
 - Exit codes.
 - GitHub PR, Issue, and comment context synchronization.
@@ -65,7 +63,7 @@ The agent owns:
 - TODO execution.
 - Deciding when a TODO-sized unit is ready to commit.
 - Validation command selection when not configured.
-- Result JSON creation.
+- Terminal close creation through `loop iteration close`.
 - Branch rename requests through `loop branch rename`.
 - Pull request text generation.
 

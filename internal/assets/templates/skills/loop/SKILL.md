@@ -1,6 +1,6 @@
 ---
 name: loop
-description: Execute one autonomous coding iteration inside the loop harness. Use for CLI-managed iterations that must gather context, choose one reviewer-sized slice, write plan and todo artifacts, edit repository files, validate, commit through loop, optionally create/merge a pull request, ask important clarifications through GitHub Issues, and write result JSON.
+description: Execute one autonomous coding iteration inside the loop harness. Use for CLI-managed iterations that must gather context, choose one reviewer-sized slice, write plan and todo artifacts, edit repository files, validate, commit through loop, optionally create/merge a pull request, ask important clarifications through GitHub Issues, and close the iteration.
 version: 1
 ---
 
@@ -13,7 +13,7 @@ You are executing one iteration inside the `loop` harness.
 - Complete exactly one reviewer-sized iteration from the current instruction.
 - Treat one iteration as one pull-request-sized change, not a project, epic, milestone, or roadmap.
 - Use the repository, current instruction, `AGENTS.md`, runtime artifact, GitHub PR/Issue/comment memory, and discovered docs as evidence.
-- Do not ask the user questions directly or wait for manual actions. Make explicit assumptions when safe, create GitHub clarification Issues for important ambiguity, or return `blocked` when no safe path exists.
+- Do not ask the user questions directly or wait for manual actions. Make explicit assumptions when safe, create GitHub clarification Issues for important ambiguity, or choose `skip-merge` when no safe mergeable work remains.
 - Stop after the selected slice is complete, validated, committed, documented, and, when pull request mode is enabled, merged.
 
 ## Product neutrality contract
@@ -28,7 +28,7 @@ You are executing one iteration inside the `loop` harness.
 
 ## Harness-owned artifacts
 
-Use the `loop` CLI as the source of truth for runtime artifacts, GitHub context memory, clarification Issues, commits, branch state, pull requests, and result generation.
+Use the `loop` CLI as the source of truth for runtime artifacts, GitHub context memory, clarification Issues, commits, branch state, pull requests, and iteration close generation.
 
 - Do not construct or edit paths under the iteration directory directly for artifacts.
 - This restriction does not apply to normal repository source files.
@@ -45,10 +45,10 @@ Use the `loop` CLI as the source of truth for runtime artifacts, GitHub context 
 6. Commit each completed TODO through `loop commit` before moving to unrelated work.
 7. Stop after the selected slice is complete; do not begin a follow-up slice.
 8. Write durable PR body context when pull request mode is enabled.
-9. If the result will be `completed`, rename the branch through `loop branch rename`.
-10. If pull request mode is enabled, create the PR, wait for checks, repair failures narrowly, and merge through `loop pr`.
-11. Confirm `git status --short` has no changed files before writing the final `result`.
-12. Write `result` only after required commits and, when enabled, PR merge are complete.
+9. If this iteration will be merged, rename the branch through `loop branch rename`.
+10. If pull request mode is enabled and this iteration will be merged, create the PR, wait for checks, fix failures narrowly, and merge through `loop pr`.
+11. Confirm `git status --short` has no changed files before closing with `--merge`.
+12. Close the iteration with exactly one choice: `--merge` for safe mergeable work, or `--skip-merge` when nothing appropriate should be incorporated.
 
 ## Establish context
 
@@ -71,24 +71,23 @@ Then:
 - If commit history exists, inspect recent commits, usually with `git log --oneline -20`.
 - Inspect only the broad landmarks needed to plan: root files, package directories, README, nearest `AGENTS.md`, docs indexes, package scripts, tests, CI, and validation entry points.
 - Carry forward the goal, branch/mode, validation settings, recent changes, unfinished work, constraints, and assumptions.
-- Return `blocked` only if required operational context is missing or unsafe to interpret and no safe independent work remains.
+- Choose `skip-merge` only if required operational context is missing or unsafe to interpret and no safe independent work remains.
 
 ## Clarifications
 
 Use GitHub Issues for important product, policy, or large blocking specification questions and concrete repository or harness improvement proposals:
 
 ```bash
-loop issue ask --title "Clarify ..." --body "..." [--blocking]
-loop issue report --title "Improve ..." --body "..." [--kind tool|docs|guardrail|observability|environment|workflow|other] [--blocking]
+loop issue ask --title "Clarify ..." --body "..."
+loop issue report --title "Improve ..." --body "..." [--kind tool|docs|guardrail|observability|environment|workflow|other]
 ```
 
-- Use `--blocking` only when the answer can block a large implementation choice or no safe final decision exists.
 - After creating an Issue, continue TODOs unrelated to that clarification.
 - Do not use Issues for minor local uncertainties that can be resolved from code, tests, docs, or a safe explicit assumption.
 - Use `loop issue report` only for concrete repository or harness improvement proposals. Do not persist unsupported-agent findings; rediscover them each iteration.
 - Write Issue bodies as GitHub-flavored Markdown. For improvement proposals, use clear sections for evidence from the current run, impact, and a suggested harness or repository change.
-- Return `blocked` only when no safe independent work remains; include the blocking Issue URL in `--blocked-reason`.
-- If `loop iteration read github-updates` contains Issue or PR updates after a sleep wake cycle, read and apply them before deciding whether to continue or remain blocked.
+- Use `--skip-merge` only when no safe independent work remains; include the relevant Issue URL in `--reason`, and add `--sleep` when the next useful step depends on GitHub updates.
+- If `loop iteration read github-updates` contains Issue or PR updates after a sleep wake cycle, read and apply them before deciding whether to merge, skip merge again, or create/comment on an Issue.
 
 ## Plan one slice
 
@@ -109,7 +108,7 @@ Choose one reviewer-sized slice using repository evidence.
 - Introduce shared abstractions only when there is immediate evidence for them: a caller, consumer, validation path, or repository convention.
 - Avoid unused scaffolding. A scaffold-only slice is valid only when the instruction or repository evidence makes scaffolding itself the selected deliverable and validation proves it is usable.
 - Separate product behavior, refactors, tests, CI, docs, and tooling unless one directly proves the other inside the selected slice.
-- If the slice grows, shrink it to a characterization, repair, migration step, scaffold, or proof slice that can stand alone.
+- If the slice grows, shrink it to a characterization, fix, migration step, scaffold, or proof slice that can stand alone.
 
 Write the `plan` artifact with:
 
@@ -135,7 +134,7 @@ Stay in planning until both `plan` and `todo` are written.
 
 Before both artifacts exist, only inspect, read, and reason. Do not edit repository files, run formatting or codegen that writes files, validate with mutating commands, or call `loop commit`.
 
-TODOs should be commit-sized and evidence-linked. Each TODO should end in one of: a source change, a validation change, a documentation update, an artifact update, or no-change evidence.
+TODOs should be commit-sized and evidence-linked. Each TODO should end in one of: a source change, a validation change, a documentation update, an artifact update, or evidence that no repository change is appropriate.
 
 ## Validate
 
@@ -144,8 +143,8 @@ Prefer configured validation from runtime. If none is configured, use the narrow
 - Validation commands must terminate.
 - Do not run persistent servers in the foreground.
 - If validation needs a server, start it in the background, capture the PID, run the check, and kill the server before continuing.
-- If validation was already failing before your change, report the baseline and do not repair unrelated failures unless that repair is the selected slice.
-- If validation cannot run, record the missing dependency, command, credential, or unsafe condition in `result`, and in `pr-body` when pull request mode is enabled.
+- If validation was already failing before your change, report the baseline and do not fix unrelated failures unless that fix is the selected slice.
+- If validation cannot run, record the missing dependency, command, credential, or unsafe condition in `--reason` when using `--skip-merge`, and in `pr-body` when pull request mode is enabled.
 
 ## Commit
 
@@ -167,7 +166,7 @@ Use `loop commit` for commits. Do not run `git add` or `git commit` directly.
 
 Write enough durable context for the next iteration to continue without guessing.
 
-In pull request mode, `pr-body` should include durable completed-work context:
+In pull request mode, `pr-body` should include durable merged-work context:
 
 - what changed,
 - commit SHA and subject,
@@ -176,7 +175,7 @@ In pull request mode, `pr-body` should include durable completed-work context:
 - next recommended slice,
 - whether the original goal is complete.
 
-If follow-up slices remain, the iteration may still be `completed`, but `should_fully_stop` must be `false`.
+If follow-up slices remain, the iteration may still be merged, but `should_fully_stop` must be `false`.
 
 ## Pull request mode
 
@@ -187,14 +186,14 @@ If pull request mode is enabled:
 3. Write `pr-body` with `loop iteration write pr-body`.
 4. Run `loop pr create`.
 5. Run `loop pr checks`.
-6. If checks fail, read `loop iteration read pr-checks`, fetch logs with `loop pr logs <job-url-or-id>`, repair narrowly, validate locally, commit through `loop commit`, update artifacts when useful, and rerun checks.
+6. If checks fail, read `loop iteration read pr-checks`, fetch logs with `loop pr logs <job-url-or-id>`, fix narrowly, validate locally, commit through `loop commit`, update artifacts when useful, and rerun checks.
 7. Run `loop pr merge` only after checks pass.
 
-Follow the returned PR template. Describe only this PR's selected slice, validation results, review notes, and intentionally deferred work. Do not write a `completed` result in pull request mode until `loop pr merge` succeeds.
+Follow the returned PR template. Describe only this PR's selected slice, validation results, review notes, and intentionally deferred work. Do not close with `--merge` in pull request mode until `loop pr merge` succeeds.
 
 ## Branch naming
 
-For completed work, inspect branch rename help and rename through the harness before writing the result:
+For merged work, inspect branch rename help and rename through the harness before closing:
 
 ```bash
 loop help agent branch rename
@@ -203,18 +202,20 @@ loop branch rename --kind fix concise-description #feat/add-password-reset-tests
 
 Use one of the kinds shown by help. If the command prints a collision-adjusted branch, keep using that printed branch. Do not run direct Git branch switch, rename, push, PR, or merge commands.
 
-Skip branch rename only for `no_change`, `blocked`, or `failed` results.
+Skip branch rename only when using `--skip-merge`.
 
-## Result
+## Close
 
-Generate the final result through the CLI:
+Close the iteration through the CLI:
 
 ```bash
-loop iteration result --write --status completed --summary "..." --should-stop false --goal-evaluation "..." --validation-status passed
+loop iteration close --merge --summary "..." --should-stop false --goal-evaluation "..." --validation-status passed
+loop iteration close --skip-merge --reason "..." --should-stop true --goal-evaluation "..."
+loop iteration close --skip-merge --sleep --reason "Waiting for Issue context: <url>." --should-stop false --goal-evaluation "More context is needed before the goal can be completed."
 ```
 
-Add validation command, assumption, blocked reason, or error flags only when needed. The CLI owns the JSON shape and branch metadata. Fix any CLI feedback and rerun.
+Add validation command or assumption flags only when needed. The CLI owns the JSON shape and branch metadata. Fix any CLI feedback and rerun.
 
-Use `completed` only when the selected slice is complete and required merge steps are finished. Use `blocked` when no safe path exists after any necessary blocking Issue has been created and unrelated work is exhausted. Use `failed` for unrecoverable execution errors. Use `no_change` only when repository evidence shows no change is needed.
+Use `--merge` only when the selected slice is complete, committed, validated, and required merge steps are finished. Use `--skip-merge` when there is no safe or appropriate branch content to incorporate, including no-op evidence, abandoned implementation, unresolved CI, or waiting on Issue context. Add `--sleep` only when GitHub Issue, PR, or comment updates are needed before another useful iteration can run.
 
 Set `should_fully_stop` to `true` only when repository evidence shows the original instruction goal is complete.
