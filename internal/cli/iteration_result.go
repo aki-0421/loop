@@ -184,6 +184,9 @@ func buildIterationResult(ctx context.Context, iterationDir string, opts iterati
 	}
 
 	runtime := readResultRuntime(iterationDir)
+	if shouldStop && strings.TrimSpace(runtime["goal"]) == "" {
+		return validation.IterationResult{}, errors.New("--should-stop true requires a CLI --goal")
+	}
 	workDir := firstNonEmpty(runtime["workdir"], os.Getenv("LOOP_WORKDIR"), ".")
 	baseBranch := firstNonEmpty(runtime["base_branch"], os.Getenv("LOOP_BASE_BRANCH"))
 	initialBranch := firstNonEmpty(runtime["initial_branch"], os.Getenv("LOOP_INITIAL_BRANCH"), runtime["current_branch"], os.Getenv("LOOP_CURRENT_BRANCH"))

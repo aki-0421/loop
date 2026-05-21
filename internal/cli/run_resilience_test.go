@@ -24,7 +24,7 @@ func TestRunContinuesAcrossIterationsUntilAgentStops(t *testing.T) {
 	withWorkingDir(t, repo)
 
 	if _, err := captureStdout(t, func() error {
-		return commandRun(ctx, globals{Agent: "resilience", JSON: true, NoColor: true}, []string{"task.md"})
+		return commandRun(ctx, globals{Agent: "resilience", JSON: true, NoColor: true}, []string{"task.md", "--goal", "The fake resilience fixture is complete."})
 	}); err != nil {
 		t.Fatalf("loop run: %v", err)
 	}

@@ -206,7 +206,7 @@ func TestHelperProcessCaptureAgent(t *testing.T) {
   "schema_version": 1,
   "action": "skip_merge",
   "skip_merge_reason": "Capture agent context.",
-  "should_fully_stop": true,
+  "should_fully_stop": false,
   "goal_evaluation": "Captured agent context for test.",
   "branch": {"initial_name": "wip/0001", "kind": "test", "slug": "capture-agent"},
   "commits": [],

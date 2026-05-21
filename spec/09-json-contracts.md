@@ -133,7 +133,7 @@ The runtime artifact includes the goal when one is provided. The agent applies t
 If the goal is fully satisfied after this iteration is integrated, set should_fully_stop to true. Otherwise set it to false and explain the remaining gap in goal_evaluation.
 ```
 
-When no goal is provided, the agent sets `should_fully_stop=true` only if it finds no useful next iteration under the instruction file. GitHub sleep is separate: the agent chooses it with `loop iteration close --skip-merge --sleep --should-stop false` when external Issue, PR, or comment updates are needed before more useful work can happen.
+When no CLI goal is provided, `should_fully_stop=true` is invalid regardless of instruction, Issue, PR, or comment text. GitHub sleep is separate: the agent chooses it with `loop iteration close --skip-merge --sleep --should-stop false` when external Issue, PR, or comment updates are needed before more useful work can happen.
 
 ## Validation Status
 

@@ -741,7 +741,7 @@ func allHelpCommands() []helpCommand {
 				helpFlag{Name: "--sleep", Description: "with --skip-merge and --should-stop false, wait for GitHub Issue/PR updates before the next iteration", Default: "false"},
 				helpFlag{Name: "--summary <text>", Description: "required with --merge"},
 				helpFlag{Name: "--reason <text>", Description: "required with --skip-merge"},
-				helpFlag{Name: "--should-stop <bool>", Description: "required stop decision"},
+				helpFlag{Name: "--should-stop <bool>", Description: "required stop decision; true only when a CLI --goal was provided"},
 				helpFlag{Name: "--goal-evaluation <text>", Description: "required explanation of the stop decision"},
 				helpFlag{Name: "--validation-status <status>", Description: "validation status"},
 				helpFlag{Name: "--validation-command <value>", Description: "repeatable command as JSON or name|command|exit_code|required"},

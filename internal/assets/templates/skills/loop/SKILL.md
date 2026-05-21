@@ -71,6 +71,7 @@ Then:
 - If commit history exists, inspect recent commits, usually with `git log --oneline -20`.
 - Inspect only the broad landmarks needed to plan: root files, package directories, README, nearest `AGENTS.md`, docs indexes, package scripts, tests, CI, and validation entry points.
 - Carry forward the goal, branch/mode, validation settings, recent changes, unfinished work, constraints, and assumptions.
+- If the runtime `goal` is empty, never use `--should-stop true`; that flag is only available after a CLI-provided goal has been satisfied.
 - Choose `skip-merge` only if required operational context is missing or unsafe to interpret and no safe independent work remains.
 
 ## Clarifications
@@ -215,7 +216,8 @@ loop iteration close --skip-merge --sleep --reason "Waiting for Issue context: <
 ```
 
 Add validation command or assumption flags only when needed. The CLI owns the JSON shape and branch metadata. Fix any CLI feedback and rerun.
+The `--should-stop true` examples are valid only when `loop iteration read runtime` shows a non-empty `goal`.
 
 Use `--merge` only when the selected slice is complete, committed, validated, and required merge steps are finished. Use `--skip-merge` when there is no safe or appropriate branch content to incorporate, including no-op evidence, abandoned implementation, unresolved CI, or waiting on Issue context. Add `--sleep` only when GitHub Issue, PR, or comment updates are needed before another useful iteration can run.
 
-Set `should_fully_stop` to `true` only when repository evidence shows the original instruction goal is complete.
+Set `should_fully_stop` to `true` only when the runtime contains a non-empty CLI goal and repository evidence shows that goal is complete. If the runtime `goal` is empty, always use `--should-stop false` regardless of instruction, Issue, PR, or comment text.

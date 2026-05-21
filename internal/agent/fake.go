@@ -119,6 +119,7 @@ func writeFakeResultHandoff(iterationDir, action string, args ...any) error {
 		validationStatus = "skipped"
 	}
 	sleepUntilGitHubUpdate := os.Getenv("LOOP_FAKE_AGENT_SLEEP") == "1"
+	hasGoal := strings.TrimSpace(os.Getenv("LOOP_RUN_GOAL")) != ""
 	commitList := make([]map[string]any, 0, len(args))
 	for _, arg := range args {
 		switch typed := arg.(type) {
@@ -135,7 +136,7 @@ func writeFakeResultHandoff(iterationDir, action string, args ...any) error {
 		"schema_version":    1,
 		"action":            action,
 		"summary_sentence":  "Run fake agent behavior",
-		"should_fully_stop": action != "merge" && !sleepUntilGitHubUpdate,
+		"should_fully_stop": action != "merge" && !sleepUntilGitHubUpdate && hasGoal,
 		"goal_evaluation":   "Fake agent produced a deterministic test result.",
 		"branch":            fakeBranchResult(action),
 		"commits":           commitList,

@@ -10,7 +10,7 @@
 4. Let the agent plan, edit, validate, and request commits for complete work.
 5. Read the agent terminal close JSON.
 6. Integrate a merge close or clean up a skip-merge close.
-7. Repeat until the agent reports `should_fully_stop=true`, the iteration limit is reached, or a terminal error is recorded. A skip-merge close may explicitly pause in GitHub sleep mode before the next iteration.
+7. Repeat until the agent reports `should_fully_stop=true` for a CLI-provided goal, the iteration limit is reached, or a terminal error is recorded. A skip-merge close may explicitly pause in GitHub sleep mode before the next iteration.
 
 ## Fully automated default
 

@@ -33,7 +33,7 @@ The Go implementation includes tests for:
 - Fully automated run contract violations.
 - Value-critical run resilience:
   - continuing from one merge iteration into the next until
-    `should_fully_stop=true`;
+    `should_fully_stop=true` for a CLI-provided goal;
   - failing missing or invalid close handoffs as hard contract errors;
   - cleaning up skipped iteration branches before continuing or returning;
   - not integrating branches when configured validation fails;

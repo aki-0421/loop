@@ -1889,6 +1889,9 @@ func validateResultHandoff(ctx context.Context, workDir string, paths *pathSet, 
 	if err := validateResultBranchContract(result, *paths); err != nil {
 		return nil, err
 	}
+	if err := validateResultGoalContract(result, *paths); err != nil {
+		return nil, err
+	}
 	return result, nil
 }
 
@@ -1928,6 +1931,16 @@ func validateResultBranchContract(result *validation.IterationResult, paths path
 	}
 	if result.Action == "merge" && paths.PullRequestMode && !prStateMerged(filepath.Dir(paths.Result)) {
 		return errors.New("merge close requires a merged PR; run `loop pr merge` before `loop iteration close --merge`")
+	}
+	return nil
+}
+
+func validateResultGoalContract(result *validation.IterationResult, paths pathSet) error {
+	if result == nil {
+		return errors.New("iteration close handoff is missing")
+	}
+	if strings.TrimSpace(paths.Goal) == "" && result.ShouldFullyStop {
+		return errors.New("should_fully_stop=true requires a CLI --goal")
 	}
 	return nil
 }

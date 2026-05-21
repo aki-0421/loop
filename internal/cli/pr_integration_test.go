@@ -1010,6 +1010,7 @@ func writeTestFakeResult(iterDir, action string, commit map[string]any, sleep ..
 	if len(sleep) > 0 {
 		sleepUntilGitHubUpdate = sleep[0]
 	}
+	hasGoal := strings.TrimSpace(os.Getenv("LOOP_RUN_GOAL")) != ""
 	commits := []map[string]any{}
 	if commit != nil {
 		commits = append(commits, commit)
@@ -1019,7 +1020,7 @@ func writeTestFakeResult(iterDir, action string, commit map[string]any, sleep ..
 		"schema_version":    1,
 		"action":            action,
 		"summary_sentence":  "Run fake agent behavior",
-		"should_fully_stop": action != "merge" && !sleepUntilGitHubUpdate,
+		"should_fully_stop": action != "merge" && !sleepUntilGitHubUpdate && hasGoal,
 		"goal_evaluation":   "Fake agent produced a deterministic test result.",
 		"branch":            branch,
 		"commits":           commits,

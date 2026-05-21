@@ -309,10 +309,39 @@ func TestIterationCloseCommandRejectsSleepStopTrue(t *testing.T) {
 	}
 }
 
+func TestIterationCloseCommandRejectsStopWithoutRunGoal(t *testing.T) {
+	repo := newCleanupRepo(t)
+	git(t, repo, "checkout", "-b", "wip/0001", "develop")
+	iterDir := filepath.Join(repo, ".loop", "runs", "run-1", "iterations", "0001")
+	writeRuntimeForResultTestWithGoal(t, iterDir, repo, "wip/0001", "wip/0001", "")
+
+	err := commandIteration(context.Background(), globals{}, []string{
+		"close",
+		"--iteration-dir", iterDir,
+		"--skip-merge",
+		"--reason", "A non-goal instruction path asked the agent to stop, but this run has no CLI goal.",
+		"--should-stop", "true",
+		"--goal-evaluation", "No CLI goal exists, so the agent must not stop the run.",
+		"--validation-status", "skipped",
+	})
+	if err == nil {
+		t.Fatal("expected --should-stop true without a goal to fail")
+	}
+	if !strings.Contains(err.Error(), "requires a CLI --goal") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 func writeRuntimeForResultTest(t *testing.T, iterDir, repo, initialBranch, currentBranch string) {
+	t.Helper()
+	writeRuntimeForResultTestWithGoal(t, iterDir, repo, initialBranch, currentBranch, "test goal")
+}
+
+func writeRuntimeForResultTestWithGoal(t *testing.T, iterDir, repo, initialBranch, currentBranch, goal string) {
 	t.Helper()
 	data, err := json.MarshalIndent(map[string]any{
 		"base_branch":    "develop",
+		"goal":           goal,
 		"initial_branch": initialBranch,
 		"current_branch": currentBranch,
 		"branch_renamed": initialBranch != "" && currentBranch != "" && initialBranch != currentBranch,
