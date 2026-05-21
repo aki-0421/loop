@@ -553,10 +553,10 @@ func ReplacePRMemory(globalDBPath, repo string, records []PRMemoryRecord, synced
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.Exec(`DELETE FROM pr_memory WHERE repo = ?`, repo); err != nil {
+	if _, err := tx.Exec(`DELETE FROM github_records WHERE repo = ? AND kind = ?`, repo, "pr"); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`DELETE FROM pr_memory_fts WHERE repo = ?`, repo); err != nil {
+	if _, err := tx.Exec(`DELETE FROM github_records_fts WHERE repo = ? AND kind = ?`, repo, "pr"); err != nil {
 		return err
 	}
 	for _, record := range records {
@@ -643,10 +643,10 @@ func RecentPRMemory(globalDBPath, repo string, limit int) ([]PRMemoryRecord, err
 	if err := ensureGlobal(db); err != nil {
 		return nil, err
 	}
-	query := `SELECT repo, number, url, state, title, body, updated_at, merged_at, fetched_at FROM pr_memory`
-	args := []any{}
+	query := `SELECT repo, number, url, state, title, body, updated_at, merged_at, fetched_at FROM github_records WHERE kind = ?`
+	args := []any{"pr"}
 	if repo != "" {
-		query += ` WHERE repo = ?`
+		query += ` AND repo = ?`
 		args = append(args, repo)
 	}
 	query += ` ORDER BY COALESCE(NULLIF(merged_at, ''), updated_at) DESC, number DESC`
@@ -686,9 +686,9 @@ func SearchPRMemory(globalDBPath string, opts PRMemorySearchOptions) ([]PRMemory
 	if err := ensureGlobal(db); err != nil {
 		return nil, err
 	}
-	sqlText := `SELECT repo, number, url, state, title, body, updated_at, merged_at, fetched_at, bm25(pr_memory_fts) AS rank
-FROM pr_memory_fts WHERE pr_memory_fts MATCH ?`
-	args := []any{query}
+	sqlText := `SELECT repo, number, url, state, title, body, updated_at, merged_at, fetched_at, bm25(github_records_fts) AS rank
+FROM github_records_fts WHERE github_records_fts MATCH ? AND kind = ?`
+	args := []any{query, "pr"}
 	if opts.Repo != "" {
 		sqlText += ` AND repo = ?`
 		args = append(args, opts.Repo)
@@ -726,10 +726,10 @@ func CountPRMemory(globalDBPath, repo string) (int, error) {
 	if err := ensureGlobal(db); err != nil {
 		return 0, err
 	}
-	query := `SELECT COUNT(*) FROM pr_memory`
-	args := []any{}
+	query := `SELECT COUNT(*) FROM github_records WHERE kind = ?`
+	args := []any{"pr"}
 	if repo != "" {
-		query += ` WHERE repo = ?`
+		query += ` AND repo = ?`
 		args = append(args, repo)
 	}
 	var count int
@@ -798,10 +798,10 @@ func ReplaceGitHubContext(globalDBPath, repo string, kinds []string, records []G
 	}
 	defer tx.Rollback()
 	for _, kind := range normalizeContextKinds(kinds) {
-		if _, err := tx.Exec(`DELETE FROM github_context WHERE repo = ? AND kind = ?`, repo, kind); err != nil {
+		if _, err := tx.Exec(`DELETE FROM github_records WHERE repo = ? AND kind = ?`, repo, kind); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(`DELETE FROM github_context_fts WHERE repo = ? AND kind = ?`, repo, kind); err != nil {
+		if _, err := tx.Exec(`DELETE FROM github_records_fts WHERE repo = ? AND kind = ?`, repo, kind); err != nil {
 			return err
 		}
 	}
@@ -867,10 +867,10 @@ func RecentGitHubContext(globalDBPath, repo string, limit int) ([]GitHubContextR
 	if err := ensureGlobal(db); err != nil {
 		return nil, err
 	}
-	query := `SELECT repo, kind, number, comment_id, url, state, title, body, author, labels, updated_at, closed_at, fetched_at FROM github_context`
-	args := []any{}
+	query := `SELECT repo, kind, number, comment_id, url, state, title, body, author, labels, updated_at, closed_at, fetched_at FROM github_records WHERE kind <> ?`
+	args := []any{"pr"}
 	if repo != "" {
-		query += ` WHERE repo = ?`
+		query += ` AND repo = ?`
 		args = append(args, repo)
 	}
 	query += ` ORDER BY updated_at DESC, number DESC, kind, comment_id`
@@ -891,6 +891,7 @@ func SearchGitHubContext(globalDBPath string, opts GitHubContextSearchOptions) (
 	if query == "" {
 		return nil, nil
 	}
+	opts.Kind = normalizeGitHubContextKind(opts.Kind)
 	db, err := openGlobal(globalDBPath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -902,9 +903,9 @@ func SearchGitHubContext(globalDBPath string, opts GitHubContextSearchOptions) (
 	if err := ensureGlobal(db); err != nil {
 		return nil, err
 	}
-	sqlText := `SELECT repo, kind, number, comment_id, url, state, title, body, author, labels, updated_at, closed_at, fetched_at, bm25(github_context_fts) AS rank
-FROM github_context_fts WHERE github_context_fts MATCH ?`
-	args := []any{query}
+	sqlText := `SELECT repo, kind, number, comment_id, url, state, title, body, author, labels, updated_at, closed_at, fetched_at, bm25(github_records_fts) AS rank
+FROM github_records_fts WHERE github_records_fts MATCH ? AND kind <> ?`
+	args := []any{query, "pr"}
 	if opts.Repo != "" {
 		sqlText += ` AND repo = ?`
 		args = append(args, opts.Repo)
@@ -935,6 +936,7 @@ FROM github_context_fts WHERE github_context_fts MATCH ?`
 }
 
 func CountGitHubContext(globalDBPath, repo, kind string) (int, error) {
+	kind = normalizeGitHubContextKind(kind)
 	db, err := openGlobal(globalDBPath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -946,9 +948,13 @@ func CountGitHubContext(globalDBPath, repo, kind string) (int, error) {
 	if err := ensureGlobal(db); err != nil {
 		return 0, err
 	}
-	query := `SELECT COUNT(*) FROM github_context`
+	query := `SELECT COUNT(*) FROM github_records`
 	args := []any{}
 	var clauses []string
+	if kind == "" {
+		clauses = append(clauses, "kind <> ?")
+		args = append(args, "pr")
+	}
 	if repo != "" {
 		clauses = append(clauses, "repo = ?")
 		args = append(args, repo)
@@ -1018,7 +1024,7 @@ func OpenBlockingGitHubIssues(globalDBPath, repo string, numbers []int) ([]GitHu
 		return nil, nil
 	}
 	query := `SELECT repo, kind, number, comment_id, url, state, title, body, author, labels, updated_at, closed_at, fetched_at
-FROM github_context WHERE repo = ? AND kind = ? AND state = ? AND number IN (` + strings.Join(placeholders, ",") + `)`
+FROM github_records WHERE repo = ? AND kind = ? AND state = ? AND number IN (` + strings.Join(placeholders, ",") + `)`
 	rows, err := db.Query(query, args...)
 	if err != nil {
 		return nil, err
@@ -1054,26 +1060,29 @@ func upsertPRMemoryTx(tx *sql.Tx, record PRMemoryRecord) error {
 	if record.FetchedAt == "" {
 		record.FetchedAt = now()
 	}
-	if _, err := tx.Exec(`INSERT INTO pr_memory(repo, number, url, state, title, body, updated_at, merged_at, fetched_at)
-VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
-ON CONFLICT(repo, number) DO UPDATE SET
+	if _, err := tx.Exec(`INSERT INTO github_records(repo, kind, number, comment_id, url, state, title, body, author, labels, updated_at, closed_at, merged_at, fetched_at)
+VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(repo, kind, number, comment_id) DO UPDATE SET
 	url = excluded.url,
 	state = excluded.state,
 	title = excluded.title,
 	body = excluded.body,
+	author = excluded.author,
+	labels = excluded.labels,
 	updated_at = excluded.updated_at,
+	closed_at = excluded.closed_at,
 	merged_at = excluded.merged_at,
 	fetched_at = excluded.fetched_at`,
-		record.Repo, record.Number, record.URL, record.State, record.Title, record.Body, record.UpdatedAt, record.MergedAt, record.FetchedAt); err != nil {
+		record.Repo, "pr", record.Number, "", record.URL, record.State, record.Title, record.Body, "", "", record.UpdatedAt, "", record.MergedAt, record.FetchedAt); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`DELETE FROM pr_memory_fts WHERE repo = ? AND number = ?`, record.Repo, record.Number); err != nil {
+	if _, err := tx.Exec(`DELETE FROM github_records_fts WHERE repo = ? AND kind = ? AND number = ? AND comment_id = ?`, record.Repo, "pr", record.Number, ""); err != nil {
 		return err
 	}
 	if strings.TrimSpace(record.Title+"\n"+record.Body) != "" {
-		if _, err := tx.Exec(`INSERT INTO pr_memory_fts(repo, number, url, state, title, body, updated_at, merged_at, fetched_at)
-VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			record.Repo, record.Number, record.URL, record.State, record.Title, record.Body, record.UpdatedAt, record.MergedAt, record.FetchedAt); err != nil {
+		if _, err := tx.Exec(`INSERT INTO github_records_fts(repo, kind, number, comment_id, url, state, title, body, author, labels, updated_at, closed_at, merged_at, fetched_at)
+VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			record.Repo, "pr", record.Number, "", record.URL, record.State, record.Title, record.Body, "", "", record.UpdatedAt, "", record.MergedAt, record.FetchedAt); err != nil {
 			return err
 		}
 	}
@@ -1093,10 +1102,10 @@ func deletePRMemory(db *sql.DB, repo string, number int) error {
 }
 
 func deletePRMemoryTx(tx *sql.Tx, repo string, number int) error {
-	if _, err := tx.Exec(`DELETE FROM pr_memory WHERE repo = ? AND number = ?`, repo, number); err != nil {
+	if _, err := tx.Exec(`DELETE FROM github_records WHERE repo = ? AND kind = ? AND number = ? AND comment_id = ?`, repo, "pr", number, ""); err != nil {
 		return err
 	}
-	_, err := tx.Exec(`DELETE FROM pr_memory_fts WHERE repo = ? AND number = ?`, repo, number)
+	_, err := tx.Exec(`DELETE FROM github_records_fts WHERE repo = ? AND kind = ? AND number = ? AND comment_id = ?`, repo, "pr", number, "")
 	return err
 }
 
@@ -1121,8 +1130,8 @@ func upsertGitHubContextTx(tx *sql.Tx, record GitHubContextRecord) error {
 	if record.CommentID == "" {
 		record.CommentID = ""
 	}
-	if _, err := tx.Exec(`INSERT INTO github_context(repo, kind, number, comment_id, url, state, title, body, author, labels, updated_at, closed_at, fetched_at)
-VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	if _, err := tx.Exec(`INSERT INTO github_records(repo, kind, number, comment_id, url, state, title, body, author, labels, updated_at, closed_at, merged_at, fetched_at)
+VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(repo, kind, number, comment_id) DO UPDATE SET
 	url = excluded.url,
 	state = excluded.state,
@@ -1132,18 +1141,19 @@ ON CONFLICT(repo, kind, number, comment_id) DO UPDATE SET
 	labels = excluded.labels,
 	updated_at = excluded.updated_at,
 	closed_at = excluded.closed_at,
+	merged_at = excluded.merged_at,
 	fetched_at = excluded.fetched_at`,
-		record.Repo, record.Kind, record.Number, record.CommentID, record.URL, record.State, record.Title, record.Body, record.Author, record.Labels, record.UpdatedAt, record.ClosedAt, record.FetchedAt); err != nil {
+		record.Repo, record.Kind, record.Number, record.CommentID, record.URL, record.State, record.Title, record.Body, record.Author, record.Labels, record.UpdatedAt, record.ClosedAt, "", record.FetchedAt); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`DELETE FROM github_context_fts WHERE repo = ? AND kind = ? AND number = ? AND comment_id = ?`,
+	if _, err := tx.Exec(`DELETE FROM github_records_fts WHERE repo = ? AND kind = ? AND number = ? AND comment_id = ?`,
 		record.Repo, record.Kind, record.Number, record.CommentID); err != nil {
 		return err
 	}
 	if strings.TrimSpace(record.Title+"\n"+record.Body) != "" {
-		if _, err := tx.Exec(`INSERT INTO github_context_fts(repo, kind, number, comment_id, url, state, title, body, author, labels, updated_at, closed_at, fetched_at)
-VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			record.Repo, record.Kind, record.Number, record.CommentID, record.URL, record.State, record.Title, record.Body, record.Author, record.Labels, record.UpdatedAt, record.ClosedAt, record.FetchedAt); err != nil {
+		if _, err := tx.Exec(`INSERT INTO github_records_fts(repo, kind, number, comment_id, url, state, title, body, author, labels, updated_at, closed_at, merged_at, fetched_at)
+VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			record.Repo, record.Kind, record.Number, record.CommentID, record.URL, record.State, record.Title, record.Body, record.Author, record.Labels, record.UpdatedAt, record.ClosedAt, "", record.FetchedAt); err != nil {
 			return err
 		}
 	}
@@ -1238,10 +1248,8 @@ func ensureGlobal(db *sql.DB) error {
 		`CREATE VIRTUAL TABLE IF NOT EXISTS artifact_index_fts USING fts5(run_id UNINDEXED, iteration_id UNINDEXED, artifact UNINDEXED, content, tokenize = 'unicode61')`,
 		`CREATE TABLE IF NOT EXISTS iteration_results(run_id TEXT NOT NULL, iteration_id TEXT NOT NULL, result_json TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY(run_id, iteration_id))`,
 		`CREATE TABLE IF NOT EXISTS global_metadata(key TEXT PRIMARY KEY, value TEXT NOT NULL)`,
-		`CREATE TABLE IF NOT EXISTS pr_memory(repo TEXT NOT NULL, number INTEGER NOT NULL, url TEXT NOT NULL, state TEXT NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL, updated_at TEXT NOT NULL, merged_at TEXT NOT NULL, fetched_at TEXT NOT NULL, PRIMARY KEY(repo, number))`,
-		`CREATE VIRTUAL TABLE IF NOT EXISTS pr_memory_fts USING fts5(repo UNINDEXED, number UNINDEXED, url UNINDEXED, state UNINDEXED, title, body, updated_at UNINDEXED, merged_at UNINDEXED, fetched_at UNINDEXED, tokenize = 'unicode61')`,
-		`CREATE TABLE IF NOT EXISTS github_context(repo TEXT NOT NULL, kind TEXT NOT NULL, number INTEGER NOT NULL, comment_id TEXT NOT NULL DEFAULT '', url TEXT NOT NULL, state TEXT NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL, author TEXT NOT NULL, labels TEXT NOT NULL, updated_at TEXT NOT NULL, closed_at TEXT NOT NULL, fetched_at TEXT NOT NULL, PRIMARY KEY(repo, kind, number, comment_id))`,
-		`CREATE VIRTUAL TABLE IF NOT EXISTS github_context_fts USING fts5(repo UNINDEXED, kind UNINDEXED, number UNINDEXED, comment_id UNINDEXED, url UNINDEXED, state UNINDEXED, title, body, author UNINDEXED, labels UNINDEXED, updated_at UNINDEXED, closed_at UNINDEXED, fetched_at UNINDEXED, tokenize = 'unicode61')`,
+		`CREATE TABLE IF NOT EXISTS github_records(repo TEXT NOT NULL, kind TEXT NOT NULL, number INTEGER NOT NULL, comment_id TEXT NOT NULL DEFAULT '', url TEXT NOT NULL, state TEXT NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL, author TEXT NOT NULL, labels TEXT NOT NULL, updated_at TEXT NOT NULL, closed_at TEXT NOT NULL, merged_at TEXT NOT NULL, fetched_at TEXT NOT NULL, PRIMARY KEY(repo, kind, number, comment_id))`,
+		`CREATE VIRTUAL TABLE IF NOT EXISTS github_records_fts USING fts5(repo UNINDEXED, kind UNINDEXED, number UNINDEXED, comment_id UNINDEXED, url UNINDEXED, state UNINDEXED, title, body, author UNINDEXED, labels UNINDEXED, updated_at UNINDEXED, closed_at UNINDEXED, merged_at UNINDEXED, fetched_at UNINDEXED, tokenize = 'unicode61')`,
 	}
 	for _, stmt := range stmts {
 		if _, err := db.Exec(stmt); err != nil {

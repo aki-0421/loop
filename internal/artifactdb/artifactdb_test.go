@@ -178,3 +178,50 @@ func TestGitHubContextUpsertReplaceRecentSearchAndBlockingIssues(t *testing.T) {
 		t.Fatalf("last sync = %q", lastSync)
 	}
 }
+
+func TestGitHubMemoryUsesUnifiedRecordsTable(t *testing.T) {
+	root := t.TempDir()
+	dbPath := filepath.Join(root, ".loop", GlobalDBName)
+	if err := ReplacePRMemory(dbPath, "acme/app", []PRMemoryRecord{
+		{Repo: "acme/app", Number: 1, URL: "https://github.com/acme/app/pull/1", State: "open", Title: "Unify records", Body: "Pull request body.", UpdatedAt: "2026-05-20T00:00:00Z", FetchedAt: "2026-05-20T00:00:00Z"},
+	}, "2026-05-20T00:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+	if err := ReplaceGitHubContext(dbPath, "acme/app", []string{"issue"}, []GitHubContextRecord{
+		{Repo: "acme/app", Kind: "issue", Number: 2, URL: "https://github.com/acme/app/issues/2", State: "open", Title: "Decide retention", Body: "Issue body.", UpdatedAt: "2026-05-20T00:00:00Z", FetchedAt: "2026-05-20T00:00:00Z"},
+	}, "2026-05-20T00:00:00Z", "github_context.issues.last_sync.acme/app"); err != nil {
+		t.Fatal(err)
+	}
+
+	db, err := openGlobal(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	tables := map[string]bool{}
+	rows, err := db.Query(`SELECT name FROM sqlite_master WHERE type IN ('table', 'virtual table')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			t.Fatal(err)
+		}
+		tables[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"github_records", "github_records_fts"} {
+		if !tables[name] {
+			t.Fatalf("%s table was not created; tables=%v", name, tables)
+		}
+	}
+	for _, name := range []string{"pr_memory", "pr_memory_fts", "github_context", "github_context_fts"} {
+		if tables[name] {
+			t.Fatalf("legacy table %s should not be created; tables=%v", name, tables)
+		}
+	}
+}
