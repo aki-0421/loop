@@ -26,8 +26,6 @@ skills:
       path: .agents/skills
 
 git:
-  worktree: true
-  cleanPolicy: require_clean_before_start
   commits:
     requireAgentCommits: true
     allowCliFallbackCommit: false

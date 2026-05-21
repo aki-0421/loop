@@ -85,9 +85,8 @@ Sync modes:
 | Key | Type | Behavior |
 | --- | --- | --- |
 | `baseBranch` | string | Optional pinned integration target. When omitted, `loop run` uses the branch that was checked out when the command started. |
-| `worktree` | boolean | Run each iteration in a Git worktree when true. |
 
-Branch naming is not configurable. The CLI creates temporary iteration branches as `wip/<iteration>`, accepts only its fixed branch kind preset for `loop branch rename`, slugifies the branch subject, and appends `-<iteration>` only when needed to avoid collisions.
+Branch naming is not configurable. The CLI creates each iteration in a Git worktree on a temporary branch named `wip/<iteration>`, accepts only its fixed branch kind preset for `loop branch rename`, slugifies the branch subject, and appends `-<iteration>` only when needed to avoid collisions.
 
 ## `git.commits`
 
@@ -127,7 +126,7 @@ If no checks are reported after the discovery timeout, the check wait is treated
 
 ## `validation`
 
-Configured validation commands run after the agent phase and before integration. They run from the iteration work directory, which is the iteration worktree when `git.worktree=true`.
+Configured validation commands run after the agent phase and before integration. They run from the iteration worktree.
 
 Each command has:
 

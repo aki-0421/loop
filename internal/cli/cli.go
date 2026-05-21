@@ -256,7 +256,6 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 	maxIterations := fs.Int("max-iterations", 0, "maximum iterations, 0 for unlimited")
 	prFlag := fs.Bool("pr", false, "use pull request integration")
 	base := fs.String("base", "", "base branch")
-	worktreeFlag := fs.Bool("worktree", false, "run each iteration in a Git worktree")
 	resumeID := fs.String("resume", "", "resume run id")
 	fromIteration := fs.Int("from-iteration", 0, "resume from iteration")
 	keepBranches := fs.String("keep-branches", "", "branch cleanup mode")
@@ -294,10 +293,6 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 		v := true
 		overrides.PRMode = &v
 	}
-	if *worktreeFlag {
-		v := true
-		overrides.Worktree = &v
-	}
 	cfg, err := config.Load(config.LoadOptions{CWD: root, ConfigPath: g.ConfigPath, Overrides: overrides})
 	if err != nil {
 		return codedError{3, err}
@@ -311,7 +306,7 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 		cfg.Git.BaseBranch = startBranch
 	}
 	mainBranch, _ := runner.MainBranch(ctx)
-	if !*dryRun && cfg.Git.CleanPolicy == "require_clean_before_start" {
+	if !*dryRun {
 		clean, err := runner.CheckClean(ctx, gitx.CleanOptions{IgnoreRuntime: true})
 		if err != nil {
 			return codedError{1, err}
@@ -376,27 +371,19 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 		}
 		defer cleanup.OnCancel(ctx, statePath, &state)
 		if !*dryRun {
-			if cfg.Git.Worktree {
-				worktreePath = filepath.Join(root, ".loop", "worktrees", runID, iterationID)
-				cleanup.WorktreePath = worktreePath
-				cleanup.Active = true
-				if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
-					return codedError{1, err}
-				}
-				if _, err := runner.Run(ctx, "worktree", "add", "-b", initialBranch, worktreePath, cfg.Git.BaseBranch); err != nil {
-					return codedError{1, err}
-				}
-				renderer.Stage(runstate.StageBranchCreated, "created worktree "+rel(root, worktreePath))
-				workDir = worktreePath
-				branchRunner = gitx.Runner{Dir: workDir}
-				cleanup.WorkDir = workDir
-			} else if err := runner.CreateBranch(ctx, initialBranch, cfg.Git.BaseBranch); err != nil {
-				cleanup.Active = true
+			worktreePath = filepath.Join(root, ".loop", "worktrees", runID, iterationID)
+			cleanup.WorktreePath = worktreePath
+			cleanup.Active = true
+			if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
 				return codedError{1, err}
-			} else {
-				cleanup.Active = true
-				renderer.Stage(runstate.StageBranchCreated, "created branch "+initialBranch)
 			}
+			if _, err := runner.Run(ctx, "worktree", "add", "-b", initialBranch, worktreePath, cfg.Git.BaseBranch); err != nil {
+				return codedError{1, err}
+			}
+			renderer.Stage(runstate.StageBranchCreated, "created worktree "+rel(root, worktreePath))
+			workDir = worktreePath
+			branchRunner = gitx.Runner{Dir: workDir}
+			cleanup.WorkDir = workDir
 		}
 		paths := promptPaths(iterDir)
 		paths.Goal = *goal
@@ -1147,7 +1134,11 @@ func commandIssueAsk(ctx context.Context, g globals, args []string) error {
 	if err != nil {
 		return codedError{1, err}
 	}
-	cfg, err := config.Load(config.LoadOptions{CWD: root, ConfigPath: g.ConfigPath, Overrides: config.Overrides{Agent: g.Agent, NoColor: g.NoColor}})
+	storageRoot, err := loopStorageRoot(ctx)
+	if err != nil {
+		return codedError{1, err}
+	}
+	cfg, err := config.Load(config.LoadOptions{CWD: storageRoot, ConfigPath: g.ConfigPath, Overrides: config.Overrides{Agent: g.Agent, NoColor: g.NoColor}})
 	if err != nil {
 		return codedError{3, err}
 	}
@@ -1168,7 +1159,7 @@ func commandIssueAsk(ctx context.Context, g globals, args []string) error {
 	}
 	record, err := memory.CreateIssueQuestion(ctx, memory.IssueQuestionOptions{
 		WorkDir:     root,
-		RunsDir:     filepath.Join(root, cfg.Logs.Dir),
+		RunsDir:     filepath.Join(storageRoot, cfg.Logs.Dir),
 		Title:       *title,
 		Body:        *body,
 		Blocking:    *blocking,
@@ -1223,7 +1214,11 @@ func commandIssueReport(ctx context.Context, g globals, args []string) error {
 	if err != nil {
 		return codedError{1, err}
 	}
-	cfg, err := config.Load(config.LoadOptions{CWD: root, ConfigPath: g.ConfigPath, Overrides: config.Overrides{Agent: g.Agent, NoColor: g.NoColor}})
+	storageRoot, err := loopStorageRoot(ctx)
+	if err != nil {
+		return codedError{1, err}
+	}
+	cfg, err := config.Load(config.LoadOptions{CWD: storageRoot, ConfigPath: g.ConfigPath, Overrides: config.Overrides{Agent: g.Agent, NoColor: g.NoColor}})
 	if err != nil {
 		return codedError{3, err}
 	}
@@ -1244,7 +1239,7 @@ func commandIssueReport(ctx context.Context, g globals, args []string) error {
 	}
 	record, err := memory.CreateIssueReport(ctx, memory.IssueReportOptions{
 		WorkDir:     root,
-		RunsDir:     filepath.Join(root, cfg.Logs.Dir),
+		RunsDir:     filepath.Join(storageRoot, cfg.Logs.Dir),
 		Title:       *title,
 		Body:        *body,
 		Kind:        *kind,

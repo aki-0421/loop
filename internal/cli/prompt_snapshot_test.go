@@ -136,7 +136,6 @@ run:
 
 git:
   baseBranch: develop
-  worktree: false
 `, yamlSingleQuote(agentCommand), yamlSingleQuote(captureDir)))
 	git(t, repo, "add", "secret/private-task.md", ".loop/config.yaml")
 	git(t, repo, "commit", "-m", "T: add capture fixture")

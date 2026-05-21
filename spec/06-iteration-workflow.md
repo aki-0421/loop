@@ -81,7 +81,7 @@ refactor/split-auth-service
 
 ## Worktree execution
 
-When `git.worktree=true`, each iteration runs in a separate worktree:
+Each iteration runs in a separate worktree:
 
 ```text
 .loop/worktrees/<run-id>/0001/
@@ -162,8 +162,7 @@ If `should_fully_stop=false`, the CLI starts the next iteration until the iterat
 
 If the user cancels with Ctrl+C or the process receives SIGTERM, `loop` cancels the running agent and cleans up work that has not already been integrated:
 
-- worktree execution removes the iteration worktree and deletes its local branch;
-- main worktree execution resets and cleans the temporary branch, checks out the base branch, and deletes the temporary branch;
+- the iteration worktree is removed and its local branch is deleted;
 - local merge integration reset happens only when the squash merge has not produced a new base commit.
 
 Already integrated or merged work is preserved.

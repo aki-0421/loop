@@ -456,7 +456,6 @@ func allHelpCommands() []helpCommand {
 				{Name: "--max-iterations <n>", Description: "maximum iterations; 0 means unlimited", Default: "config value"},
 				{Name: "--pr", Description: "use pull request integration", Default: "config value"},
 				{Name: "--base <branch>", Description: "base branch for integration", Default: "current branch at run start"},
-				{Name: "--worktree", Description: "run each iteration in a Git worktree", Default: "config value"},
 				{Name: "--resume <run-id>", Description: "resume an existing run"},
 				{Name: "--from-iteration <n>", Description: "resume from a specific iteration"},
 				{Name: "--keep-branches <mode>", Description: "branch cleanup mode", Default: "config value"},

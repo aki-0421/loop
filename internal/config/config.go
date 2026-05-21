@@ -66,8 +66,6 @@ type SkillTarget struct {
 
 type GitConfig struct {
 	BaseBranch  string            `yaml:"baseBranch" json:"baseBranch"`
-	Worktree    bool              `yaml:"worktree" json:"worktree"`
-	CleanPolicy string            `yaml:"cleanPolicy" json:"cleanPolicy"`
 	Commits     CommitConfig      `yaml:"commits" json:"commits"`
 	Integration IntegrationConfig `yaml:"integration" json:"integration"`
 }
@@ -139,7 +137,6 @@ type Overrides struct {
 	MaxIterations *int
 	BaseBranch    string
 	PRMode        *bool
-	Worktree      *bool
 	NoColor       bool
 }
 
@@ -431,9 +428,6 @@ func applyOverrides(m map[string]any, o Overrides) {
 			mode = "pr"
 		}
 		setPath(m, mode, "git", "integration", "mode")
-	}
-	if o.Worktree != nil {
-		setPath(m, *o.Worktree, "git", "worktree")
 	}
 }
 
