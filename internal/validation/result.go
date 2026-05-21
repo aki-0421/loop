@@ -52,8 +52,6 @@ type ValidationCommandLog struct {
 type ArtifactResult struct {
 	Plan    string `json:"plan,omitempty"`
 	Todo    string `json:"todo,omitempty"`
-	Summary string `json:"summary,omitempty"`
-	Worklog string `json:"worklog,omitempty"`
 	PRTitle string `json:"pr_title,omitempty"`
 	PRBody  string `json:"pr_body,omitempty"`
 }
@@ -143,8 +141,6 @@ func oneOf(value string, allowed ...string) bool {
 func normalizeArtifactNames(artifacts *ArtifactResult) {
 	artifacts.Plan = logicalArtifactName(artifacts.Plan)
 	artifacts.Todo = logicalArtifactName(artifacts.Todo)
-	artifacts.Summary = logicalArtifactName(artifacts.Summary)
-	artifacts.Worklog = logicalArtifactName(artifacts.Worklog)
 	artifacts.PRTitle = logicalArtifactName(artifacts.PRTitle)
 	artifacts.PRBody = logicalArtifactName(artifacts.PRBody)
 }
@@ -155,10 +151,6 @@ func logicalArtifactName(value string) string {
 		return "plan"
 	case "todo.md":
 		return "todo"
-	case "summary.md":
-		return "summary"
-	case "worklog.md":
-		return "worklog"
 	case "pr-title.txt":
 		return "pr-title"
 	case "pr-body.md":

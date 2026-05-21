@@ -58,7 +58,7 @@ func TestAgentHelpCommandShowsCompactList(t *testing.T) {
 		"cmd:loop issue report",
 		"cmd:loop memory search",
 		"artifacts:",
-		"plan:rw:db",
+		"plan:rw:file",
 		"detail:loop help agent <command...>",
 	} {
 		if !strings.Contains(out, want) {
@@ -200,8 +200,8 @@ func TestAgentHelpCommandShowsIterationArtifactsFromRegistry(t *testing.T) {
 	}
 	for _, want := range []string{
 		"artifacts:",
-		"runtime:r:db",
-		"plan:rw:db",
+		"runtime:r:file",
+		"plan:rw:file",
 		"pr-template:r:repo",
 	} {
 		if !strings.Contains(out, want) {

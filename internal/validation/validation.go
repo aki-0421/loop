@@ -41,7 +41,7 @@ func Run(ctx context.Context, cwd, iterationDir string, commands []Command) (Res
 			name = command.Run
 		}
 		outputKey := sanitizeName(name)
-		outputPath := "validation:" + outputKey
+		outputPath := "validation-output-" + outputKey + ".log"
 		if err := artifactdb.WriteValidationOutput(iterationDir, outputKey, string(output)); err != nil {
 			return out, err
 		}

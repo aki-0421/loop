@@ -13,7 +13,6 @@
       iterations/
         0001/
           effective-config.yaml
-          iteration.db
           prompt.md
           agent-events.jsonl
           errors.log        # only when an error occurs
@@ -53,20 +52,26 @@ loop.db
 
 ## Runtime artifacts
 
-Every iteration writes structured runtime artifacts into its local SQLite DB, `.loop/runs/<run-id>/iterations/<id>/iteration.db`. These artifacts explain the current run and are not long-term memory.
+Every active iteration writes disposable runtime artifacts as files in a Go temp directory. These artifacts explain the current run and are not long-term memory.
 
 - `runtime`: JSON runtime context.
 - `plan`: intended work.
 - `todo`: execution checklist.
-- `worklog`: notable commands, decisions, and issues.
 - `validation`: validation commands and results.
-- `summary`: concise iteration summary for runtime audit and result review.
-- `result`: JSON iteration result.
 - `pr-title` and `pr-body`: pull request text.
+
+The durable iteration directory stores audit and replay files plus PR lifecycle diagnostics:
+
+- `prompt`: instruction snapshot for the iteration.
+- `effective-config`: effective configuration snapshot.
+- `agent-events`: structured audit events.
+- `errors`: process, result, validation, or sync warnings.
 - `pr-state`, `pr-checks`, and `pr-check-log`: pull request lifecycle state and check diagnostics written by `loop pr`.
 - `github-updates`: newly observed GitHub Issue, PR, or comment diffs for an iteration boundary or sleep wake cycle.
 
-Agents should read and write these artifacts through `loop iteration` commands so path resolution and artifact boundaries stay in the CLI. `plan` and `todo` have dedicated `loop iteration plan` and `loop iteration todo` commands; other writable artifacts use `loop iteration write` or `loop iteration append`.
+Agents should read and write these artifacts through `loop iteration` commands so path resolution and artifact boundaries stay in the CLI. `plan` and `todo` have dedicated `loop iteration plan` and `loop iteration todo` commands; other writable artifacts use `loop iteration write` or `loop iteration append`. The iteration result is a master-DB handoff row written by `loop iteration result --write`.
+
+After a completed or no-change iteration reaches its terminal action, the active temp directory is removed. `prompt.md`, `effective-config.yaml`, `agent-events.jsonl`, `errors.log`, PR lifecycle diagnostics, GitHub update diffs, and run state remain for audit and replay.
 
 ## GitHub context memory
 
@@ -95,46 +100,22 @@ loop issue report --title <text> --body <text> [--kind <kind>] [--blocking]
 
 The command creates and applies `loop:question`, and also `loop:blocking` when `--blocking` is supplied. It embeds loop run and iteration metadata in the Issue body and stores only the GitHub Issue reference in normal runtime artifacts.
 
-`loop issue report` records agent capability gaps as improvement proposals. It creates and applies `loop:agent-gap` and `loop:proposal`, plus `loop:blocking` when `--blocking` is supplied. Agents use it when missing tools, docs, guardrails, observability, environment support, or workflow support made the current run less effective. Issue bodies should be GitHub-flavored Markdown. Reports should include evidence, impact, and a proposed harness or repository change.
+`loop issue report` records concrete repository or harness improvement proposals. It creates and applies `loop:proposal`, plus `loop:blocking` when `--blocking` is supplied. Issue bodies should be GitHub-flavored Markdown and include evidence, impact, and a proposed repository or harness change. Unsupported agent capability findings are rediscovered each iteration and are not persisted as Issues.
 
 After asking a question, agents continue TODOs that are unrelated to that clarification. They write a `blocked` result only when no safe independent work remains. When a blocked result references an open `loop:blocking` Issue, `loop run` enters in-memory sleep mode instead of adding a new result status. Sleep mode does not start a new iteration; it displays that it is waiting for GitHub Issue/PR updates, polls every five minutes for Issue/PR comment or closure diffs, writes `github-updates` when a diff appears, and relaunches the agent in the same iteration to decide whether work can proceed. If the update is unrelated, the agent may return `blocked` again and the CLI resumes sleep.
 
-## Summary format
+## Completed Context
 
-The `summary` artifact uses this format:
-
-```markdown
-# Iteration 0001 Summary
-
-- Status: completed
-- Branch: feat/add-password-reset-tests
-- Squash summary: Add password reset validation tests
-- Goal stop: false
-
-## Completed
-
-- Added password reset validation coverage.
-- Updated test fixtures for expired tokens.
-
-## Validation
-
-- `make test`: passed
-
-## Follow-up Context
-
-- Token expiration helper may need broader cleanup in a later iteration.
-```
+Completed implementation context is durable in the pull request body. The local iteration directory does not hold disposable active work files; those live in the active Go temp directory while the iteration is running. The iteration directory does not keep a separate summary artifact after completion.
 
 ## Search index
 
-`.loop/loop.db` stores searchable GitHub PR records, GitHub context records, and FTS5 indexes:
+`.loop/loop.db` stores searchable GitHub records and FTS5 indexes:
 
 ```text
 global_metadata(key, value)
-pr_memory(repo, number, url, state, title, body, updated_at, merged_at, fetched_at)
-pr_memory_fts(repo, number, url, state, title, body, updated_at, merged_at, fetched_at)
-github_context(repo, kind, number, comment_id, url, state, title, body, author, labels, updated_at, closed_at, fetched_at)
-github_context_fts(repo, kind, number, comment_id, url, state, title, body, author, labels, updated_at, closed_at, fetched_at)
+github_records(repo, kind, number, comment_id, url, state, title, body, author, labels, updated_at, closed_at, merged_at, fetched_at)
+github_records_fts(repo, kind, number, comment_id, url, state, title, body, author, labels, updated_at, closed_at, merged_at, fetched_at)
 ```
 
 Search uses SQLite FTS5 ranking and may be filtered by GitHub repository.

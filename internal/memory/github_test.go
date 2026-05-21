@@ -136,7 +136,7 @@ func TestCreateIssueReportEnsuresLabelsAndStoresProposal(t *testing.T) {
 		WorkDir:     repo,
 		RunsDir:     runsDir,
 		Title:       "Report missing browser validation harness",
-		Body:        "The agent could not verify the UI path because no browser harness exists.",
+		Body:        "The repository has no browser validation harness for UI paths.",
 		Kind:        "tool",
 		Blocking:    true,
 		RunID:       "run-1",
@@ -146,7 +146,7 @@ func TestCreateIssueReportEnsuresLabelsAndStoresProposal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create report issue: %v", err)
 	}
-	if record.Number != 13 || record.Kind != "issue" || !strings.Contains(record.Labels, LabelAgentGap) || !strings.Contains(record.Labels, LabelProposal) {
+	if record.Number != 13 || record.Kind != "issue" || strings.Contains(record.Labels, "loop:agent-gap") || !strings.Contains(record.Labels, LabelProposal) {
 		t.Fatalf("record = %+v, want proposal issue #13", record)
 	}
 	hits, err := artifactdb.SearchGitHubContext(artifactdb.GlobalDBPathFromRunsPath(runsDir), artifactdb.GitHubContextSearchOptions{Query: "browser harness", Repo: "acme/app", Limit: 10})
@@ -157,7 +157,7 @@ func TestCreateIssueReportEnsuresLabelsAndStoresProposal(t *testing.T) {
 		t.Fatalf("stored report search hits = %+v", hits)
 	}
 	log := readFileForMemoryTest(t, logPath)
-	if strings.Count(log, "createLabel") != 3 || !strings.Contains(log, "kind: tool") || !strings.Contains(log, "loop:agent-gap") || !strings.Contains(log, "loop:proposal") {
+	if strings.Count(log, "createLabel") != 2 || !strings.Contains(log, "kind: tool") || strings.Contains(log, "loop:agent-gap") || !strings.Contains(log, "loop:proposal") {
 		t.Fatalf("report issue did not ensure labels and metadata:\n%s", log)
 	}
 }
@@ -266,14 +266,10 @@ cat <<'JSON'
 JSON
 exit 0
 fi
-cat <<'JSON'
-{"data":{"createLabel":{"label":{"id":"agent-gap-label","name":"loop:agent-gap"}},"rateLimit":{"remaining":10,"resetAt":"2026-05-20T02:00:00Z","cost":1}}}
-JSON
-exit 0
 fi
 if echo "$args" | grep -q 'createIssue'; then
 cat <<'JSON'
-{"data":{"createIssue":{"issue":{"__typename":"Issue","number":13,"url":"https://github.com/acme/app/issues/13","state":"OPEN","title":"Report missing browser validation harness","body":"The agent could not verify the UI path because no browser harness exists.","updatedAt":"2026-05-20T00:00:00Z","closedAt":null,"author":{"login":"bot"},"labels":{"nodes":[{"name":"loop:agent-gap"},{"name":"loop:proposal"},{"name":"loop:blocking"}]},"repository":{"nameWithOwner":"acme/app"}}},"rateLimit":{"remaining":10,"resetAt":"2026-05-20T02:00:00Z","cost":1}}}
+{"data":{"createIssue":{"issue":{"__typename":"Issue","number":13,"url":"https://github.com/acme/app/issues/13","state":"OPEN","title":"Report missing browser validation harness","body":"The repository has no browser validation harness for UI paths.","updatedAt":"2026-05-20T00:00:00Z","closedAt":null,"author":{"login":"bot"},"labels":{"nodes":[{"name":"loop:proposal"},{"name":"loop:blocking"}]},"repository":{"nameWithOwner":"acme/app"}}},"rateLimit":{"remaining":10,"resetAt":"2026-05-20T02:00:00Z","cost":1}}}
 JSON
 exit 0
 fi

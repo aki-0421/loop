@@ -17,9 +17,7 @@ type Paths struct {
 	Prompt       string
 	Plan         string
 	Todo         string
-	Worklog      string
 	Validation   string
-	Summary      string
 	Result       string
 	EventLog     string
 	StdoutLog    string

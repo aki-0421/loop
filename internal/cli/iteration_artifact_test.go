@@ -17,23 +17,23 @@ func TestIterationCommandWritesReadsAndAppendsArtifact(t *testing.T) {
 	dir := t.TempDir()
 
 	if _, err := captureStdout(t, func() error {
-		return commandIteration(ctx, globals{}, []string{"write", "--iteration-dir", dir, "summary", "--value", "one\n"})
+		return commandIteration(ctx, globals{}, []string{"write", "--iteration-dir", dir, "pr-body", "--value", "one\n"})
 	}); err != nil {
-		t.Fatalf("write summary: %v", err)
+		t.Fatalf("write pr-body: %v", err)
 	}
 	if _, err := captureStdout(t, func() error {
-		return commandIteration(ctx, globals{}, []string{"append", "summary", "--iteration-dir", dir, "--value", "two\n"})
+		return commandIteration(ctx, globals{}, []string{"append", "pr-body", "--iteration-dir", dir, "--value", "two\n"})
 	}); err != nil {
-		t.Fatalf("append summary: %v", err)
+		t.Fatalf("append pr-body: %v", err)
 	}
 	out, err := captureStdout(t, func() error {
-		return commandIteration(ctx, globals{}, []string{"read", "summary", "--iteration-dir", dir})
+		return commandIteration(ctx, globals{}, []string{"read", "pr-body", "--iteration-dir", dir})
 	})
 	if err != nil {
-		t.Fatalf("read summary: %v", err)
+		t.Fatalf("read pr-body: %v", err)
 	}
 	if out != "one\ntwo\n" {
-		t.Fatalf("summary content = %q", out)
+		t.Fatalf("pr-body content = %q", out)
 	}
 }
 
@@ -337,14 +337,17 @@ func TestIterationCommandPathUsesArtifactName(t *testing.T) {
 	if err := artifactdb.Write(dir, "runtime", `{"integration_mode":"local_merge"}`+"\n"); err != nil {
 		t.Fatal(err)
 	}
-	_, err := captureStdout(t, func() error {
+	out, err := captureStdout(t, func() error {
 		return commandIteration(context.Background(), globals{}, []string{"path", "pr_body", "--iteration-dir", dir})
 	})
-	if err == nil || !strings.Contains(err.Error(), "stored in the loop artifact database") {
+	if err != nil {
 		t.Fatalf("path pr_body error = %v", err)
 	}
+	if strings.TrimSpace(out) != filepath.Join(dir, "pr-body.md") {
+		t.Fatalf("path pr_body output = %q", out)
+	}
 
-	out, err := captureStdout(t, func() error {
+	out, err = captureStdout(t, func() error {
 		return commandIteration(context.Background(), globals{}, []string{"path", "prompt", "--iteration-dir", dir})
 	})
 	if err == nil || !strings.Contains(err.Error(), "path is not exposed") {
@@ -368,7 +371,7 @@ func TestIterationCommandResolvesRunAndIteration(t *testing.T) {
 	if err := os.MkdirAll(iterDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := artifactdb.Write(iterDir, "summary", "stored summary\n"); err != nil {
+	if err := artifactdb.Write(iterDir, "pr-body", "stored PR body\n"); err != nil {
 		t.Fatal(err)
 	}
 	oldwd, err := os.Getwd()
@@ -383,13 +386,13 @@ func TestIterationCommandResolvesRunAndIteration(t *testing.T) {
 	}()
 
 	out, err := captureStdout(t, func() error {
-		return commandIteration(context.Background(), globals{ConfigPath: ".loop/config.yaml", Agent: "codex"}, []string{"read", "summary", "--run", "run-1", "--iteration", "0002"})
+		return commandIteration(context.Background(), globals{ConfigPath: ".loop/config.yaml", Agent: "codex"}, []string{"read", "pr-body", "--run", "run-1", "--iteration", "0002"})
 	})
 	if err != nil {
 		t.Fatalf("read by run and iteration: %v", err)
 	}
-	if strings.TrimSpace(out) != "stored summary" {
-		t.Fatalf("summary output = %q", out)
+	if strings.TrimSpace(out) != "stored PR body" {
+		t.Fatalf("pr-body output = %q", out)
 	}
 }
 

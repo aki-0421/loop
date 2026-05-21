@@ -16,7 +16,6 @@ import (
 const (
 	LabelQuestion = "loop:question"
 	LabelBlocking = "loop:blocking"
-	LabelAgentGap = "loop:agent-gap"
 	LabelProposal = "loop:proposal"
 )
 
@@ -176,7 +175,7 @@ func CreateIssueReport(ctx context.Context, opts IssueReportOptions) (Record, er
 		return Record{}, err
 	}
 	runner := pr.Runner{Dir: opts.WorkDir, GHPath: opts.GHPath}
-	required := []string{LabelAgentGap, LabelProposal}
+	required := []string{LabelProposal}
 	if opts.Blocking {
 		required = append(required, LabelBlocking)
 	}
@@ -535,9 +534,7 @@ func createLoopLabel(ctx context.Context, runner pr.Runner, repositoryID, name s
 func loopLabelPresentation(name string) (string, string) {
 	switch name {
 	case LabelBlocking:
-		return "D73A4A", "Blocking clarification or capability gap requested by loop"
-	case LabelAgentGap:
-		return "5319E7", "Agent capability gap reported by loop"
+		return "D73A4A", "Blocking clarification or improvement proposal requested by loop"
 	case LabelProposal:
 		return "1D76DB", "Improvement proposal from loop agent"
 	default:
@@ -620,7 +617,7 @@ func appendQuestionMetadata(body string, opts IssueQuestionOptions) string {
 func appendReportMetadata(body string, opts IssueReportOptions) string {
 	var b strings.Builder
 	b.WriteString(strings.TrimRight(body, "\n"))
-	b.WriteString("\n\n<!-- loop:agent-gap\n")
+	b.WriteString("\n\n<!-- loop:proposal\n")
 	if opts.RunID != "" {
 		fmt.Fprintf(&b, "run_id: %s\n", opts.RunID)
 	}

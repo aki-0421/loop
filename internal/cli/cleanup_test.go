@@ -128,6 +128,76 @@ func TestRemoveWorktreeBeforePRIntegrationLeavesBranchDeletable(t *testing.T) {
 	}
 }
 
+func TestCleanupDisposableIterationFilesPreservesAuditFiles(t *testing.T) {
+	iterDir := t.TempDir()
+	activeDir := filepath.Join(t.TempDir(), "loop-active")
+	if err := os.MkdirAll(activeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, filepath.Join(activeDir, ".loop-active-temp"), "1\n")
+	active := []string{
+		"runtime.json",
+		"plan.md",
+		"todo.md",
+		"validation.md",
+		"validation-output-test.log",
+		"pr-title.txt",
+		"pr-body.md",
+		"agent-prompt-audit.md",
+	}
+	for _, name := range active {
+		mustWrite(t, filepath.Join(activeDir, name), "active\n")
+	}
+	preserved := []string{
+		"prompt.md",
+		"effective-config.yaml",
+		"agent-events.jsonl",
+		"errors.log",
+		"pr-state.json",
+		"pr-checks.json",
+		"pr-check-log.txt",
+		"github-updates.md",
+	}
+	for _, name := range preserved {
+		mustWrite(t, filepath.Join(iterDir, name), "audit\n")
+	}
+
+	if issues := cleanupDisposableIterationFiles(activeDir, filepath.Join(iterDir, "agent-events.jsonl")); len(issues) != 0 {
+		t.Fatalf("cleanup issues: %v", issues)
+	}
+	if _, err := os.Stat(activeDir); !os.IsNotExist(err) {
+		t.Fatalf("active temp dir should be removed, err=%v", err)
+	}
+	for _, name := range preserved {
+		if _, err := os.Stat(filepath.Join(iterDir, name)); err != nil {
+			t.Fatalf("%s should be preserved: %v", name, err)
+		}
+	}
+	events, err := os.ReadFile(filepath.Join(iterDir, "agent-events.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(events), "iteration.active_temp.cleanup.completed") || !strings.Contains(string(events), "plan.md") {
+		t.Fatalf("cleanup event missing:\n%s", events)
+	}
+}
+
+func TestPromptPathsPlaceDisposableArtifactsInActiveTempDir(t *testing.T) {
+	iterDir := filepath.Join(t.TempDir(), ".loop", "runs", "run-1", "iterations", "0001")
+	activeDir := filepath.Join(os.TempDir(), "loop-test-active")
+	paths := promptPathsWithActive(iterDir, activeDir)
+	for _, path := range []string{paths.Runtime, paths.Plan, paths.Todo, paths.Validation, paths.PRTitle, paths.PRBody} {
+		if !strings.HasPrefix(path, activeDir+string(filepath.Separator)) {
+			t.Fatalf("disposable path %q should be under active temp dir %q", path, activeDir)
+		}
+	}
+	for _, path := range []string{paths.Prompt, paths.EffectiveConfig, paths.Events, paths.Errors} {
+		if !strings.HasPrefix(path, iterDir+string(filepath.Separator)) {
+			t.Fatalf("audit path %q should be under iteration dir %q", path, iterDir)
+		}
+	}
+}
+
 func TestRemoveWorktreeBeforePRIntegrationToleratesAlreadyRemovedPath(t *testing.T) {
 	ctx := context.Background()
 	repo := newCleanupRepo(t)

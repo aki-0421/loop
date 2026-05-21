@@ -35,7 +35,7 @@ The Go implementation includes tests for:
 - Value-critical run resilience:
   - continuing from one completed iteration into the next until
     `should_fully_stop=true`;
-  - repairing missing or invalid result artifacts before failing the run;
+  - repairing missing or invalid result handoffs before failing the run;
   - honoring `needs_repair` results with a repair agent invocation;
   - repairing required validation failures before integration;
   - cleaning up no-change iteration branches before continuing or returning.

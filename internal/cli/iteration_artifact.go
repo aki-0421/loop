@@ -28,22 +28,19 @@ type iterationArtifact struct {
 
 var iterationArtifacts = map[string]iterationArtifact{
 	"effective-config": {Name: "effective-config", File: "effective-config.yaml"},
-	"runtime":          {Name: "runtime", File: "runtime.json", Database: true},
+	"runtime":          {Name: "runtime", File: "runtime.json"},
 	"prompt":           {Name: "prompt", File: "prompt.md", NoPath: true},
-	"plan":             {Name: "plan", File: "plan.md", Writable: true, Database: true},
-	"todo":             {Name: "todo", File: "todo.md", Writable: true, Database: true},
-	"worklog":          {Name: "worklog", File: "worklog.md", Writable: true, Database: true},
-	"validation":       {Name: "validation", File: "validation.md", Database: true},
-	"summary":          {Name: "summary", File: "summary.md", Writable: true, Database: true},
-	"result":           {Name: "result", File: "result.json", Writable: true, Database: true},
+	"plan":             {Name: "plan", File: "plan.md", Writable: true},
+	"todo":             {Name: "todo", File: "todo.md", Writable: true},
+	"validation":       {Name: "validation", File: "validation.md"},
 	"events":           {Name: "events", File: "agent-events.jsonl"},
 	"errors":           {Name: "errors", File: "errors.log"},
-	"pr-title":         {Name: "pr-title", File: "pr-title.txt", Writable: true, Database: true},
-	"pr-body":          {Name: "pr-body", File: "pr-body.md", Writable: true, Database: true},
-	"pr-state":         {Name: "pr-state", File: "pr-state.json", Database: true},
-	"pr-checks":        {Name: "pr-checks", File: "pr-checks.json", Database: true},
-	"pr-check-log":     {Name: "pr-check-log", File: "pr-check-log.txt", Database: true},
-	"github-updates":   {Name: "github-updates", File: "github-updates.md", Database: true},
+	"pr-title":         {Name: "pr-title", File: "pr-title.txt", Writable: true},
+	"pr-body":          {Name: "pr-body", File: "pr-body.md", Writable: true},
+	"pr-state":         {Name: "pr-state", File: "pr-state.json"},
+	"pr-checks":        {Name: "pr-checks", File: "pr-checks.json"},
+	"pr-check-log":     {Name: "pr-check-log", File: "pr-check-log.txt"},
+	"github-updates":   {Name: "github-updates", File: "github-updates.md"},
 	"pr-template":      {Name: "pr-template", Repository: true},
 	"instruction":      {Name: "instruction", File: "prompt.md", NoPath: true},
 }
@@ -303,6 +300,11 @@ func resolveIterationArtifact(ctx context.Context, iterationDir, name string) (s
 	}
 	if strings.TrimSpace(iterationDir) == "" {
 		return "", artifact, errors.New("iteration directory is required; pass --iteration-dir, pass --run, or run inside an agent iteration")
+	}
+	if artifactdb.IsActiveArtifact(artifact.Name) {
+		if activeDir := artifactdb.ActiveDirFromEnv(iterationDir); activeDir != "" {
+			return filepath.Join(activeDir, artifact.File), artifact, nil
+		}
 	}
 	return filepath.Join(iterationDir, artifact.File), artifact, nil
 }

@@ -50,6 +50,46 @@ func TestRunContinuesAcrossIterationsUntilAgentStops(t *testing.T) {
 	assertBranchMissing(t, repo, "test/fake-agent")
 }
 
+func TestRunKeepsDisposableArtifactsInGoTempDir(t *testing.T) {
+	ctx := context.Background()
+	repo := newCleanupRepo(t)
+	writeResilienceFixture(t, repo, resilienceOptions{
+		Sequence:       "no_change",
+		MaxIterations:  1,
+		RepairAttempts: 0,
+	})
+	withWorkingDir(t, repo)
+
+	if _, err := captureStdout(t, func() error {
+		return commandRun(ctx, globals{Agent: "resilience", JSON: true, NoColor: true}, []string{"task.md"})
+	}); err != nil {
+		t.Fatalf("loop run: %v", err)
+	}
+
+	iterDir := latestIterationDir(t, repo, "0001")
+	for _, name := range []string{"runtime.json", "plan.md", "todo.md", "validation.md", "pr-title.txt", "pr-body.md", "agent-prompt-audit.md"} {
+		if _, err := os.Stat(filepath.Join(iterDir, name)); !os.IsNotExist(err) {
+			t.Fatalf("%s should not be written to iteration dir, err=%v", name, err)
+		}
+	}
+	for _, name := range []string{"prompt.md", "effective-config.yaml", "agent-events.jsonl"} {
+		if _, err := os.Stat(filepath.Join(iterDir, name)); err != nil {
+			t.Fatalf("%s should remain in iteration dir: %v", name, err)
+		}
+	}
+
+	activeDir := eventStringValue(t, iterDir, "iteration.active_temp.cleanup.completed", "active_dir")
+	if activeDir == "" {
+		t.Fatalf("cleanup event did not record active_dir")
+	}
+	if filepath.Clean(filepath.Dir(activeDir)) != filepath.Clean(os.TempDir()) {
+		t.Fatalf("active dir = %q, want child of Go temp dir %q", activeDir, os.TempDir())
+	}
+	if _, err := os.Stat(activeDir); !os.IsNotExist(err) {
+		t.Fatalf("active temp dir should be removed after cleanup, err=%v", err)
+	}
+}
+
 func TestRunInitialSyncsGitHubPRMemoryBeforeFirstIteration(t *testing.T) {
 	ctx := context.Background()
 	repo := newCleanupRepo(t)
@@ -194,7 +234,7 @@ func TestRunRepairsInvalidResultAndIntegrates(t *testing.T) {
 	if got := countEventType(t, iterDir, "agent.started"); got != 2 {
 		t.Fatalf("agent.started count = %d, want 2", got)
 	}
-	if !strings.Contains(readText(t, filepath.Join(iterDir, "errors.log")), "result artifact missing or invalid") {
+	if !strings.Contains(readText(t, filepath.Join(iterDir, "errors.log")), "result handoff missing or invalid") {
 		t.Fatalf("errors.log did not record invalid-result repair:\n%s", readText(t, filepath.Join(iterDir, "errors.log")))
 	}
 	if _, err := os.Stat(filepath.Join(repo, "loop-fake-change.txt")); err != nil {
@@ -341,6 +381,26 @@ func countEventType(t *testing.T, iterDir, eventType string) int {
 	t.Helper()
 	events := readText(t, filepath.Join(iterDir, "agent-events.jsonl"))
 	return strings.Count(events, `"type":"`+eventType+`"`)
+}
+
+func eventStringValue(t *testing.T, iterDir, eventType, key string) string {
+	t.Helper()
+	events := readText(t, filepath.Join(iterDir, "agent-events.jsonl"))
+	for _, line := range strings.Split(events, "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		var event map[string]any
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			t.Fatalf("invalid event line %q: %v", line, err)
+		}
+		if event["type"] == eventType {
+			value, _ := event[key].(string)
+			return value
+		}
+	}
+	t.Fatalf("event %q not found in:\n%s", eventType, events)
+	return ""
 }
 
 func commitLoopRuntimeIgnore(t *testing.T, repo string) {

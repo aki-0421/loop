@@ -165,21 +165,30 @@ git:
 	if err != nil {
 		t.Fatal(err)
 	}
-	combined := string(stdinBytes) + "\n" + string(envBytes)
+	stdinText := string(stdinBytes)
+	envText := string(envBytes)
+	combined := stdinText + "\n" + envText
 	for _, notWant := range []string{
 		instructionPath,
 		"private-task.md",
 		"LOOP_INSTRUCTION_FILE",
 		"LOOP_INSTRUCTION_PATH",
 		"LOOP_INSTRUCTION_REL",
-		"LOOP_ITERATION_DIR",
 		"prompt.md",
 	} {
 		if strings.Contains(combined, notWant) {
 			t.Fatalf("agent context leaked %q:\n%s", notWant, combined)
 		}
 	}
-	if !strings.Contains(string(stdinBytes), "Use the `loop` skill") {
+	for _, want := range []string{
+		"LOOP_ITERATION_DIR=",
+		artifactdb.ActiveIterationDirEnv + "=",
+	} {
+		if !strings.Contains(envText, want) {
+			t.Fatalf("agent env missing %q:\n%s", want, envText)
+		}
+	}
+	if !strings.Contains(stdinText, "Use the `loop` skill") {
 		t.Fatalf("agent stdin did not include bootstrap:\n%s", stdinBytes)
 	}
 }
@@ -202,7 +211,7 @@ func TestHelperProcessCaptureAgent(t *testing.T) {
   "branch": {"initial_name": "wip/0001", "kind": "test", "slug": "capture-agent"},
   "commits": [],
   "validation": {"status": "skipped", "commands": []},
-  "artifacts": {"summary": "summary"},
+  "artifacts": {},
   "assumptions": []
 }
 `
@@ -211,6 +220,7 @@ func TestHelperProcessCaptureAgent(t *testing.T) {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	_ = artifactdb.Write(iterDir, "result", result)
+	runID, iterationID := artifactdb.ParseIterationDir(iterDir)
+	_ = artifactdb.WriteResultHandoff(artifactdb.GlobalDBPathForIteration(iterDir), runID, iterationID, result)
 	os.Exit(0)
 }

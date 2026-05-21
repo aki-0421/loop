@@ -198,14 +198,14 @@ loop iteration result [--iteration-dir <dir>|--run <run-id> --iteration <n>] --s
 
 If `--iteration-dir` is omitted, commands resolve the current agent iteration automatically. If `--run` is supplied, the CLI resolves `.loop/runs/<run-id>/iterations/<n>` using the configured log directory; `--iteration latest` selects the newest iteration.
 
-Writable artifacts are `plan`, `todo`, `worklog`, `summary`, `result`, `pr-title`, and `pr-body`. Read-only artifacts include `runtime`, `instruction`, `prompt`, `effective-config`, `validation`, `events`, `stdout`, `stderr`, and `github-updates`.
+Writable artifacts are `plan`, `todo`, `pr-title`, and `pr-body`. Read-only artifacts include `runtime`, `instruction`, `prompt`, `effective-config`, `validation`, `events`, `stdout`, `stderr`, and `github-updates`. The result is written through the master-DB result handoff, not a local artifact.
 PR command artifacts `pr-state`, `pr-checks`, and `pr-check-log` are read-only to the agent and written by `loop pr`. `github-updates` is written by the CLI when new GitHub Issue, PR, or comment diffs are observed at an iteration boundary or sleep wake cycle.
 
 `plan` and `todo` use dedicated namespaces instead of generic bulk writes. `loop iteration plan template` prints the CLI-owned plan template, `loop iteration plan write` stores the filled plan, and `loop iteration plan read` reads it. After the plan selects the review slice, `loop iteration todo list` prints numbered TODOs; `insert --type <type> <message>`, `edit <n> --type <type> <message>`, and `complete <n>` mutate one TODO item at a time by the 1-based index shown by `list`. TODO `type` and `message` use the same validation as `loop commit`. Generic `loop iteration write plan`, `append plan`, `write todo`, and `append todo` are rejected with guidance to these commands.
 
 `pr-template` is a read-only artifact. `loop iteration read pr-template` prints the selected repository pull request template when present, otherwise it prints the CLI-owned fallback template. `loop iteration path pr-template` prints a path only when a repository template file exists.
 
-`loop iteration result` builds valid iteration result JSON from CLI-owned runtime data and agent-supplied semantic fields. It prints JSON by default, or writes the `result` artifact with `--write`. The command infers `schema_version`, `branch.initial_name`, `branch.final_name`, commits from `base_branch..HEAD`, logical artifact names, branch kind, and branch slug. Required semantic flags are `--summary`, `--should-stop true|false`, and `--goal-evaluation`. Agents pass `--validation-status` or repeat `--validation-command name|command|exit_code|required`; branch metadata is always taken from loop runtime and the tracked Git branch. The command rejects mechanical contract problems such as dirty completed work, missing commits for `completed`, completed work still on the initial branch, branch mismatches, and missing blocked/failed reasons.
+`loop iteration result` builds valid iteration result JSON from CLI-owned runtime data and agent-supplied semantic fields. It prints JSON by default, or writes the master-DB result handoff with `--write`. The command infers `schema_version`, `branch.initial_name`, `branch.final_name`, commits from `base_branch..HEAD`, logical artifact names, branch kind, and branch slug. Required semantic flags are `--summary`, `--should-stop true|false`, and `--goal-evaluation`. Agents pass `--validation-status` or repeat `--validation-command name|command|exit_code|required`; branch metadata is always taken from loop runtime and the tracked Git branch. The command rejects mechanical contract problems such as dirty completed work, missing commits for `completed`, completed work still on the initial branch, branch mismatches, and missing blocked/failed reasons.
 
 ## `loop branch`
 
@@ -233,7 +233,7 @@ loop pr merge [--iteration-dir <dir>|--run <run-id> --iteration <n>]
 
 ## `loop issue`
 
-Create GitHub clarification and capability-gap Issues through agent-facing CLI commands.
+Create GitHub clarification and improvement proposal Issues through agent-facing CLI commands.
 
 ```bash
 loop issue ask --title <text> --body <text> [--blocking] [--iteration-dir <dir>|--run <run-id> --iteration <n>]
@@ -244,7 +244,7 @@ loop issue report --title <text> --body <text> [--kind <kind>] [--blocking] [--i
 
 Agents use this command only for important product, policy, or large blocking specification ambiguity. After creating an Issue, the agent continues implementation that is unrelated to that clarification. The agent writes a `blocked` result only when no safe independent work remains, and the blocked reason should include the blocking Issue URL.
 
-`loop issue report` creates `loop:agent-gap` and `loop:proposal`, plus optional `loop:blocking`, for cases where the agent could not inspect, validate, repair, or decide well because the repository is missing a tool, documentation, guardrail, observability signal, environment setup, or workflow affordance. `--kind` is one of `tool`, `docs`, `guardrail`, `observability`, `environment`, `workflow`, or `other`. Issue bodies should be GitHub-flavored Markdown. Report bodies should include current-run evidence, the effect on agent work, and a proposed harness or repository improvement.
+`loop issue report` creates `loop:proposal`, plus optional `loop:blocking`, for concrete repository or harness improvement proposals. `--kind` is one of `tool`, `docs`, `guardrail`, `observability`, `environment`, `workflow`, or `other`. Issue bodies should be GitHub-flavored Markdown and include evidence, impact, and the proposed repository improvement. Unsupported agent capabilities are rediscovered each iteration and are not persisted as Issues.
 
 ## `loop skills`
 

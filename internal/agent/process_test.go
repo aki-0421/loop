@@ -117,7 +117,7 @@ func TestProcessAdapterBuildsCommandEventFromLifecycleWithDuration(t *testing.T)
 			"sleep 0.01",
 			"printf '%s\\n' '{\"type\":\"item.completed\",\"item\":{\"id\":\"item_1\",\"type\":\"command_execution\",\"command\":\"pwd\",\"status\":\"completed\",\"exit_code\":0}}'",
 		}, "; ")},
-		PromptMode:  PromptStdin,
+		PromptMode: PromptStdin,
 	}
 	_, err := adapter.Run(context.Background(), RunRequest{
 		WorkDir:      dir,
@@ -174,13 +174,16 @@ func TestProcessAdapterCancelsProcessGroup(t *testing.T) {
 }
 
 func TestFakeAgentWritesResultFromEnv(t *testing.T) {
-	dir := t.TempDir()
+	root := t.TempDir()
+	dir := filepath.Join(root, ".loop", "runs", "run-1", "iterations", "0001")
 	t.Setenv("LOOP_FAKE_AGENT_MODE", "no_change")
 	t.Setenv("LOOP_ITERATION_DIR", dir)
+	t.Setenv("LOOP_RUN_ID", "run-1")
+	t.Setenv("LOOP_ITERATION_ID", "0001")
 	if code := RunFakeAgentFromEnv(); code != 0 {
 		t.Fatalf("fake agent exit code = %d", code)
 	}
-	data, err := artifactdb.Read(dir, "result")
+	data, err := artifactdb.ReadResultHandoff(filepath.Join(root, ".loop", artifactdb.GlobalDBName), "run-1", "0001")
 	if err != nil {
 		t.Fatal(err)
 	}

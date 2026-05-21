@@ -2,7 +2,7 @@
 
 ## Iteration result
 
-The agent writes the `result` artifact through `loop iteration result --write`. The lower-level `loop iteration write result` remains available for repair fallback when the result builder itself is unavailable.
+The agent writes the master-DB result handoff through `loop iteration result --write`. There is no local `result` artifact.
 
 Required fields:
 
@@ -16,7 +16,7 @@ Required fields:
 | `branch` | object | Initial and tracked branch metadata for the iteration. |
 | `commits` | array | Commits created through `loop commit` during the iteration. |
 | `validation` | object | Validation commands and results. |
-| `artifacts` | object | Paths to plan, TODO, summary, PR files, and logs. |
+| `artifacts` | object | Logical names for active plan, TODO, and PR text files. |
 
 Example:
 
@@ -53,7 +53,6 @@ Example:
   "artifacts": {
     "plan": "plan",
     "todo": "todo",
-    "summary": "summary",
     "pr_title": "pr-title",
     "pr_body": "pr-body"
   },
@@ -65,11 +64,11 @@ Example:
 
 `branch.initial_name` is the numbered branch created by loop. `branch.final_name` is the tracked branch after the agent has run `loop branch rename`. Completed results are rejected when the tracked branch still equals the initial branch. `no_change` results may leave `branch.final_name` empty.
 
-Commit message validation happens when `loop commit` creates the commit. The result artifact reports commit SHAs and subjects; it must not be used as the first place a malformed commit message is discovered.
+Commit message validation happens when `loop commit` creates the commit. The result handoff reports commit SHAs and subjects; it must not be used as the first place a malformed commit message is discovered.
 
 ## Result builder
 
-`loop iteration result` prints valid iteration result JSON by default. With `--write`, it writes the generated JSON to the `result` artifact.
+`loop iteration result` prints valid iteration result JSON by default. With `--write`, it writes the generated JSON to the master-DB result handoff and still prints the JSON to stdout.
 
 The command fills fields the CLI can determine safely:
 

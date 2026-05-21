@@ -28,7 +28,7 @@ func TestRepoRootAndCleanIgnoresRuntime(t *testing.T) {
 		t.Fatalf("root = %q, want %q", gotRoot, wantRoot)
 	}
 
-	mustWrite(t, filepath.Join(repo, ".loop", "runs", "r1", "worklog.md"), "runtime")
+	mustWrite(t, filepath.Join(repo, ".loop", "runs", "r1", "plan.md"), "runtime")
 	mustWrite(t, filepath.Join(repo, ".loop", "loop.db"), "global memory")
 	mustWrite(t, filepath.Join(repo, ".loop", "loop.db-wal"), "global memory wal")
 	mustWrite(t, filepath.Join(repo, "feature.txt"), "dirty")

@@ -113,12 +113,12 @@ func refreshTrackedBranch(ctx context.Context, workDir string, paths *pathSet) e
 	if paths == nil {
 		return errors.New("path set is required")
 	}
-	iterDir := filepath.Dir(paths.Result)
-	tracked, err := readTrackedBranch(iterDir, paths.InitialBranch, paths.CurrentBranch)
+	runtimeDir := firstNonEmpty(paths.ActiveDir, filepath.Dir(paths.Result))
+	tracked, err := readTrackedBranch(runtimeDir, paths.InitialBranch, paths.CurrentBranch)
 	if err != nil {
 		return err
 	}
-	allowDetachedAfterPRMerge := paths.PullRequestMode && prStateMerged(iterDir)
+	allowDetachedAfterPRMerge := paths.PullRequestMode && prStateMerged(filepath.Dir(paths.Result))
 	if tracked.Current != "" && gitx.IsRepository(ctx, workDir) && !allowDetachedAfterPRMerge {
 		current, err := (gitx.Runner{Dir: workDir}).CurrentBranch(ctx)
 		if err != nil {

@@ -135,12 +135,6 @@
         "todo": {
           "type": "string"
         },
-        "summary": {
-          "type": "string"
-        },
-        "worklog": {
-          "type": "string"
-        },
         "pr_title": {
           "type": "string"
         },

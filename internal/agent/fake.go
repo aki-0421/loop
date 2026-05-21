@@ -21,7 +21,7 @@ func RunFakeAgentFromEnv() int {
 
 	switch mode {
 	case "invalid_json":
-		_ = writeFakeArtifact(iterationDir, "result", "{invalid json\n")
+		_ = writeFakeRawResultHandoff(iterationDir, "{invalid json\n")
 		return 0
 	case "dirty":
 		_ = os.WriteFile(filepath.Join(getenv("LOOP_WORKDIR", "."), "loop-fake-dirty.txt"), []byte("dirty\n"), 0o644)
@@ -43,7 +43,6 @@ func RunFakeAgentFromEnv() int {
 		_ = os.WriteFile(changePath, []byte("validation repaired at "+time.Now().UTC().Format(time.RFC3339Nano)+"\n"), 0o644)
 		_ = git(workDir, "add", "validation-ok.txt")
 		_ = git(workDir, "commit", "-m", "F: repair validation fixture")
-		_ = writeFakeArtifact(iterationDir, "summary", "# Iteration Summary\n\n- Fake agent repaired validation.\n")
 		writeFakeResult(iterationDir, "completed", fakeCommit(workDir))
 		return 0
 	case "completed_unrenamed":
@@ -52,7 +51,6 @@ func RunFakeAgentFromEnv() int {
 		_ = os.WriteFile(changePath, []byte("fake agent completed without branch rename at "+time.Now().UTC().Format(time.RFC3339Nano)+"\n"), 0o644)
 		_ = git(workDir, "add", "loop-fake-change.txt")
 		_ = git(workDir, "commit", "-m", "F: run fake agent behavior")
-		_ = writeFakeArtifact(iterationDir, "summary", "# Iteration Summary\n\n- Fake agent completed without renaming.\n")
 		writeFakeResult(iterationDir, "completed", fakeCommit(workDir))
 		return 0
 	default:
@@ -62,7 +60,6 @@ func RunFakeAgentFromEnv() int {
 		_ = os.WriteFile(changePath, []byte("fake agent completed at "+time.Now().UTC().Format(time.RFC3339Nano)+"\n"), 0o644)
 		_ = git(workDir, "add", "loop-fake-change.txt")
 		_ = git(workDir, "commit", "-m", "F: run fake agent behavior")
-		_ = writeFakeArtifact(iterationDir, "summary", "# Iteration Summary\n\n- Fake agent completed.\n")
 		writeFakeResult(iterationDir, "completed", fakeCommit(workDir))
 		return 0
 	}
@@ -116,38 +113,69 @@ func loopBranchRename(dir, branch string) error {
 }
 
 func writeFakeResult(iterationDir, status string, commits ...map[string]any) {
+	_ = writeFakeResultHandoff(iterationDir, status, commits...)
+}
+
+func writeFakeResultHandoff(iterationDir, status string, commits ...map[string]any) error {
 	validationStatus := "passed"
 	if status == "blocked" {
 		validationStatus = "skipped"
 	}
-	if commits == nil {
-		commits = []map[string]any{}
+	commitList := make([]map[string]any, 0, len(commits))
+	for _, commit := range commits {
+		if commit != nil {
+			commitList = append(commitList, commit)
+		}
 	}
-	branch := fakeBranchResult(status)
 	result := map[string]any{
-		"schema_version":    1,
-		"status":            status,
-		"summary_sentence":  "Run fake agent behavior",
-		"should_fully_stop": status != "completed",
-		"goal_evaluation":   "Fake agent produced a deterministic test result.",
-		"branch":            branch,
-		"commits":           commits,
-		"validation":        map[string]any{"status": validationStatus, "commands": []map[string]any{}},
-		"artifacts":         map[string]any{"summary": "summary"},
-		"assumptions":       []string{},
-		"blocked_reason":    "",
+		"schema_version":       1,
+		"status":               status,
+		"summary_sentence":     "Run fake agent behavior",
+		"should_fully_stop":    status != "completed",
+		"goal_evaluation":      "Fake agent produced a deterministic test result.",
+		"branch":               fakeBranchResult(status),
+		"commits":              commitList,
+		"validation":           map[string]any{"status": validationStatus, "commands": []map[string]any{}},
+		"artifacts":            map[string]any{},
+		"assumptions":          []string{},
+		"blocked_reason":       "",
+		"follow_up_issue_refs": []string{},
 	}
 	if status == "blocked" {
 		result["blocked_reason"] = "Fake agent blocked by requested mode."
 	}
-	b, _ := json.MarshalIndent(result, "", "  ")
-	_ = writeFakeArtifact(iterationDir, "result", string(append(b, '\n')))
+	data, err := json.MarshalIndent(result, "", "  ")
+	if err != nil {
+		return err
+	}
+	return writeFakeRawResultHandoff(iterationDir, string(append(data, '\n')))
+}
+
+func writeFakeRawResultHandoff(iterationDir, resultJSON string) error {
+	globalPath := artifactdb.GlobalDBPathForIteration(iterationDir)
+	if globalPath == "" {
+		return nil
+	}
+	runID := getenv("LOOP_RUN_ID", "")
+	iterationID := getenv("LOOP_ITERATION_ID", "")
+	if runID == "" || iterationID == "" {
+		parsedRunID, parsedIterationID := artifactdb.ParseIterationDir(iterationDir)
+		if runID == "" {
+			runID = parsedRunID
+		}
+		if iterationID == "" {
+			iterationID = parsedIterationID
+		}
+	}
+	if runID == "" || iterationID == "" {
+		return nil
+	}
+	return artifactdb.WriteResultHandoff(globalPath, runID, iterationID, resultJSON)
 }
 
 func fakeBranchResult(status string) map[string]any {
-	workDir := getenv("LOOP_WORKDIR", ".")
 	initial := getenv("LOOP_INITIAL_BRANCH", "wip/0001")
-	current := currentBranch(workDir)
+	current := currentBranch(getenv("LOOP_WORKDIR", "."))
 	if current == "" {
 		current = getenv("LOOP_CURRENT_BRANCH", initial)
 	}
@@ -175,7 +203,7 @@ func currentBranch(dir string) string {
 	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(string(out))
+	return string(bytesTrimSpace(out))
 }
 
 func splitBranch(branch string) (string, string, bool) {
@@ -184,19 +212,6 @@ func splitBranch(branch string) (string, string, bool) {
 		return "", "", false
 	}
 	return strings.TrimSpace(kind), strings.TrimSpace(slug), true
-}
-
-func writeFakeArtifact(iterationDir, name, content string) error {
-	if iterationDir != "" {
-		return artifactdb.Write(iterationDir, name, content)
-	}
-	exe, err := os.Executable()
-	if err != nil {
-		return err
-	}
-	cmd := exec.Command(exe, "iteration", "write", name, "--value", content)
-	cmd.Env = os.Environ()
-	return cmd.Run()
 }
 
 func git(dir string, args ...string) error {

@@ -884,7 +884,7 @@ func runTestFakeAgent() int {
 	mode := testFakeAgentMode()
 	switch mode {
 	case "invalid_json":
-		_ = artifactdb.Write(iterDir, "result", "{invalid json\n")
+		writeTestFakeRawResult(iterDir, "{invalid json\n")
 		return 0
 	case "dirty":
 		_ = os.WriteFile(filepath.Join(getenvForTestAgent("LOOP_WORKDIR", "."), "loop-fake-dirty.txt"), []byte("dirty\n"), 0o644)
@@ -910,7 +910,6 @@ func runTestFakeAgent() int {
 		_ = os.WriteFile(changePath, []byte("validation repaired at "+time.Now().UTC().Format(time.RFC3339Nano)+"\n"), 0o644)
 		_ = gitForTestAgent(workDir, "add", "validation-ok.txt")
 		_ = gitForTestAgent(workDir, "commit", "-m", "F: repair validation fixture")
-		_ = artifactdb.Write(iterDir, "summary", "# Iteration Summary\n\n- Fake agent repaired validation.\n")
 		writeTestFakeResult(iterDir, "completed", testFakeCommit(workDir))
 		return 0
 	case "pr_owned_repair":
@@ -928,7 +927,6 @@ func runTestFakeAgent() int {
 		_ = os.WriteFile(changePath, []byte("fake agent completed without pr merge at "+time.Now().UTC().Format(time.RFC3339Nano)+"\n"), 0o644)
 		_ = gitForTestAgent(workDir, "add", "loop-fake-change.txt")
 		_ = gitForTestAgent(workDir, "commit", "-m", "F: run fake agent behavior")
-		_ = artifactdb.Write(iterDir, "summary", "# Iteration Summary\n\n- Fake agent completed without PR merge.\n")
 		writeTestFakeResult(iterDir, "completed", testFakeCommit(workDir))
 		return 0
 	case "completed_unrenamed":
@@ -937,7 +935,6 @@ func runTestFakeAgent() int {
 		_ = os.WriteFile(changePath, []byte("fake agent completed without branch rename at "+time.Now().UTC().Format(time.RFC3339Nano)+"\n"), 0o644)
 		_ = gitForTestAgent(workDir, "add", "loop-fake-change.txt")
 		_ = gitForTestAgent(workDir, "commit", "-m", "F: run fake agent behavior")
-		_ = artifactdb.Write(iterDir, "summary", "# Iteration Summary\n\n- Fake agent completed without renaming.\n")
 		writeTestFakeResult(iterDir, "completed", testFakeCommit(workDir))
 		return 0
 	default:
@@ -947,7 +944,6 @@ func runTestFakeAgent() int {
 		_ = os.WriteFile(changePath, []byte("fake agent completed at "+time.Now().UTC().Format(time.RFC3339Nano)+"\n"), 0o644)
 		_ = gitForTestAgent(workDir, "add", "loop-fake-change.txt")
 		_ = gitForTestAgent(workDir, "commit", "-m", "F: run fake agent behavior")
-		_ = artifactdb.Write(iterDir, "summary", "# Iteration Summary\n\n- Fake agent completed.\n")
 		writeTestFakeResult(iterDir, "completed", testFakeCommit(workDir))
 		return 0
 	}
@@ -976,7 +972,6 @@ func runTestFakeAgentOwnedPR(iterDir string, repair bool, resultCommitMessage st
 		_ = os.WriteFile(repairPath, []byte("fake pr repair at "+time.Now().UTC().Format(time.RFC3339Nano)+"\n"), 0o644)
 		_ = gitForTestAgent(workDir, "add", "loop-fake-pr-repair.txt")
 		_ = gitForTestAgent(workDir, "commit", "-m", "C: repair fake pr checks")
-		_ = artifactdb.Append(iterDir, "worklog", "Repaired fake PR checks after loop pr checks failed.\n")
 		if err := commandPR(ctx, globals{JSON: true, NoColor: true}, []string{"checks"}); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return 1
@@ -989,7 +984,6 @@ func runTestFakeAgentOwnedPR(iterDir string, repair bool, resultCommitMessage st
 	if dirtyAfterMerge {
 		_ = os.WriteFile(filepath.Join(workDir, "post-merge-dirty.txt"), []byte("dirty after merge\n"), 0o644)
 	}
-	_ = artifactdb.Write(iterDir, "summary", "# Iteration Summary\n\n- Fake agent completed and merged PR.\n")
 	var resultCommit map[string]any
 	if !omitResultCommit {
 		resultCommit = testFakeCommit(workDir)
@@ -1053,7 +1047,7 @@ func writeTestFakeResult(iterDir, status string, commit map[string]any) {
 		"branch":            branch,
 		"commits":           commits,
 		"validation":        map[string]any{"status": validationStatus, "commands": []map[string]any{}},
-		"artifacts":         map[string]any{"summary": "summary"},
+		"artifacts":         map[string]any{},
 		"assumptions":       []string{},
 		"blocked_reason":    "",
 	}
@@ -1061,7 +1055,12 @@ func writeTestFakeResult(iterDir, status string, commit map[string]any) {
 		result["blocked_reason"] = getenvForTestAgent("LOOP_FAKE_BLOCKED_REASON", "Fake agent blocked by requested mode.")
 	}
 	data, _ := json.MarshalIndent(result, "", "  ")
-	_ = artifactdb.Write(iterDir, "result", string(append(data, '\n')))
+	writeTestFakeRawResult(iterDir, string(append(data, '\n')))
+}
+
+func writeTestFakeRawResult(iterDir, resultJSON string) {
+	runID, iterationID := artifactdb.ParseIterationDir(iterDir)
+	_ = artifactdb.WriteResultHandoff(artifactdb.GlobalDBPathForIteration(iterDir), runID, iterationID, resultJSON)
 }
 
 func testFakeBranchResult(status string) map[string]any {

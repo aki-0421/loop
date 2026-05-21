@@ -26,17 +26,16 @@ Each iteration has its own directory:
 ```text
 .loop/runs/<run-id>/iterations/0001/
   effective-config.yaml
-  iteration.db
   prompt.md
   agent-events.jsonl
   errors.log        # only when an error occurs
 ```
 
-Files are created as needed. `prompt.md`, `agent-events.jsonl`, and the `result` artifact in `iteration.db` are required after the agent phase completes.
+Files are created as needed. `prompt.md`, `effective-config.yaml`, `agent-events.jsonl`, `errors.log`, and run state are durable audit/replay files. Result handoff state is stored in `.loop/loop.db`.
 
-`plan` is runtime memory. It is stored in `iteration.db`, ignored by Git, and must not be committed as part of the iteration work.
+During an active iteration, disposable runtime files are stored in a Go temp directory created with `os.MkdirTemp`. The durable iteration directory is exposed to subprocesses as `LOOP_ITERATION_DIR`; the temp-backed active artifact directory is exposed as `LOOP_ACTIVE_ITERATION_DIR` only so `loop iteration` commands can resolve artifact paths. `runtime`, `plan`, `todo`, `validation`, PR text, validation output, and prompt-audit files are active runtime files. They are ignored by Git, must not be committed as iteration work, and are disposable after the iteration completes.
 
-Agents access runtime artifacts through `loop iteration` commands instead of manually constructing paths. Writable agent artifacts are `plan`, `todo`, `worklog`, `summary`, `result`, `pr-title`, and `pr-body`. `plan` uses `loop iteration plan`, `todo` uses `loop iteration todo`, and remaining writable artifacts use `loop iteration write` or `loop iteration append`. Agents should generate the `result` artifact with `loop iteration result --write` so the CLI owns the mechanical JSON shape.
+Agents access runtime artifacts through `loop iteration` commands instead of manually constructing paths. Writable agent artifacts are `plan`, `todo`, `pr-title`, and `pr-body`. `plan` uses `loop iteration plan`, `todo` uses `loop iteration todo`, and remaining writable artifacts use `loop iteration write` or `loop iteration append`. Agents generate the result handoff with `loop iteration result --write` so the CLI owns the mechanical JSON shape.
 
 ## Live renderer
 
@@ -109,14 +108,14 @@ Required agent outputs:
 - `plan` artifact before repository edits.
 - `todo` artifact before repository edits.
 - Commits for complete logical units when changes are made, created through `loop commit`.
-- `summary` artifact with a concise iteration summary.
-- `result` artifact matching the schema.
+- `pr-title` and `pr-body` when pull request mode is enabled.
+- Master-DB result handoff through `loop iteration result --write`.
 
 The agent first uses the plan to select the review slice, then manages TODOs one item at a time to decompose that slice into commit-sized tasks. Each TODO uses the same `--type` and message shape as `loop commit`, and one completed TODO equals one `loop commit` invocation except no-change confirmations. Before the iteration ends, the agent confirms that commits are complete and `git status --short` shows no changed files.
 
 ## Result handling
 
-The CLI validates the `result` artifact and decides the next action.
+The CLI validates the master-DB result handoff and decides the next action. After a completed or no-change iteration reaches its terminal action, the CLI deletes the Go temp directory that contains disposable active-work files such as `runtime.json`, `plan.md`, `todo.md`, validation output, PR text, and prompt-audit files. It preserves `prompt.md`, `effective-config.yaml`, `agent-events.jsonl`, `errors.log`, PR lifecycle diagnostics, GitHub update diffs, and run state in the durable iteration directory.
 
 | Result status | Meaning | CLI action |
 | --- | --- | --- |

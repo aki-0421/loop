@@ -26,12 +26,6 @@ func TestIterationResultCommandBuildsAndWritesResult(t *testing.T) {
 	if err := artifactdb.Write(iterDir, "plan", "plan\n"); err != nil {
 		t.Fatal(err)
 	}
-	if err := artifactdb.Write(iterDir, "summary", "summary\n"); err != nil {
-		t.Fatal(err)
-	}
-	if err := artifactdb.Write(iterDir, "worklog", "worklog\n"); err != nil {
-		t.Fatal(err)
-	}
 
 	out, err := captureStdout(t, func() error {
 		return commandIteration(ctx, globals{}, []string{
@@ -48,13 +42,12 @@ func TestIterationResultCommandBuildsAndWritesResult(t *testing.T) {
 	if err != nil {
 		t.Fatalf("iteration result: %v", err)
 	}
-	if strings.TrimSpace(out) != "wrote result" {
-		t.Fatalf("write output = %q", out)
-	}
-
-	data, err := artifactdb.Read(iterDir, "result")
+	data, err := artifactdb.ReadResultHandoff(filepath.Join(repo, ".loop", artifactdb.GlobalDBName), "run-1", "0001")
 	if err != nil {
 		t.Fatal(err)
+	}
+	if strings.TrimSpace(out) != strings.TrimSpace(data) {
+		t.Fatalf("stdout should contain the written result JSON\nstdout:\n%s\nhandoff:\n%s", out, data)
 	}
 	result, err := validation.ValidateResultJSON([]byte(data))
 	if err != nil {
@@ -72,7 +65,7 @@ func TestIterationResultCommandBuildsAndWritesResult(t *testing.T) {
 	if result.Validation.Status != "passed" || len(result.Validation.Commands) != 1 {
 		t.Fatalf("validation = %#v", result.Validation)
 	}
-	if result.Artifacts.Plan != "plan" || result.Artifacts.Summary != "summary" || result.Artifacts.Worklog != "worklog" {
+	if result.Artifacts.Plan != "plan" {
 		t.Fatalf("artifacts = %#v", result.Artifacts)
 	}
 	if len(result.Assumptions) != 1 {

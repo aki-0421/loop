@@ -42,6 +42,7 @@ var targetBranchConfirmationSleep = sleepContext
 
 var githubSleepPollInterval = 5 * time.Minute
 var targetBranchConfirmationDuration = 5 * time.Second
+var resultHandoffPollInterval = 200 * time.Millisecond
 
 var errPRChecksTimedOut = errors.New("pull request checks timed out")
 
@@ -353,6 +354,14 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 		iterationID := runstate.IterationID(i)
 		renderer.Stage(runstate.StageBranchCreated, "starting iteration "+iterationID)
 		iterDir := filepath.Join(runDir, "iterations", iterationID)
+		activeDir := iterDir
+		if !*dryRun {
+			var err error
+			activeDir, err = createIterationTempDir(runID, iterationID)
+			if err != nil {
+				return codedError{1, err}
+			}
+		}
 		initialBranch := gitx.InitialBranchName(i)
 		renderer.Branch(initialBranch)
 		state.CurrentIteration = iterationID
@@ -385,7 +394,7 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 			branchRunner = gitx.Runner{Dir: workDir}
 			cleanup.WorkDir = workDir
 		}
-		paths := promptPaths(iterDir)
+		paths := promptPathsWithActive(iterDir, activeDir)
 		paths.Goal = *goal
 		paths.Language = cfg.Language.Default
 		paths.RunID = runID
@@ -507,6 +516,9 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 				}
 				cleanup.Integrated = true
 			}
+			if issues := cleanupDisposableIterationFiles(paths.ActiveDir, paths.Events); len(issues) > 0 {
+				appendErrorLog(paths.Errors, "iteration file cleanup failed: "+strings.Join(issues, "; "))
+			}
 			if result.ShouldFullyStop {
 				state.Stage = runstate.StageCompleted
 				_ = runstate.Write(statePath, state)
@@ -600,6 +612,9 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 			if cfg.Git.Integration.LocalMerge.DeleteBranch {
 				_ = runner.DeleteBranch(ctx, finalBranch, true)
 			}
+		}
+		if issues := cleanupDisposableIterationFiles(paths.ActiveDir, paths.Events); len(issues) > 0 {
+			appendErrorLog(paths.Errors, "iteration file cleanup failed: "+strings.Join(issues, "; "))
 		}
 		if result.ShouldFullyStop {
 			state.Stage = runstate.StageCompleted
@@ -793,6 +808,86 @@ func removeEmptyDir(path string) {
 		return
 	}
 	_ = os.Remove(path)
+}
+
+func createIterationTempDir(runID, iterationID string) (string, error) {
+	prefix := "loop-" + sanitizeTempPart(runID) + "-" + sanitizeTempPart(iterationID) + "-"
+	dir, err := os.MkdirTemp("", prefix)
+	if err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".loop-active-temp"), []byte("1\n"), 0o644); err != nil {
+		_ = os.RemoveAll(dir)
+		return "", err
+	}
+	return dir, nil
+}
+
+func sanitizeTempPart(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	var b strings.Builder
+	lastDash := false
+	for _, r := range value {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+			lastDash = false
+			continue
+		}
+		if !lastDash {
+			b.WriteByte('-')
+			lastDash = true
+		}
+	}
+	out := strings.Trim(b.String(), "-")
+	if out == "" {
+		return "iteration"
+	}
+	return out
+}
+
+func cleanupDisposableIterationFiles(activeDir, eventLogPath string) []string {
+	if strings.TrimSpace(activeDir) == "" {
+		return nil
+	}
+	var removed []string
+	var issues []string
+	marker := filepath.Join(activeDir, ".loop-active-temp")
+	if _, err := os.Stat(marker); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		issues = append(issues, "active temp marker: "+err.Error())
+		return issues
+	}
+	if err := filepath.WalkDir(activeDir, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			issues = append(issues, path+": "+err.Error())
+			return nil
+		}
+		if !entry.IsDir() {
+			name, relErr := filepath.Rel(activeDir, path)
+			if relErr != nil {
+				name = filepath.Base(path)
+			}
+			if name != ".loop-active-temp" {
+				removed = append(removed, name)
+			}
+		}
+		return nil
+	}); err != nil {
+		issues = append(issues, "walk active temp dir: "+err.Error())
+	}
+	if err := os.RemoveAll(activeDir); err != nil {
+		issues = append(issues, "remove active temp dir: "+err.Error())
+	}
+	if eventLogPath != "" {
+		event := runstate.Event{"type": "iteration.active_temp.cleanup.completed", "active_dir": activeDir, "removed": removed}
+		if len(issues) > 0 {
+			event["issues"] = issues
+		}
+		_ = runstate.AppendEvent(eventLogPath, event)
+	}
+	return issues
 }
 
 func runGitCleanPreservingLoopRuntime(ctx context.Context, runner gitx.Runner) (string, error) {
@@ -1217,8 +1312,8 @@ func commandIssueReport(ctx context.Context, g globals, args []string) error {
 	title := fs.String("title", "", "issue title")
 	body := fs.String("body", "", "issue body")
 	bodyFile := fs.String("body-file", "", "read issue body from file")
-	kind := fs.String("kind", "other", "gap kind: tool, docs, guardrail, observability, environment, workflow, or other")
-	blocking := fs.Bool("blocking", false, "mark the capability gap as blocking")
+	kind := fs.String("kind", "other", "proposal kind: tool, docs, guardrail, observability, environment, workflow, or other")
+	blocking := fs.Bool("blocking", false, "mark the improvement proposal as blocking")
 	iterDir := fs.String("iteration-dir", "", "iteration directory")
 	dirAlias := fs.String("dir", "", "iteration directory")
 	runID := fs.String("run", os.Getenv("LOOP_RUN_ID"), "run id")
@@ -1606,14 +1701,14 @@ func commandDoctor(ctx context.Context, g globals, args []string) error {
 }
 
 type pathSet struct {
+	IterationDir    string
+	ActiveDir       string
 	EffectiveConfig string
 	Runtime         string
 	Prompt          string
 	Plan            string
 	Todo            string
-	Worklog         string
 	Validation      string
-	Summary         string
 	Result          string
 	Events          string
 	Stdout          string
@@ -1637,21 +1732,28 @@ type pathSet struct {
 }
 
 func promptPaths(iterDir string) pathSet {
+	return promptPathsWithActive(iterDir, artifactdb.ActiveDirFromEnv(iterDir))
+}
+
+func promptPathsWithActive(iterDir, activeDir string) pathSet {
+	if strings.TrimSpace(activeDir) == "" {
+		activeDir = iterDir
+	}
 	return pathSet{
+		IterationDir:    iterDir,
+		ActiveDir:       activeDir,
 		EffectiveConfig: filepath.Join(iterDir, "effective-config.yaml"),
-		Runtime:         filepath.Join(iterDir, "runtime.json"),
+		Runtime:         filepath.Join(activeDir, "runtime.json"),
 		Prompt:          filepath.Join(iterDir, "prompt.md"),
-		Plan:            filepath.Join(iterDir, "plan.md"),
-		Todo:            filepath.Join(iterDir, "todo.md"),
-		Worklog:         filepath.Join(iterDir, "worklog.md"),
-		Validation:      filepath.Join(iterDir, "validation.md"),
-		Summary:         filepath.Join(iterDir, "summary.md"),
+		Plan:            filepath.Join(activeDir, "plan.md"),
+		Todo:            filepath.Join(activeDir, "todo.md"),
+		Validation:      filepath.Join(activeDir, "validation.md"),
 		Result:          filepath.Join(iterDir, "result.json"),
 		Events:          filepath.Join(iterDir, "agent-events.jsonl"),
 		Stdout:          filepath.Join(iterDir, "agent.stdout.log"),
 		Stderr:          filepath.Join(iterDir, "agent.stderr.log"),
-		PRTitle:         filepath.Join(iterDir, "pr-title.txt"),
-		PRBody:          filepath.Join(iterDir, "pr-body.md"),
+		PRTitle:         filepath.Join(activeDir, "pr-title.txt"),
+		PRBody:          filepath.Join(activeDir, "pr-body.md"),
 		Errors:          filepath.Join(iterDir, "errors.log"),
 	}
 }
@@ -1698,7 +1800,7 @@ func runAgent(ctx context.Context, cfg config.Config, root string, paths pathSet
 		return fmt.Errorf("agent adapter %q uses unsupported prompt mode file_arg", cfg.Agent.Default)
 	}
 	promptText := buildAgentPrompt(paths)
-	recordAgentPromptAudit(filepath.Dir(paths.Result), promptText)
+	recordAgentPromptAudit(paths.ActiveDir, promptText)
 	pa := agent.ProcessAdapter{
 		AdapterName: cfg.Agent.Default,
 		Command:     adapterCfg.Command,
@@ -1707,23 +1809,25 @@ func runAgent(ctx context.Context, cfg config.Config, root string, paths pathSet
 		Env:         adapterCfg.Env,
 	}
 	env := map[string]string{
-		"LOOP_RESULT_ARTIFACT":   "result",
-		"LOOP_WORKDIR":           root,
-		"LOOP_RUN_GOAL":          paths.Goal,
-		"LOOP_OUTPUT_LANGUAGE":   paths.Language,
-		"LOOP_RUN_ID":            paths.RunID,
-		"LOOP_ITERATION_ID":      paths.IterationID,
-		"LOOP_BASE_BRANCH":       paths.BaseBranch,
-		"LOOP_INITIAL_BRANCH":    firstNonEmpty(paths.InitialBranch, paths.CurrentBranch),
-		"LOOP_CURRENT_BRANCH":    paths.CurrentBranch,
-		"LOOP_BRANCH_RENAMED":    strconv.FormatBool(paths.BranchRenamed),
-		"LOOP_INTEGRATION_MODE":  paths.IntegrationMode,
-		"LOOP_PULL_REQUEST_MODE": strconv.FormatBool(paths.PullRequestMode),
-		"LOOP_PR_MODE":           strconv.FormatBool(paths.PullRequestMode),
+		"LOOP_RESULT_HANDOFF":            "master-db",
+		"LOOP_ITERATION_DIR":             paths.IterationDir,
+		artifactdb.ActiveIterationDirEnv: paths.ActiveDir,
+		"LOOP_WORKDIR":                   root,
+		"LOOP_RUN_GOAL":                  paths.Goal,
+		"LOOP_OUTPUT_LANGUAGE":           paths.Language,
+		"LOOP_RUN_ID":                    paths.RunID,
+		"LOOP_ITERATION_ID":              paths.IterationID,
+		"LOOP_BASE_BRANCH":               paths.BaseBranch,
+		"LOOP_INITIAL_BRANCH":            firstNonEmpty(paths.InitialBranch, paths.CurrentBranch),
+		"LOOP_CURRENT_BRANCH":            paths.CurrentBranch,
+		"LOOP_BRANCH_RENAMED":            strconv.FormatBool(paths.BranchRenamed),
+		"LOOP_INTEGRATION_MODE":          paths.IntegrationMode,
+		"LOOP_PULL_REQUEST_MODE":         strconv.FormatBool(paths.PullRequestMode),
+		"LOOP_PR_MODE":                   strconv.FormatBool(paths.PullRequestMode),
 	}
 	_, err := pa.Run(ctx, agent.RunRequest{
 		WorkDir: root, Env: env, PromptText: promptText,
-		IterationDir: filepath.Dir(paths.Result), EventLogPath: paths.Events, ErrorsLogPath: paths.Errors,
+		IterationDir: paths.IterationDir, EventLogPath: paths.Events, ErrorsLogPath: paths.Errors,
 		OnEvent: onEvent,
 	})
 	return err
@@ -1746,12 +1850,11 @@ func runAgentAndReadResult(ctx context.Context, cfg config.Config, workDir strin
 	if paths == nil {
 		return nil, errors.New("path set is required")
 	}
-	agentErr := runAgent(ctx, cfg, workDir, *paths, onEvent)
+	result, agentErr, resultErr := runAgentUntilResult(ctx, cfg, workDir, paths, onEvent)
 	if err := refreshTrackedBranch(ctx, workDir, paths); err != nil {
 		appendErrorLog(paths.Errors, fmt.Sprintf("branch tracking validation failed: %v", err))
 		return nil, err
 	}
-	result, resultErr := validateResultArtifact(*paths)
 	if ctx.Err() != nil {
 		if agentErr != nil {
 			return nil, fmt.Errorf("agent cancelled: %w", agentErr)
@@ -1759,16 +1862,15 @@ func runAgentAndReadResult(ctx context.Context, cfg config.Config, workDir strin
 		return nil, ctx.Err()
 	}
 	for attempt := 1; resultErr != nil && attempt <= cfg.Run.RepairAttempts && ctx.Err() == nil; attempt++ {
-		appendErrorLog(paths.Errors, fmt.Sprintf("result artifact missing or invalid before repair attempt %d: %v", attempt, resultErr))
+		appendErrorLog(paths.Errors, fmt.Sprintf("result handoff missing or invalid before repair attempt %d: %v", attempt, resultErr))
 		previousExtra := paths.AgentPromptExtra
-		paths.AgentPromptExtra = repairContract(fmt.Sprintf("Repair attempt %d required because the result artifact was missing or invalid: %v", attempt, resultErr))
-		agentErr = runAgent(ctx, cfg, workDir, *paths, onEvent)
+		paths.AgentPromptExtra = repairContract(fmt.Sprintf("Repair attempt %d required because the result handoff was missing or invalid: %v", attempt, resultErr))
+		result, agentErr, resultErr = runAgentUntilResult(ctx, cfg, workDir, paths, onEvent)
 		paths.AgentPromptExtra = previousExtra
 		if err := refreshTrackedBranch(ctx, workDir, paths); err != nil {
 			appendErrorLog(paths.Errors, fmt.Sprintf("branch tracking validation failed before repair attempt %d completed: %v", attempt, err))
 			return nil, err
 		}
-		result, resultErr = validateResultArtifact(*paths)
 		if ctx.Err() != nil {
 			if agentErr != nil {
 				return nil, fmt.Errorf("agent cancelled: %w", agentErr)
@@ -1777,7 +1879,7 @@ func runAgentAndReadResult(ctx context.Context, cfg config.Config, workDir strin
 		}
 	}
 	if resultErr != nil {
-		appendErrorLog(paths.Errors, fmt.Sprintf("result artifact validation failed: %v", resultErr))
+		appendErrorLog(paths.Errors, fmt.Sprintf("result handoff validation failed: %v", resultErr))
 		if agentErr != nil {
 			return nil, fmt.Errorf("agent failed and result JSON is invalid: %w; agent error: %v", resultErr, agentErr)
 		}
@@ -1786,8 +1888,43 @@ func runAgentAndReadResult(ctx context.Context, cfg config.Config, workDir strin
 	return result, nil
 }
 
-func validateResultArtifact(paths pathSet) (*validation.IterationResult, error) {
-	data, err := artifactdb.Read(filepath.Dir(paths.Result), "result")
+func runAgentUntilResult(ctx context.Context, cfg config.Config, workDir string, paths *pathSet, onEvent func(runstate.Event)) (*validation.IterationResult, error, error) {
+	globalPath := artifactdb.GlobalDBPathForIteration(filepath.Dir(paths.Result))
+	if globalPath == "" {
+		return nil, nil, errors.New("result handoff requires an iteration directory under .loop/runs")
+	}
+	_ = artifactdb.ClearResultHandoff(globalPath, paths.RunID, paths.IterationID)
+	runCtx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	done := make(chan error, 1)
+	go func() {
+		done <- runAgent(runCtx, cfg, workDir, *paths, onEvent)
+	}()
+
+	ticker := time.NewTicker(resultHandoffPollInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case agentErr := <-done:
+			result, resultErr := validateResultHandoff(ctx, workDir, paths, globalPath)
+			return result, agentErr, resultErr
+		case <-ticker.C:
+			result, resultErr := validateResultHandoff(ctx, workDir, paths, globalPath)
+			if resultErr == nil {
+				cancel(agent.ErrResultReceived)
+				agentErr := <-done
+				return result, agentErr, nil
+			}
+		case <-ctx.Done():
+			cancel(ctx.Err())
+			agentErr := <-done
+			return nil, agentErr, ctx.Err()
+		}
+	}
+}
+
+func validateResultHandoff(ctx context.Context, workDir string, paths *pathSet, globalPath string) (*validation.IterationResult, error) {
+	data, err := artifactdb.ReadResultHandoff(globalPath, paths.RunID, paths.IterationID)
 	if err != nil {
 		return nil, err
 	}
@@ -1795,7 +1932,10 @@ func validateResultArtifact(paths pathSet) (*validation.IterationResult, error) 
 	if err != nil {
 		return nil, err
 	}
-	if err := validateResultBranchContract(result, paths); err != nil {
+	if err := refreshTrackedBranch(ctx, workDir, paths); err != nil {
+		return nil, err
+	}
+	if err := validateResultBranchContract(result, *paths); err != nil {
 		return nil, err
 	}
 	return result, nil
@@ -1926,7 +2066,7 @@ func runConfiguredValidation(ctx context.Context, root string, paths pathSet, co
 		converted = append(converted, validation.Command{Name: command.Name, Run: command.Run, Required: command.Required})
 	}
 	results, err := validation.Runner{WorkDir: root}.Run(ctx, converted)
-	iterDir := filepath.Dir(paths.Result)
+	iterDir := firstNonEmpty(paths.ActiveDir, filepath.Dir(paths.Result))
 	for i, result := range results {
 		name := result.Name
 		if name == "" {
@@ -1936,7 +2076,7 @@ func runConfiguredValidation(ctx context.Context, root string, paths pathSet, co
 			name = "command"
 		}
 		outputName := sanitizeValidationOutputName(name)
-		results[i].OutputPath = "validation:" + outputName
+		results[i].OutputPath = "validation-output-" + outputName + ".log"
 		_ = artifactdb.WriteValidationOutput(iterDir, outputName, result.Output)
 	}
 	if writeErr := artifactdb.Write(iterDir, "validation", validation.FormatMarkdown(results)); writeErr != nil && err == nil {
@@ -1983,7 +2123,7 @@ func integratePR(ctx context.Context, root, workDir string, cfg config.Config, b
 
 func startPRIntegration(ctx context.Context, root string, cfg config.Config, branch string, paths pathSet) (*prIntegrationSession, error) {
 	template := readPullRequestTemplate(root)
-	iterDir := filepath.Dir(paths.Result)
+	iterDir := firstNonEmpty(paths.ActiveDir, filepath.Dir(paths.Result))
 	title := strings.TrimSpace(readArtifactOptional(iterDir, "pr-title"))
 	if title == "" {
 		title = fallbackPRTitle(branch)
@@ -2247,10 +2387,9 @@ func prCheckRepairPrompt(prID string, attempt, total int, result pr.CommandResul
 		"```text\n%s\n```\n\n" +
 		"Embedded repair instructions:\n\n" +
 		"1. Before changing files, perform a web search for the exact failing check, error message, or stack trace and the likely root cause. Prefer official documentation, project issue trackers, and CI provider documentation.\n" +
-		"2. Record the search queries, useful links or source names, and the conclusion in the worklog artifact before editing.\n" +
-		"3. Use the local repository evidence together with the web findings to make the smallest fix on the current branch.\n" +
-		"4. Run relevant local validation, commit complete changes through `loop commit`, and leave the working tree clean.\n" +
-		"5. Write an updated result artifact. If web search is unavailable, record that limitation in the worklog and continue from local diagnostics.\n"
+		"2. Use the local repository evidence together with the web findings to make the smallest fix on the current branch.\n" +
+		"3. Run relevant local validation, commit complete changes through `loop commit`, and leave the working tree clean.\n" +
+		"4. Write an updated result handoff with `loop iteration result --write`. If the failure cannot be repaired automatically, report the concrete repository or harness issue with `loop issue report` before returning blocked or failed.\n"
 	return fmt.Sprintf(repairPrompt, prID, attempt, total, details)
 }
 
@@ -2300,7 +2439,7 @@ func fallbackPRTitle(branch string) string {
 func fallbackPRBody(branch, template string) string {
 	if strings.TrimSpace(template) != "" {
 		body := strings.TrimRight(template, "\n")
-		return body + "\n\n## Loop Notes\n\n- Branch: `" + branch + "`\n- See loop `summary` and `validation` artifacts for generated details.\n"
+		return body + "\n\n## Loop Notes\n\n- Branch: `" + branch + "`\n- See loop validation logs for generated details.\n"
 	}
 	return "## Summary\n\nGenerated by loop.\n\n## Verification\n\nSee loop validation logs.\n"
 }
