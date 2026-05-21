@@ -300,7 +300,6 @@ run:
 
 git:
   baseBranch: develop
-  worktree: false
   integration:
     mode: local_merge
 `, yamlSingleQuote(agentCommand), yamlSingleQuote(opts.Sequence), yamlSingleQuote(countFile), opts.MaxIterations, opts.RepairAttempts)

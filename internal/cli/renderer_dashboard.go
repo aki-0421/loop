@@ -43,6 +43,7 @@ type rendererSnapshot struct {
 	OutputTokens    int
 	TokensEstimated bool
 	LatestMsg       string
+	Confirmation    *rendererConfirmation
 }
 
 type dashboardSymbols struct {
@@ -67,6 +68,9 @@ func renderDashboard(s rendererSnapshot, width, height int) []string {
 		height = 24
 	}
 	symbols := symbolsForEnvironment()
+	if s.Confirmation != nil {
+		return renderConfirmationDashboard(s, symbols, width, height)
+	}
 	if width < 72 || height < 18 {
 		return renderPlainStatusSnapshot(s, width, height)
 	}
@@ -137,6 +141,45 @@ func renderFocusedDashboard(s rendererSnapshot, symbols dashboardSymbols, width,
 		lines = append(lines, centerLine(colorize(s, ansiYellow, planningText(s)), width))
 	}
 
+	return fitCanvasLines(lines, colorize(s, ansiDim, footerText(s, symbols)), width, height)
+}
+
+func renderConfirmationDashboard(s rendererSnapshot, symbols dashboardSymbols, width, height int) []string {
+	contentWidth := minInt(width-8, 84)
+	if contentWidth < 32 {
+		contentWidth = width - 2
+	}
+	confirmation := s.Confirmation
+	title := "Confirm Target Branch"
+	target := ""
+	main := ""
+	until := s.Now
+	if confirmation != nil {
+		title = valueOr(confirmation.Title, title)
+		target = confirmation.TargetBranch
+		main = confirmation.MainBranch
+		until = confirmation.Until
+	}
+	remaining := until.Sub(s.Now).Round(time.Second)
+	if remaining < 0 {
+		remaining = 0
+	}
+	lines := []string{}
+	for i := 0; i < logoTopPadding; i++ {
+		lines = append(lines, "")
+	}
+	for _, line := range loopLogo(s) {
+		lines = append(lines, centerLine(line, width))
+	}
+	lines = append(lines,
+		"",
+		centerLine(colorize(s, ansiYellow+ansiBold, title), width),
+		"",
+		centerLine(ellipsize("Target branch: "+target, contentWidth), width),
+		centerLine(ellipsize("Main branch: "+main, contentWidth), width),
+		"",
+		centerLine(colorize(s, ansiDim, "Continuing in "+formatDuration(remaining)+". Press Ctrl+C to cancel."), width),
+	)
 	return fitCanvasLines(lines, colorize(s, ansiDim, footerText(s, symbols)), width, height)
 }
 

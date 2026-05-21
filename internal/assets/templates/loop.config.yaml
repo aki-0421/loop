@@ -26,18 +26,6 @@ skills:
       path: .agents/skills
 
 git:
-  baseBranch: develop
-  worktree: true
-  cleanPolicy: require_clean_before_start
-  branch:
-    initialPattern: wip/{iteration}
-    finalPattern: "{kind}/{slug}"
-    conflictSuffix: "-{iteration}"
-  commits:
-    requireAgentCommits: true
-    allowCliFallbackCommit: false
-    enforcePattern: true
-    messageMaxLength: 72
   integration:
     mode: local_merge
     local_merge:
@@ -59,11 +47,6 @@ validation:
   commands: []
   agentMayAddCommands: true
   requireRequiredCommandsToPass: true
-
-memory:
-  recentLimit: 30
-  searchLimit: 12
-  compactEvery: 10
 
 logs:
   dir: .loop/runs

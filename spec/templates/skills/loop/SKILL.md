@@ -62,12 +62,12 @@ pwd
 git status --short --branch
 loop iteration read runtime
 loop iteration read instruction
-loop memory recent --limit 30
 ```
 
 Then:
 
-- If GitHub context memory points to relevant older context, run `loop memory search <query>`.
+- Choose a task-appropriate positive limit and run `loop memory recent --limit <n>`.
+- If GitHub context memory points to relevant older context, run `loop memory search <query> --limit <n>`.
 - If commit history exists, inspect recent commits, usually with `git log --oneline -20`.
 - Inspect only the broad landmarks needed to plan: root files, package directories, README, nearest `AGENTS.md`, docs indexes, package scripts, tests, CI, and validation entry points.
 - Carry forward the goal, branch/mode, validation settings, recent changes, unfinished work, constraints, and assumptions.
@@ -222,7 +222,7 @@ Generate the final result through the CLI:
 loop iteration result --write --status completed --summary "..." --should-stop false --goal-evaluation "..." --validation-status passed
 ```
 
-Add validation command, assumption, blocked reason, error, or branch override flags only when needed. The CLI owns the JSON shape. Fix any CLI feedback and rerun.
+Add validation command, assumption, blocked reason, or error flags only when needed. The CLI owns the JSON shape and branch metadata. Fix any CLI feedback and rerun.
 
 Use `completed` only when the selected slice is complete and required merge steps are finished. Use `blocked` when no safe path exists after any necessary blocking Issue has been created and unrelated work is exhausted. Use `failed` for unrecoverable execution errors. Use `no_change` only when repository evidence shows no change is needed.
 

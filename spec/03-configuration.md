@@ -18,9 +18,6 @@ The effective configuration is written to each iteration directory as `effective
 
 ```yaml
 version: 1
-
-git:
-  baseBranch: main
 ```
 
 Only keep values that differ from the built-in defaults. For example:
@@ -41,7 +38,7 @@ skills:
   sourceDir: .codex/skills
 
 git:
-  baseBranch: main
+  baseBranch: main # omit to use the branch at run start
 ```
 
 ## `language`
@@ -83,29 +80,13 @@ Sync modes:
 | `symlink` | Symlink skills when the platform supports it. |
 | `off` | Do not sync; reference discovered skill paths in prompts. |
 
-## `git.branch`
+## `git`
 
-`initialPattern` creates a numbered branch before the agent plans. The default is `wip/{iteration}`, for example `wip/0001`.
+| Key | Type | Behavior |
+| --- | --- | --- |
+| `baseBranch` | string | Optional pinned integration target. When omitted, `loop run` uses the branch that was checked out when the command started. |
 
-After plan creation, the agent chooses a review branch name and runs `loop branch rename`. The CLI validates the kind against its fixed preset, slugifies the branch subject, and tracks the renamed branch for integration, for example:
-
-```text
-feat/add-token-refresh-tests
-fix/handle-empty-profile-response
-refactor/extract-auth-client
-```
-
-No built-in final branch pattern uses a `loop/` prefix. If the final name already exists, the CLI appends `conflictSuffix`.
-
-## `git.commits`
-
-`loop commit` uses this section when creating iteration commits.
-
-| Field | Behavior |
-| --- | --- |
-| `requireAgentCommits` | Require at least one commit for completed iterations with repository changes. |
-| `enforcePattern` | Reject iteration commits whose subjects do not follow the loop commit format. |
-| `messageMaxLength` | Maximum length for the final `<TYPE>: <message>` subject. |
+Branch naming is not configurable. The CLI creates each iteration in a Git worktree on a temporary branch named `wip/<iteration>`, accepts only its fixed branch kind preset for `loop branch rename`, slugifies the branch subject, and appends `-<iteration>` only when needed to avoid collisions.
 
 ## `git.integration`
 
@@ -135,7 +116,7 @@ If no checks are reported after the discovery timeout, the check wait is treated
 
 ## `validation`
 
-Configured validation commands run after the agent phase and before integration. They run from the iteration work directory, which is the iteration worktree when `git.worktree=true`.
+Configured validation commands run after the agent phase and before integration. They run from the iteration worktree.
 
 Each command has:
 

@@ -38,8 +38,10 @@ type codedError struct {
 
 var prChecksSleep = sleepContext
 var githubSleepPoll = sleepContext
+var targetBranchConfirmationSleep = sleepContext
 
 var githubSleepPollInterval = 5 * time.Minute
+var targetBranchConfirmationDuration = 5 * time.Second
 
 var errPRChecksTimedOut = errors.New("pull request checks timed out")
 
@@ -199,17 +201,12 @@ func commandInit(ctx context.Context, g globals, args []string) error {
 	if err != nil {
 		return codedError{1, fmt.Errorf("not inside a git repository: %w", err)}
 	}
-	runner := gitx.Runner{Dir: root}
 	baseBranch := *base
-	if baseBranch == "" {
-		baseBranch, err = runner.DefaultBaseBranch(ctx)
-		if err != nil {
-			return codedError{1, err}
-		}
-	}
 	cfg := config.Defaults()
 	cfg.Agent.Default = *agentName
-	cfg.Git.BaseBranch = baseBranch
+	if baseBranch != "" {
+		cfg.Git.BaseBranch = baseBranch
+	}
 	skillDir := skills.PreferredInstallDir(root, cfg)
 	cfg.Skills.SourceDir = filepath.ToSlash(rel(root, skillDir))
 	if target, ok := cfg.Skills.Targets["codex"]; ok && target.Mode == "off" {
@@ -238,8 +235,13 @@ func commandInit(ctx context.Context, g globals, args []string) error {
 			return codedError{1, err}
 		}
 	}
-	out := map[string]any{"config": rel(root, configPath), "base": baseBranch, "agent": *agentName, "skills": rel(root, skillDir)}
-	return printResult(g, out, fmt.Sprintf("Initialized loop in %s\nConfig: %s\nSkills: %s\nBase: %s\n", root, rel(root, configPath), rel(root, skillDir), baseBranch))
+	out := map[string]any{"config": rel(root, configPath), "agent": *agentName, "skills": rel(root, skillDir)}
+	baseLine := "Base: current branch at run start\n"
+	if baseBranch != "" {
+		out["base"] = baseBranch
+		baseLine = fmt.Sprintf("Base: %s\n", baseBranch)
+	}
+	return printResult(g, out, fmt.Sprintf("Initialized loop in %s\nConfig: %s\nSkills: %s\n%s", root, rel(root, configPath), rel(root, skillDir), baseLine))
 }
 
 func commandRun(ctx context.Context, g globals, args []string) error {
@@ -254,7 +256,6 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 	maxIterations := fs.Int("max-iterations", 0, "maximum iterations, 0 for unlimited")
 	prFlag := fs.Bool("pr", false, "use pull request integration")
 	base := fs.String("base", "", "base branch")
-	worktreeFlag := fs.Bool("worktree", false, "run each iteration in a Git worktree")
 	resumeID := fs.String("resume", "", "resume run id")
 	fromIteration := fs.Int("from-iteration", 0, "resume from iteration")
 	keepBranches := fs.String("keep-branches", "", "branch cleanup mode")
@@ -292,16 +293,20 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 		v := true
 		overrides.PRMode = &v
 	}
-	if *worktreeFlag {
-		v := true
-		overrides.Worktree = &v
-	}
 	cfg, err := config.Load(config.LoadOptions{CWD: root, ConfigPath: g.ConfigPath, Overrides: overrides})
 	if err != nil {
 		return codedError{3, err}
 	}
 	runner := gitx.Runner{Dir: root}
-	if !*dryRun && cfg.Git.CleanPolicy == "require_clean_before_start" {
+	startBranch, err := runner.CurrentBranch(ctx)
+	if err != nil {
+		return codedError{1, err}
+	}
+	if strings.TrimSpace(cfg.Git.BaseBranch) == "" {
+		cfg.Git.BaseBranch = startBranch
+	}
+	mainBranch, _ := runner.MainBranch(ctx)
+	if !*dryRun {
 		clean, err := runner.CheckClean(ctx, gitx.CleanOptions{IgnoreRuntime: true})
 		if err != nil {
 			return codedError{1, err}
@@ -329,6 +334,13 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 	}()
 	if err := runstate.Write(statePath, state); err != nil {
 		return codedError{1, err}
+	}
+	if shouldConfirmTargetBranch(cfg.Git.BaseBranch, mainBranch) {
+		if err := renderer.ConfirmTargetBranch(ctx, cfg.Git.BaseBranch, mainBranch, targetBranchConfirmationDuration); err != nil {
+			state.Stage = runstate.StageCancelled
+			_ = runstate.Write(statePath, state)
+			return codedError{1, err}
+		}
 	}
 	if err := syncMemoryBeforeRun(ctx, root, cfg, renderer); err != nil {
 		state.Stage = runstate.StageFailed
@@ -359,27 +371,19 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 		}
 		defer cleanup.OnCancel(ctx, statePath, &state)
 		if !*dryRun {
-			if cfg.Git.Worktree {
-				worktreePath = filepath.Join(root, ".loop", "worktrees", runID, iterationID)
-				cleanup.WorktreePath = worktreePath
-				cleanup.Active = true
-				if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
-					return codedError{1, err}
-				}
-				if _, err := runner.Run(ctx, "worktree", "add", "-b", initialBranch, worktreePath, cfg.Git.BaseBranch); err != nil {
-					return codedError{1, err}
-				}
-				renderer.Stage(runstate.StageBranchCreated, "created worktree "+rel(root, worktreePath))
-				workDir = worktreePath
-				branchRunner = gitx.Runner{Dir: workDir}
-				cleanup.WorkDir = workDir
-			} else if err := runner.CreateBranch(ctx, initialBranch, cfg.Git.BaseBranch); err != nil {
-				cleanup.Active = true
+			worktreePath = filepath.Join(root, ".loop", "worktrees", runID, iterationID)
+			cleanup.WorktreePath = worktreePath
+			cleanup.Active = true
+			if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
 				return codedError{1, err}
-			} else {
-				cleanup.Active = true
-				renderer.Stage(runstate.StageBranchCreated, "created branch "+initialBranch)
 			}
+			if _, err := runner.Run(ctx, "worktree", "add", "-b", initialBranch, worktreePath, cfg.Git.BaseBranch); err != nil {
+				return codedError{1, err}
+			}
+			renderer.Stage(runstate.StageBranchCreated, "created worktree "+rel(root, worktreePath))
+			workDir = worktreePath
+			branchRunner = gitx.Runner{Dir: workDir}
+			cleanup.WorkDir = workDir
 		}
 		paths := promptPaths(iterDir)
 		paths.Goal = *goal
@@ -523,10 +527,10 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 		}
 		renderer.Commits(len(commits))
 		if !mergedPR {
-			if len(commits) == 0 && cfg.Git.Commits.RequireAgentCommits {
+			if len(commits) == 0 {
 				return codedError{4, fmt.Errorf("completed iteration did not create commits")}
 			}
-			if err := validateIterationCommitSubjects(commits, cfg); err != nil {
+			if err := validateIterationCommitSubjects(commits); err != nil {
 				return codedError{4, err}
 			}
 			clean, err := branchRunner.CheckClean(ctx, gitx.CleanOptions{IgnoreRuntime: true})
@@ -617,7 +621,9 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 func minimalInitConfig(agentName, baseBranch, skillSourceDir string) ([]byte, error) {
 	cfg := minimalInitConfigFile{
 		Version: 1,
-		Git:     minimalGitConfig{BaseBranch: baseBranch},
+	}
+	if baseBranch != "" {
+		cfg.Git = &minimalGitConfig{BaseBranch: baseBranch}
 	}
 	if agentName != "" && agentName != "codex" {
 		agent := &minimalAgentConfig{Default: agentName}
@@ -644,11 +650,17 @@ func minimalInitConfig(agentName, baseBranch, skillSourceDir string) ([]byte, er
 	return out.Bytes(), nil
 }
 
+func shouldConfirmTargetBranch(targetBranch, mainBranch string) bool {
+	targetBranch = strings.TrimSpace(targetBranch)
+	mainBranch = strings.TrimSpace(mainBranch)
+	return targetBranch != "" && mainBranch != "" && targetBranch != mainBranch
+}
+
 type minimalInitConfigFile struct {
 	Version int                  `yaml:"version"`
 	Agent   *minimalAgentConfig  `yaml:"agent,omitempty"`
 	Skills  *minimalSkillsConfig `yaml:"skills,omitempty"`
-	Git     minimalGitConfig     `yaml:"git"`
+	Git     *minimalGitConfig    `yaml:"git,omitempty"`
 }
 
 type minimalAgentConfig struct {
@@ -665,7 +677,7 @@ type minimalSkillsConfig struct {
 }
 
 type minimalGitConfig struct {
-	BaseBranch string `yaml:"baseBranch"`
+	BaseBranch string `yaml:"baseBranch,omitempty"`
 }
 
 type iterationCleanup struct {
@@ -1023,15 +1035,22 @@ func commandMemory(ctx context.Context, g globals, args []string) error {
 	if err != nil {
 		return codedError{1, err}
 	}
-	cfg, _ := config.Load(config.LoadOptions{CWD: root, ConfigPath: g.ConfigPath, Overrides: config.Overrides{Agent: g.Agent}})
+	cfg, err := config.Load(config.LoadOptions{CWD: root, ConfigPath: g.ConfigPath, Overrides: config.Overrides{Agent: g.Agent}})
+	if err != nil {
+		return codedError{3, err}
+	}
 	runsDir := filepath.Join(root, cfg.Logs.Dir)
 	switch args[0] {
 	case "recent":
+		recentArgs := flagsFirst(args[1:], map[string]bool{"run": true, "repo": true, "limit": true})
 		fs := flag.NewFlagSet("memory recent", flag.ContinueOnError)
 		run := fs.String("run", "", "deprecated; ignored")
 		repo := fs.String("repo", "", "GitHub owner/name")
-		limit := fs.Int("limit", cfg.Memory.RecentLimit, "limit")
-		if err := fs.Parse(args[1:]); err != nil {
+		limit := fs.Int("limit", 0, "limit")
+		if err := fs.Parse(recentArgs); err != nil {
+			return codedError{2, err}
+		}
+		if err := requireLimitFlag(fs, limit); err != nil {
 			return codedError{2, err}
 		}
 		_ = run
@@ -1043,13 +1062,19 @@ func commandMemory(ctx context.Context, g globals, args []string) error {
 			fmt.Println(formatMemoryRecord(item))
 		}
 	case "search":
+		searchArgs := flagsFirst(args[1:], map[string]bool{
+			"run": true, "iteration": true, "artifact": true, "repo": true, "limit": true,
+		})
 		fs := flag.NewFlagSet("memory search", flag.ContinueOnError)
 		run := fs.String("run", "", "deprecated; ignored")
 		iteration := fs.String("iteration", "", "deprecated; ignored")
 		artifact := fs.String("artifact", "", "deprecated; ignored")
 		repo := fs.String("repo", "", "GitHub owner/name")
-		limit := fs.Int("limit", cfg.Memory.SearchLimit, "limit")
-		if err := fs.Parse(args[1:]); err != nil {
+		limit := fs.Int("limit", 0, "limit")
+		if err := fs.Parse(searchArgs); err != nil {
+			return codedError{2, err}
+		}
+		if err := requireLimitFlag(fs, limit); err != nil {
 			return codedError{2, err}
 		}
 		if fs.NArg() != 1 {
@@ -1069,6 +1094,22 @@ func commandMemory(ctx context.Context, g globals, args []string) error {
 		}
 	default:
 		return codedError{2, fmt.Errorf("unknown memory subcommand %q", args[0])}
+	}
+	return nil
+}
+
+func requireLimitFlag(fs *flag.FlagSet, limit *int) error {
+	seen := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "limit" {
+			seen = true
+		}
+	})
+	if !seen {
+		return errors.New("--limit is required")
+	}
+	if limit == nil || *limit <= 0 {
+		return errors.New("--limit must be positive")
 	}
 	return nil
 }
@@ -1122,7 +1163,11 @@ func commandIssueAsk(ctx context.Context, g globals, args []string) error {
 	if err != nil {
 		return codedError{1, err}
 	}
-	cfg, err := config.Load(config.LoadOptions{CWD: root, ConfigPath: g.ConfigPath, Overrides: config.Overrides{Agent: g.Agent, NoColor: g.NoColor}})
+	storageRoot, err := loopStorageRoot(ctx)
+	if err != nil {
+		return codedError{1, err}
+	}
+	cfg, err := config.Load(config.LoadOptions{CWD: storageRoot, ConfigPath: g.ConfigPath, Overrides: config.Overrides{Agent: g.Agent, NoColor: g.NoColor}})
 	if err != nil {
 		return codedError{3, err}
 	}
@@ -1143,7 +1188,7 @@ func commandIssueAsk(ctx context.Context, g globals, args []string) error {
 	}
 	record, err := memory.CreateIssueQuestion(ctx, memory.IssueQuestionOptions{
 		WorkDir:     root,
-		RunsDir:     filepath.Join(root, cfg.Logs.Dir),
+		RunsDir:     filepath.Join(storageRoot, cfg.Logs.Dir),
 		Title:       *title,
 		Body:        *body,
 		Blocking:    *blocking,
@@ -1198,7 +1243,11 @@ func commandIssueReport(ctx context.Context, g globals, args []string) error {
 	if err != nil {
 		return codedError{1, err}
 	}
-	cfg, err := config.Load(config.LoadOptions{CWD: root, ConfigPath: g.ConfigPath, Overrides: config.Overrides{Agent: g.Agent, NoColor: g.NoColor}})
+	storageRoot, err := loopStorageRoot(ctx)
+	if err != nil {
+		return codedError{1, err}
+	}
+	cfg, err := config.Load(config.LoadOptions{CWD: storageRoot, ConfigPath: g.ConfigPath, Overrides: config.Overrides{Agent: g.Agent, NoColor: g.NoColor}})
 	if err != nil {
 		return codedError{3, err}
 	}
@@ -1219,7 +1268,7 @@ func commandIssueReport(ctx context.Context, g globals, args []string) error {
 	}
 	record, err := memory.CreateIssueReport(ctx, memory.IssueReportOptions{
 		WorkDir:     root,
-		RunsDir:     filepath.Join(root, cfg.Logs.Dir),
+		RunsDir:     filepath.Join(storageRoot, cfg.Logs.Dir),
 		Title:       *title,
 		Body:        *body,
 		Kind:        *kind,
@@ -1527,7 +1576,11 @@ func commandDoctor(ctx context.Context, g globals, args []string) error {
 	if !gitx.IsRepository(ctx, root) {
 		problems = append(problems, "git repository not found")
 	}
-	if ok, err := (gitx.Runner{Dir: root}).BranchExists(ctx, cfg.Git.BaseBranch); err != nil || !ok {
+	runner := gitx.Runner{Dir: root}
+	if cfg.Git.BaseBranch == "" {
+		cfg.Git.BaseBranch, _ = runner.CurrentBranch(ctx)
+	}
+	if ok, err := runner.BranchExists(ctx, cfg.Git.BaseBranch); err != nil || !ok {
 		problems = append(problems, "base branch not found: "+cfg.Git.BaseBranch)
 	}
 	adapter, ok := cfg.Adapter(cfg.Agent.Default)
@@ -2173,10 +2226,10 @@ func validatePRRepairBranch(ctx context.Context, root, workDir string, cfg confi
 	if err != nil {
 		return err
 	}
-	if len(commits) == 0 && cfg.Git.Commits.RequireAgentCommits {
+	if len(commits) == 0 {
 		return fmt.Errorf("pull request check repair left no iteration commits")
 	}
-	return validateIterationCommitSubjects(commits, cfg)
+	return validateIterationCommitSubjects(commits)
 }
 
 func appendPRCheckFailure(paths pathSet, onEvent func(runstate.Event), prID string, result pr.CommandResult, err error) {

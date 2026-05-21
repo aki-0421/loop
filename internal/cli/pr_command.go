@@ -434,10 +434,10 @@ func validatePRBranchCommits(ctx context.Context, prCtx prCommandContext) error 
 	if err != nil {
 		return err
 	}
-	if len(commits) == 0 && prCtx.cfg.Git.Commits.RequireAgentCommits {
+	if len(commits) == 0 {
 		return fmt.Errorf("completed iteration did not create commits")
 	}
-	return validateIterationCommitSubjects(commits, prCtx.cfg)
+	return validateIterationCommitSubjects(commits)
 }
 
 func requirePRState(iterDir string) (prState, error) {

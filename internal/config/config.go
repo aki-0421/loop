@@ -26,7 +26,6 @@ type Config struct {
 	Skills     SkillsConfig     `yaml:"skills" json:"skills"`
 	Git        GitConfig        `yaml:"git" json:"git"`
 	Validation ValidationConfig `yaml:"validation" json:"validation"`
-	Memory     MemoryConfig     `yaml:"memory" json:"memory"`
 	Logs       LogsConfig       `yaml:"logs" json:"logs"`
 	NoColor    bool             `yaml:"-" json:"-"`
 }
@@ -66,24 +65,7 @@ type SkillTarget struct {
 
 type GitConfig struct {
 	BaseBranch  string            `yaml:"baseBranch" json:"baseBranch"`
-	Worktree    bool              `yaml:"worktree" json:"worktree"`
-	CleanPolicy string            `yaml:"cleanPolicy" json:"cleanPolicy"`
-	Branch      BranchConfig      `yaml:"branch" json:"branch"`
-	Commits     CommitConfig      `yaml:"commits" json:"commits"`
 	Integration IntegrationConfig `yaml:"integration" json:"integration"`
-}
-
-type BranchConfig struct {
-	InitialPattern string `yaml:"initialPattern" json:"initialPattern"`
-	FinalPattern   string `yaml:"finalPattern" json:"finalPattern"`
-	ConflictSuffix string `yaml:"conflictSuffix" json:"conflictSuffix"`
-}
-
-type CommitConfig struct {
-	RequireAgentCommits    bool `yaml:"requireAgentCommits" json:"requireAgentCommits"`
-	AllowCliFallbackCommit bool `yaml:"allowCliFallbackCommit" json:"allowCliFallbackCommit"`
-	EnforcePattern         bool `yaml:"enforcePattern" json:"enforcePattern"`
-	MessageMaxLength       int  `yaml:"messageMaxLength" json:"messageMaxLength"`
 }
 
 type IntegrationConfig struct {
@@ -122,12 +104,6 @@ type ValidationCommand struct {
 	Required bool   `yaml:"required" json:"required"`
 }
 
-type MemoryConfig struct {
-	RecentLimit  int `yaml:"recentLimit" json:"recentLimit"`
-	SearchLimit  int `yaml:"searchLimit" json:"searchLimit"`
-	CompactEvery int `yaml:"compactEvery" json:"compactEvery"`
-}
-
 type LogsConfig struct {
 	Dir                  string `yaml:"dir" json:"dir"`
 	RetainRawAgentOutput bool   `yaml:"retainRawAgentOutput" json:"retainRawAgentOutput"`
@@ -146,7 +122,6 @@ type Overrides struct {
 	MaxIterations *int
 	BaseBranch    string
 	PRMode        *bool
-	Worktree      *bool
 	NoColor       bool
 }
 
@@ -297,12 +272,6 @@ func Validate(cfg Config) error {
 			errs = append(errs, "skills.targets."+agent+".mode must be copy, symlink, or off")
 		}
 	}
-	if cfg.Git.BaseBranch == "" {
-		errs = append(errs, "git.baseBranch is required")
-	}
-	if cfg.Git.Branch.InitialPattern == "" || cfg.Git.Branch.FinalPattern == "" {
-		errs = append(errs, "git.branch patterns are required")
-	}
 	if !oneOf(cfg.Git.Integration.Mode, "local_merge", "pr") {
 		errs = append(errs, "git.integration.mode must be local_merge or pr")
 	}
@@ -317,9 +286,6 @@ func Validate(cfg Config) error {
 	}
 	if cfg.Git.Integration.PR.ChecksWatchTimeoutSeconds <= 0 {
 		errs = append(errs, "git.integration.pr.checksWatchTimeoutSeconds must be positive")
-	}
-	if cfg.Memory.RecentLimit < 0 || cfg.Memory.SearchLimit < 0 {
-		errs = append(errs, "memory limits must be non-negative")
 	}
 	if cfg.Logs.Dir == "" {
 		errs = append(errs, "logs.dir is required")
@@ -444,9 +410,6 @@ func applyOverrides(m map[string]any, o Overrides) {
 			mode = "pr"
 		}
 		setPath(m, mode, "git", "integration", "mode")
-	}
-	if o.Worktree != nil {
-		setPath(m, *o.Worktree, "git", "worktree")
 	}
 }
 

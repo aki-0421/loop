@@ -10,8 +10,6 @@ import (
 	"strings"
 
 	"github.com/aki-0421/loop/internal/artifactdb"
-	"github.com/aki-0421/loop/internal/config"
-	"github.com/aki-0421/loop/internal/gitx"
 )
 
 type todoArtifactItem struct {
@@ -440,19 +438,7 @@ func todoCommitSubject(ctx context.Context, g globals, kind string, args []strin
 	if strings.TrimSpace(kind) == "" || len(args) < 1 {
 		return "", errors.New(usage)
 	}
-	return buildLoopCommitSubject(kind, strings.Join(args, " "), todoCommitMessageMaxLength(ctx, g))
-}
-
-func todoCommitMessageMaxLength(ctx context.Context, g globals) int {
-	root, err := gitx.RepoRoot(ctx, ".")
-	if err != nil {
-		return 0
-	}
-	cfg, err := config.Load(config.LoadOptions{CWD: root, ConfigPath: g.ConfigPath, Overrides: config.Overrides{Agent: g.Agent, NoColor: g.NoColor}})
-	if err != nil {
-		return 0
-	}
-	return cfg.Git.Commits.MessageMaxLength
+	return buildLoopCommitSubject(kind, strings.Join(args, " "), loopCommitMessageMaxLength)
 }
 
 func splitTodoSubject(text string) (string, string, bool) {

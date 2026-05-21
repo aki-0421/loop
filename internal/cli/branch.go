@@ -55,7 +55,7 @@ func commandBranchRename(ctx context.Context, g globals, args []string) error {
 		return codedError{2, err}
 	}
 
-	root, cfg, err := loadBranchCommandConfig(ctx, g)
+	root, err := loadBranchCommandRoot(ctx, g)
 	if err != nil {
 		return codedError{1, err}
 	}
@@ -94,7 +94,7 @@ func commandBranchRename(ctx context.Context, g globals, args []string) error {
 	}
 	actual := desired
 	if desired != tracked.Current {
-		actual, err = uniqueBranchName(ctx, runner, desired, iterationIDForDir(resolvedDir), cfg)
+		actual, err = runner.UniqueBranchName(ctx, desired, iterationIDForDir(resolvedDir))
 		if err != nil {
 			return codedError{1, err}
 		}
@@ -112,16 +112,15 @@ func commandBranchRename(ctx context.Context, g globals, args []string) error {
 	return printResult(g, map[string]any{"branch": actual, "renamed": actual != tracked.Current}, actual+"\n")
 }
 
-func loadBranchCommandConfig(ctx context.Context, g globals) (string, config.Config, error) {
+func loadBranchCommandRoot(ctx context.Context, g globals) (string, error) {
 	root, err := loopStorageRoot(ctx)
 	if err != nil {
-		return "", config.Config{}, err
+		return "", err
 	}
-	cfg, err := config.Load(config.LoadOptions{CWD: root, ConfigPath: g.ConfigPath, Overrides: config.Overrides{Agent: g.Agent, NoColor: g.NoColor}})
-	if err != nil {
-		return "", config.Config{}, err
+	if _, err := config.Load(config.LoadOptions{CWD: root, ConfigPath: g.ConfigPath, Overrides: config.Overrides{Agent: g.Agent, NoColor: g.NoColor}}); err != nil {
+		return "", err
 	}
-	return root, cfg, nil
+	return root, nil
 }
 
 func iterationIDForDir(iterationDir string) string {
@@ -130,42 +129,6 @@ func iterationIDForDir(iterationDir string) string {
 		return iterationID
 	}
 	return filepath.Base(filepath.Clean(iterationDir))
-}
-
-func uniqueBranchName(ctx context.Context, runner gitx.Runner, branch, iterationID string, cfg config.Config) (string, error) {
-	candidates := []string{branch}
-	suffix := branchConflictSuffix(cfg.Git.Branch.ConflictSuffix, iterationID)
-	if suffix != "" {
-		candidates = append(candidates, branch+suffix)
-	}
-	stem := branch
-	if suffix != "" {
-		stem = branch + suffix
-	}
-	for i := 2; i < 1000; i++ {
-		candidates = append(candidates, fmt.Sprintf("%s-%d", stem, i))
-	}
-	for _, candidate := range candidates {
-		exists, err := runner.BranchExists(ctx, candidate)
-		if err != nil {
-			return "", err
-		}
-		if !exists {
-			return candidate, nil
-		}
-	}
-	return "", fmt.Errorf("could not find available branch name for %q", branch)
-}
-
-func branchConflictSuffix(pattern, iterationID string) string {
-	pattern = strings.TrimSpace(pattern)
-	if pattern == "" {
-		if iterationID == "" {
-			return ""
-		}
-		return "-" + iterationID
-	}
-	return strings.ReplaceAll(pattern, "{iteration}", iterationID)
 }
 
 func appendBranchRenameEvent(iterationDir, from, to string) {

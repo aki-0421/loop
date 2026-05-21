@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/aki-0421/loop/internal/config"
 	"github.com/aki-0421/loop/internal/gitx"
 )
 
@@ -85,8 +84,7 @@ func TestCommitCommandRequiresTypeFlag(t *testing.T) {
 }
 
 func TestValidateIterationCommitSubjectsReportsBadCommit(t *testing.T) {
-	cfg := config.Defaults()
-	err := validateIterationCommitSubjects([]gitx.Commit{{Hash: "abc1234567890", Subject: "bad message."}}, cfg)
+	err := validateIterationCommitSubjects([]gitx.Commit{{Hash: "abc1234567890", Subject: "bad message."}})
 	if err == nil {
 		t.Fatal("expected bad commit subject to fail")
 	}

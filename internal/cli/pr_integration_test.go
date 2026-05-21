@@ -42,7 +42,6 @@ run:
 
 git:
   baseBranch: develop
-  worktree: true
   integration:
     mode: pr
     pr:
@@ -176,7 +175,6 @@ run:
 
 git:
   baseBranch: develop
-  worktree: true
   integration:
     mode: pr
     pr:
@@ -239,7 +237,6 @@ run:
 
 git:
   baseBranch: develop
-  worktree: true
   integration:
     mode: pr
     pr:
@@ -301,7 +298,6 @@ run:
 
 git:
   baseBranch: develop
-  worktree: false
   integration:
     mode: pr
     pr:
@@ -361,7 +357,6 @@ run:
 
 git:
   baseBranch: develop
-  worktree: true
   integration:
     mode: pr
     pr:
@@ -485,7 +480,6 @@ agent:
 
 git:
   baseBranch: develop
-  worktree: false
   integration:
     mode: local_merge
 `, yamlSingleQuote(agentCommand)))
@@ -545,7 +539,6 @@ run:
 
 git:
   baseBranch: develop
-  worktree: false
   integration:
     mode: local_merge
 `, yamlSingleQuote(agentCommand)))
@@ -591,7 +584,6 @@ run:
 
 git:
   baseBranch: develop
-  worktree: false
   integration:
     mode: pr
 `, yamlSingleQuote(agentCommand)))
