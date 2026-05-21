@@ -32,11 +32,11 @@ func TestHelpCommandListsCommands(t *testing.T) {
 }
 
 func TestHelpCommandRejectsAgentOnlyDetail(t *testing.T) {
-	err := commandHelp(context.Background(), globals{}, []string{"iteration", "result"})
+	err := commandHelp(context.Background(), globals{}, []string{"iteration", "close"})
 	if err == nil {
 		t.Fatal("human help should reject agent-only topics")
 	}
-	if !strings.Contains(err.Error(), "loop help agent iteration result") {
+	if !strings.Contains(err.Error(), "loop help agent iteration close") {
 		t.Fatalf("error should point to agent help: %v", err)
 	}
 }
@@ -53,7 +53,7 @@ func TestAgentHelpCommandShowsCompactList(t *testing.T) {
 		"cmd:loop branch rename",
 		"cmd:loop commit --type type message;",
 		"cmd:loop iteration plan",
-		"cmd:loop iteration result",
+		"cmd:loop iteration close",
 		"cmd:loop iteration todo",
 		"cmd:loop issue report",
 		"cmd:loop memory search",
@@ -70,19 +70,23 @@ func TestAgentHelpCommandShowsCompactList(t *testing.T) {
 	}
 }
 
-func TestAgentHelpCommandShowsIterationResultDetails(t *testing.T) {
+func TestAgentHelpCommandShowsIterationCloseDetails(t *testing.T) {
 	out, err := captureStdout(t, func() error {
-		return commandHelp(context.Background(), globals{}, []string{"agent", "iteration", "result"})
+		return commandHelp(context.Background(), globals{}, []string{"agent", "iteration", "close"})
 	})
 	if err != nil {
-		t.Fatalf("loop help agent iteration result: %v", err)
+		t.Fatalf("loop help agent iteration close: %v", err)
 	}
 	for _, want := range []string{
-		"cmd:loop iteration result",
+		"cmd:loop iteration close",
+		"--merge",
+		"--skip-merge",
+		"--sleep",
 		"--summary text",
+		"--reason text",
 		"--should-stop bool",
 		"--goal-evaluation text",
-		"summary:Build valid iteration result JSON",
+		"summary:Close the iteration with merge or skip-merge",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("help output missing %q:\n%s", want, out)

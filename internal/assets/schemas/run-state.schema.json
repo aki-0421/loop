@@ -37,11 +37,9 @@
         "created",
         "branch_created",
         "agent_running",
-        "repair_running",
         "validating",
         "integrating",
         "completed",
-        "blocked",
         "failed",
         "cancelled"
       ]

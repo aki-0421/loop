@@ -1,68 +1,67 @@
 # Error Handling and Resume
 
-## Error categories
+## Error Categories
 
 | Category | Examples | Default action |
 | --- | --- | --- |
 | Config error | Invalid YAML, unknown enum | Stop before run creation |
 | Environment error | Missing Git repo, missing agent command | Stop before agent launch |
-| Agent contract error | Missing result JSON or invalid JSON | Repair when attempts remain |
-| Dirty state | Uncommitted changes after agent exit | Repair when attempts remain |
-| Validation error | Required validation failed | Repair or stop |
-| Integration error | Merge conflict, push failure, check failure | Record state and stop or repair when configured |
+| Agent contract error | Missing close handoff or invalid close JSON | Fail the iteration contract |
+| Dirty merge close | Uncommitted changes before `--merge` | Reject the close command before handoff |
+| Validation error | Required validation failed | Do not integrate; clean up the branch and continue |
+| Integration error | Merge conflict, push failure, check failure | Record state and stop |
 | Resume error | Branch missing, state file invalid | Stop with diagnostic |
 
-## Repair flow
+## Close Contract Errors
 
-Repair is another agent invocation on the same iteration branch.
+The CLI does not relaunch the agent for correction. Missing or invalid terminal close after the agent exits remains a hard contract error.
 
-Repair prompt includes:
+Malformed merge closes are rejected before handoff by `loop iteration close --merge`. A merge close requires:
 
-- The original instruction file.
-- The previous prompt path.
-- The current error.
-- Dirty file list when applicable.
-- Validation failures when applicable.
-- Required result JSON schema.
-- Remaining repair attempt count.
+- a renamed branch;
+- a clean working tree;
+- at least one valid commit;
+- passed or skipped validation;
+- a merged PR in PR mode.
 
-Repair outputs the same result JSON schema through the `result` artifact. If repair changes files, it must commit complete units or revert incomplete work.
+Skip-merge closes are intentionally loose. They do not require commits, branch rename, validation success, or success JSON. They still require `--reason`, `--should-stop`, and `--goal-evaluation`.
 
-## Blocked state
+## GitHub Sleep Mode
 
-A blocked state means the agent cannot proceed safely without external information or permissions:
+Sleep mode is entered only when the agent explicitly closes with `loop iteration close --skip-merge --sleep --should-stop false` and a GitHub remote is available. `should_fully_stop` remains the goal-completion decision and is not used as the sleep trigger.
 
-- If the blocked reason references an open GitHub Issue labeled `loop:blocking`, the current `loop run` process enters in-memory sleep mode instead of exiting.
-- While sleeping, the CLI does not start a new iteration. It polls GitHub Issue/PR diffs every five minutes, writes `github-updates` when a diff appears, and relaunches the agent in the same iteration to decide whether work can proceed.
-- If there is no open blocking Issue reference, or if a wake attempt still cannot proceed and no open blocking Issue remains, the run stops as blocked.
-- The blocked reason is written to the `result` artifact and `run-state.json`.
+- The CLI closes any unmerged PR, deletes local and remote iteration branches, removes the worktree, and refreshes the target branch before sleeping.
+- While sleeping, the CLI polls GitHub Issue/PR/comment diffs every five minutes.
+- In interactive terminals, any keypress skips the remaining wait and fetches GitHub updates immediately.
+- When a diff appears, the CLI writes `github-updates` into the next iteration and launches the next agent.
+- The next agent decides whether to implement, comment or reopen an Issue, merge, skip merge again, or return to sleep.
 - The CLI does not ask the user.
 
-## Resume state
+## Resume State
 
 The CLI must be able to resume from these stages:
 
 - `branch_created`: continue agent phase.
-- `agent_running`: inspect process marker; if no process exists, repair or restart agent phase.
-- `repair_running`: inspect process marker; if no process exists, retry repair or stop.
+- `agent_running`: inspect process marker; if no process exists, restart the agent phase or fail the contract.
 - `validating`: rerun validation.
 - `integrating`: inspect Git and PR state, then complete integration or stop.
-- `blocked`: resume only after instruction/config changes, or by starting a new run that observes updated GitHub Issues during normal startup. Sleep mode itself is not persisted as a run-state stage.
-- `failed`: resume only with `--repair` or explicit iteration selection.
+- `failed`: resume only with explicit iteration selection after the user has corrected the underlying state.
 
-## State reconstruction
+Sleep mode itself is not persisted as a run-state stage.
+
+## State Reconstruction
 
 When `run-state.json` is incomplete but iteration files exist, `loop resume` may reconstruct state from:
 
 - Git branch list.
 - Git commits on iteration branch.
-- `result` artifact.
+- Terminal close handoff.
 - `agent-events.jsonl`.
-- PR URL files.
+- PR state files.
 
 Reconstruction writes a backup of the old state file before overwriting it.
 
-## Exit codes
+## Exit Codes
 
 | Code | Meaning |
 | --- | --- |
@@ -70,7 +69,6 @@ Reconstruction writes a backup of the old state file before overwriting it.
 | `1` | General runtime error. |
 | `2` | Invalid usage or flags. |
 | `3` | Invalid configuration. |
-| `4` | Agent contract error not repaired. |
-| `5` | Validation failed. |
+| `4` | Agent contract error. |
+| `5` | Validation failed before a cleanup path was available. |
 | `6` | Integration failed. |
-| `7` | Blocked. |

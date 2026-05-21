@@ -18,14 +18,13 @@ func TestRunContinuesAcrossIterationsUntilAgentStops(t *testing.T) {
 	ctx := context.Background()
 	repo := newCleanupRepo(t)
 	writeResilienceFixture(t, repo, resilienceOptions{
-		Sequence:       "completed,no_change",
-		MaxIterations:  3,
-		RepairAttempts: 1,
+		Sequence:      "merge,skip_merge",
+		MaxIterations: 3,
 	})
 	withWorkingDir(t, repo)
 
 	if _, err := captureStdout(t, func() error {
-		return commandRun(ctx, globals{Agent: "resilience", JSON: true, NoColor: true}, []string{"task.md"})
+		return commandRun(ctx, globals{Agent: "resilience", JSON: true, NoColor: true}, []string{"task.md", "--goal", "The fake resilience fixture is complete."})
 	}); err != nil {
 		t.Fatalf("loop run: %v", err)
 	}
@@ -38,10 +37,10 @@ func TestRunContinuesAcrossIterationsUntilAgentStops(t *testing.T) {
 		t.Fatalf("iterations = %d, want 2: %#v", len(state.Iterations), state.Iterations)
 	}
 	if state.Iterations[0].ShouldFullyStop {
-		t.Fatalf("first completed iteration should allow the loop to continue: %#v", state.Iterations[0])
+		t.Fatalf("first merge iteration should allow the loop to continue: %#v", state.Iterations[0])
 	}
 	if !state.Iterations[1].ShouldFullyStop {
-		t.Fatalf("second no-change iteration should stop the loop: %#v", state.Iterations[1])
+		t.Fatalf("second skip-merge iteration should stop the loop: %#v", state.Iterations[1])
 	}
 	if got := strings.TrimSpace(git(t, repo, "branch", "--show-current")); got != "develop" {
 		t.Fatalf("current branch = %q, want develop", got)
@@ -54,9 +53,8 @@ func TestRunKeepsDisposableArtifactsInGoTempDir(t *testing.T) {
 	ctx := context.Background()
 	repo := newCleanupRepo(t)
 	writeResilienceFixture(t, repo, resilienceOptions{
-		Sequence:       "no_change",
-		MaxIterations:  1,
-		RepairAttempts: 0,
+		Sequence:      "skip_merge",
+		MaxIterations: 1,
 	})
 	withWorkingDir(t, repo)
 
@@ -95,9 +93,8 @@ func TestRunInitialSyncsGitHubPRMemoryBeforeFirstIteration(t *testing.T) {
 	repo := newCleanupRepo(t)
 	git(t, repo, "remote", "add", "origin", "https://github.com/acme/app.git")
 	writeResilienceFixture(t, repo, resilienceOptions{
-		Sequence:       "no_change",
-		MaxIterations:  1,
-		RepairAttempts: 0,
+		Sequence:      "merge",
+		MaxIterations: 1,
 	})
 	commitLoopRuntimeIgnore(t, repo)
 	ghDir := t.TempDir()
@@ -131,9 +128,8 @@ func TestRunContinuesWhenIterationMemorySyncFailsAfterInitialSync(t *testing.T) 
 	repo := newCleanupRepo(t)
 	git(t, repo, "remote", "add", "origin", "https://github.com/acme/app.git")
 	writeResilienceFixture(t, repo, resilienceOptions{
-		Sequence:       "completed,no_change",
-		MaxIterations:  2,
-		RepairAttempts: 0,
+		Sequence:      "merge,merge",
+		MaxIterations: 2,
 	})
 	commitLoopRuntimeIgnore(t, repo)
 	ghDir := t.TempDir()
@@ -162,21 +158,19 @@ func TestRunContinuesWhenIterationMemorySyncFailsAfterInitialSync(t *testing.T) 
 	}
 }
 
-func TestRunSleepsOnBlockingIssueAndWakesOnGitHubUpdate(t *testing.T) {
+func TestRunSleepsAfterSkipMergeAndWakesOnGitHubUpdate(t *testing.T) {
 	ctx := context.Background()
 	repo := newCleanupRepo(t)
 	git(t, repo, "remote", "add", "origin", "https://github.com/acme/app.git")
 	writeResilienceFixture(t, repo, resilienceOptions{
-		Sequence:       "blocking_issue,no_change",
-		MaxIterations:  1,
-		RepairAttempts: 0,
+		Sequence:      "issue_skip_merge,skip_merge",
+		MaxIterations: 2,
 	})
 	commitLoopRuntimeIgnore(t, repo)
 	ghDir := t.TempDir()
 	ghLog := filepath.Join(ghDir, "gh.log")
-	writeBlockingIssueSleepFakeGH(t, ghDir, ghLog)
+	writeSkipMergeIssueSleepFakeGH(t, ghDir, ghLog)
 	t.Setenv("PATH", ghDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	t.Setenv("LOOP_FAKE_BLOCKED_REASON", "Waiting on https://github.com/acme/app/issues/44")
 	previousSleep := githubSleepPoll
 	previousInterval := githubSleepPollInterval
 	githubSleepPoll = func(context.Context, time.Duration) error { return nil }
@@ -197,7 +191,7 @@ func TestRunSleepsOnBlockingIssueAndWakesOnGitHubUpdate(t *testing.T) {
 	if state.Stage != runstate.StageCompleted {
 		t.Fatalf("stage = %s, want completed", state.Stage)
 	}
-	iterDir := latestIterationDir(t, repo, "0001")
+	iterDir := latestIterationDir(t, repo, "0002")
 	updates, err := artifactdb.Read(iterDir, "github-updates")
 	if err != nil {
 		t.Fatalf("github-updates artifact missing: %v", err)
@@ -205,8 +199,11 @@ func TestRunSleepsOnBlockingIssueAndWakesOnGitHubUpdate(t *testing.T) {
 	if !strings.Contains(updates, "issue #44 closed") {
 		t.Fatalf("github-updates missing closed issue:\n%s", updates)
 	}
-	if got := countEventType(t, iterDir, "agent.started"); got != 2 {
-		t.Fatalf("agent should relaunch in same iteration after wake, started count = %d", got)
+	if got := countEventType(t, latestIterationDir(t, repo, "0001"), "agent.started"); got != 1 {
+		t.Fatalf("first iteration should run one agent before sleep, started count = %d", got)
+	}
+	if got := countEventType(t, iterDir, "agent.started"); got != 1 {
+		t.Fatalf("next iteration should run after wake, started count = %d", got)
 	}
 	log := readText(t, ghLog)
 	if !strings.Contains(log, "createIssue") || !strings.Contains(log, "is:issue updated:>=") {
@@ -214,72 +211,43 @@ func TestRunSleepsOnBlockingIssueAndWakesOnGitHubUpdate(t *testing.T) {
 	}
 }
 
-func TestRunRepairsInvalidResultAndIntegrates(t *testing.T) {
+func TestRunFailsWhenResultHandoffIsInvalid(t *testing.T) {
 	ctx := context.Background()
 	repo := newCleanupRepo(t)
 	writeResilienceFixture(t, repo, resilienceOptions{
-		Sequence:       "invalid_json,completed",
-		MaxIterations:  1,
-		RepairAttempts: 1,
+		Sequence:      "invalid_json",
+		MaxIterations: 1,
 	})
 	withWorkingDir(t, repo)
 
 	if _, err := captureStdout(t, func() error {
 		return commandRun(ctx, globals{Agent: "resilience", JSON: true, NoColor: true}, []string{"task.md"})
-	}); err != nil {
-		t.Fatalf("loop run: %v", err)
+	}); err == nil {
+		t.Fatal("expected invalid result handoff to fail without repair")
 	}
 
 	iterDir := latestIterationDir(t, repo, "0001")
-	if got := countEventType(t, iterDir, "agent.started"); got != 2 {
-		t.Fatalf("agent.started count = %d, want 2", got)
-	}
-	if !strings.Contains(readText(t, filepath.Join(iterDir, "errors.log")), "result handoff missing or invalid") {
-		t.Fatalf("errors.log did not record invalid-result repair:\n%s", readText(t, filepath.Join(iterDir, "errors.log")))
+	if got := countEventType(t, iterDir, "agent.started"); got != 1 {
+		t.Fatalf("agent.started count = %d, want 1", got)
 	}
 	if _, err := os.Stat(filepath.Join(repo, "loop-fake-change.txt")); err != nil {
-		t.Fatalf("repaired run did not integrate fake change: %v", err)
+		if !os.IsNotExist(err) {
+			t.Fatalf("stat integrated change: %v", err)
+		}
+	} else {
+		t.Fatal("invalid result run integrated a change")
 	}
 }
 
-func TestRunHonorsNeedsRepairResultBeforeValidation(t *testing.T) {
+func TestRunSkipsMergeOnConfiguredValidationFailure(t *testing.T) {
 	ctx := context.Background()
 	repo := newCleanupRepo(t)
 	writeResilienceFixture(t, repo, resilienceOptions{
-		Sequence:       "needs_repair,completed",
-		MaxIterations:  1,
-		RepairAttempts: 1,
-	})
-	withWorkingDir(t, repo)
-
-	if _, err := captureStdout(t, func() error {
-		return commandRun(ctx, globals{Agent: "resilience", JSON: true, NoColor: true}, []string{"task.md"})
-	}); err != nil {
-		t.Fatalf("loop run: %v", err)
-	}
-
-	iterDir := latestIterationDir(t, repo, "0001")
-	if got := countEventType(t, iterDir, "agent.started"); got != 2 {
-		t.Fatalf("agent.started count = %d, want 2", got)
-	}
-	if !strings.Contains(readText(t, filepath.Join(iterDir, "errors.log")), "agent requested repair") {
-		t.Fatalf("errors.log did not record requested repair:\n%s", readText(t, filepath.Join(iterDir, "errors.log")))
-	}
-	if _, err := os.Stat(filepath.Join(repo, "loop-fake-change.txt")); err != nil {
-		t.Fatalf("needs_repair flow did not integrate repaired change: %v", err)
-	}
-}
-
-func TestRunRepairsValidationFailureAndIntegrates(t *testing.T) {
-	ctx := context.Background()
-	repo := newCleanupRepo(t)
-	writeResilienceFixture(t, repo, resilienceOptions{
-		Sequence:       "completed,validation_fix",
-		MaxIterations:  1,
-		RepairAttempts: 1,
+		Sequence:      "merge,skip_merge",
+		MaxIterations: 2,
 		ValidationYAML: `validation:
   commands:
-    - name: repair-marker
+    - name: merge-marker
       run: test -f validation-ok.txt
       required: true
 `,
@@ -293,22 +261,21 @@ func TestRunRepairsValidationFailureAndIntegrates(t *testing.T) {
 	}
 
 	iterDir := latestIterationDir(t, repo, "0001")
-	if got := countEventType(t, iterDir, "agent.started"); got != 2 {
-		t.Fatalf("agent.started count = %d, want 2", got)
+	if !strings.Contains(readText(t, filepath.Join(iterDir, "errors.log")), "validation error") {
+		t.Fatalf("errors.log did not record validation skip-merge cause:\n%s", readText(t, filepath.Join(iterDir, "errors.log")))
 	}
-	if _, err := os.Stat(filepath.Join(repo, "validation-ok.txt")); err != nil {
-		t.Fatalf("validation repair was not integrated: %v", err)
-	}
-	validation := readText(t, filepath.Join(iterDir, "errors.log"))
-	if !strings.Contains(validation, "validation failed") {
-		t.Fatalf("errors.log did not record validation repair cause:\n%s", validation)
+	if _, err := os.Stat(filepath.Join(repo, "loop-fake-change.txt")); err != nil {
+		if !os.IsNotExist(err) {
+			t.Fatalf("stat skipped change: %v", err)
+		}
+	} else {
+		t.Fatal("validation failure integrated the iteration branch")
 	}
 }
 
 type resilienceOptions struct {
 	Sequence       string
 	MaxIterations  int
-	RepairAttempts int
 	ValidationYAML string
 }
 
@@ -336,13 +303,12 @@ agent:
 
 run:
   maxIterations: %d
-  repairAttempts: %d
 
 git:
   baseBranch: develop
   integration:
     mode: local_merge
-`, yamlSingleQuote(agentCommand), yamlSingleQuote(opts.Sequence), yamlSingleQuote(countFile), opts.MaxIterations, opts.RepairAttempts)
+`, yamlSingleQuote(agentCommand), yamlSingleQuote(opts.Sequence), yamlSingleQuote(countFile), opts.MaxIterations)
 	if opts.ValidationYAML != "" {
 		configText += "\n" + opts.ValidationYAML
 	}
@@ -474,7 +440,7 @@ exit 1
 	}
 }
 
-func writeBlockingIssueSleepFakeGH(t *testing.T, dir, logPath string) {
+func writeSkipMergeIssueSleepFakeGH(t *testing.T, dir, logPath string) {
 	t.Helper()
 	pollState := filepath.Join(dir, "poll.count")
 	mustWrite(t, filepath.Join(dir, "gh"), `#!/bin/sh
@@ -492,7 +458,7 @@ JSON
     exit 0
   fi
 cat <<'JSON'
-{"data":{"search":{"pageInfo":{"hasNextPage":false,"endCursor":""},"nodes":[{"__typename":"Issue","number":44,"url":"https://github.com/acme/app/issues/44","state":"CLOSED","title":"Clarify blocking fixture","body":"Closed as confirmed.","updatedAt":"2026-05-20T01:00:00Z","closedAt":"2026-05-20T01:00:00Z","author":{"login":"pm"},"labels":{"nodes":[{"name":"loop:question"},{"name":"loop:blocking"}]},"repository":{"nameWithOwner":"acme/app"},"comments":{"nodes":[]}}]},"rateLimit":{"remaining":10,"resetAt":"2026-05-20T02:00:00Z","cost":1}}}
+{"data":{"search":{"pageInfo":{"hasNextPage":false,"endCursor":""},"nodes":[{"__typename":"Issue","number":44,"url":"https://github.com/acme/app/issues/44","state":"CLOSED","title":"Clarify skip-merge fixture","body":"Closed as confirmed.","updatedAt":"2026-05-20T01:00:00Z","closedAt":"2026-05-20T01:00:00Z","author":{"login":"pm"},"labels":{"nodes":[{"name":"loop:question"}]},"repository":{"nameWithOwner":"acme/app"},"comments":{"nodes":[]}}]},"rateLimit":{"remaining":10,"resetAt":"2026-05-20T02:00:00Z","cost":1}}}
 JSON
 exit 0
 fi
@@ -509,12 +475,6 @@ JSON
 exit 0
 fi
 if echo "$args" | grep -q 'createLabel'; then
-if echo "$args" | grep -q 'loop:blocking'; then
-cat <<'JSON'
-{"data":{"createLabel":{"label":{"id":"blocking-label","name":"loop:blocking"}},"rateLimit":{"remaining":10,"resetAt":"2026-05-20T02:00:00Z","cost":1}}}
-JSON
-exit 0
-fi
 cat <<'JSON'
 {"data":{"createLabel":{"label":{"id":"question-label","name":"loop:question"}},"rateLimit":{"remaining":10,"resetAt":"2026-05-20T02:00:00Z","cost":1}}}
 JSON
@@ -522,7 +482,7 @@ exit 0
 fi
 if echo "$args" | grep -q 'createIssue'; then
 cat <<'JSON'
-{"data":{"createIssue":{"issue":{"__typename":"Issue","number":44,"url":"https://github.com/acme/app/issues/44","state":"OPEN","title":"Clarify blocking fixture","body":"Can this blocked fixture continue?","updatedAt":"2026-05-20T00:30:00Z","closedAt":null,"author":{"login":"bot"},"labels":{"nodes":[{"name":"loop:question"},{"name":"loop:blocking"}]},"repository":{"nameWithOwner":"acme/app"}}},"rateLimit":{"remaining":10,"resetAt":"2026-05-20T02:00:00Z","cost":1}}}
+{"data":{"createIssue":{"issue":{"__typename":"Issue","number":44,"url":"https://github.com/acme/app/issues/44","state":"OPEN","title":"Clarify skip-merge fixture","body":"Can this skipped fixture continue?","updatedAt":"2026-05-20T00:30:00Z","closedAt":null,"author":{"login":"bot"},"labels":{"nodes":[{"name":"loop:question"}]},"repository":{"nameWithOwner":"acme/app"}}},"rateLimit":{"remaining":10,"resetAt":"2026-05-20T02:00:00Z","cost":1}}}
 JSON
 exit 0
 fi

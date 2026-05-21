@@ -69,9 +69,9 @@ The durable iteration directory stores audit and replay files plus PR lifecycle 
 - `pr-state`, `pr-checks`, and `pr-check-log`: pull request lifecycle state and check diagnostics written by `loop pr`.
 - `github-updates`: newly observed GitHub Issue, PR, or comment diffs for an iteration boundary or sleep wake cycle.
 
-Agents should read and write these artifacts through `loop iteration` commands so path resolution and artifact boundaries stay in the CLI. `plan` and `todo` have dedicated `loop iteration plan` and `loop iteration todo` commands; other writable artifacts use `loop iteration write` or `loop iteration append`. The iteration result is a master-DB handoff row written by `loop iteration result --write`.
+Agents should read and write these artifacts through `loop iteration` commands so path resolution and artifact boundaries stay in the CLI. `plan` and `todo` have dedicated `loop iteration plan` and `loop iteration todo` commands; other writable artifacts use `loop iteration write` or `loop iteration append`. The terminal close is a master-DB handoff row written by `loop iteration close`.
 
-After a completed or no-change iteration reaches its terminal action, the active temp directory is removed. `prompt.md`, `effective-config.yaml`, `agent-events.jsonl`, `errors.log`, PR lifecycle diagnostics, GitHub update diffs, and run state remain for audit and replay.
+After a merge or skip-merge terminal action, the active temp directory is removed. `prompt.md`, `effective-config.yaml`, `agent-events.jsonl`, `errors.log`, PR lifecycle diagnostics, GitHub update diffs, and run state remain for audit and replay.
 
 ## GitHub context memory
 
@@ -91,18 +91,18 @@ The prompt never loads every historical GitHub record. Agents request only the a
 
 ## Clarification Issues
 
-Important product, policy, or large blocking specification questions are asked through GitHub Issues, not local DB-only memory. Agents use:
+Important product, policy, or large specification questions are asked through GitHub Issues, not local DB-only memory. Agents use:
 
 ```bash
-loop issue ask --title <text> --body <text> [--blocking]
-loop issue report --title <text> --body <text> [--kind <kind>] [--blocking]
+loop issue ask --title <text> --body <text>
+loop issue report --title <text> --body <text> [--kind <kind>]
 ```
 
-The command creates and applies `loop:question`, and also `loop:blocking` when `--blocking` is supplied. It embeds loop run and iteration metadata in the Issue body and stores only the GitHub Issue reference in normal runtime artifacts.
+The command creates and applies `loop:question`. It embeds loop run and iteration metadata in the Issue body and stores only the GitHub Issue reference in normal runtime artifacts.
 
-`loop issue report` records concrete repository or harness improvement proposals. It creates and applies `loop:proposal`, plus `loop:blocking` when `--blocking` is supplied. Issue bodies should be GitHub-flavored Markdown and include evidence, impact, and a proposed repository or harness change. Unsupported agent capability findings are rediscovered each iteration and are not persisted as Issues.
+`loop issue report` records concrete repository or harness improvement proposals. It creates and applies `loop:proposal`. Issue bodies should be GitHub-flavored Markdown and include evidence, impact, and a proposed repository or harness change. Unsupported agent capability findings are rediscovered each iteration and are not persisted as Issues.
 
-After asking a question, agents continue TODOs that are unrelated to that clarification. They write a `blocked` result only when no safe independent work remains. When a blocked result references an open `loop:blocking` Issue, `loop run` enters in-memory sleep mode instead of adding a new result status. Sleep mode does not start a new iteration; it displays that it is waiting for GitHub Issue/PR updates, polls every five minutes for Issue/PR comment or closure diffs, writes `github-updates` when a diff appears, and relaunches the agent in the same iteration to decide whether work can proceed. If the update is unrelated, the agent may return `blocked` again and the CLI resumes sleep.
+After asking a question, agents continue TODOs that are unrelated to that clarification. They close with `--skip-merge` only when no safe mergeable work remains. When GitHub context is needed before more useful work can happen, the agent adds `--sleep` and keeps `--should-stop false` on the skip-merge close. Sleep mode displays that it is waiting for GitHub Issue/PR updates, polls every five minutes for Issue/PR comment or closure diffs, and lets an interactive user press any key to fetch immediately. It writes `github-updates` into the next iteration when a diff appears, and lets the next agent decide whether work can proceed, another Issue action is needed, merge is possible, or skip-merge should return to sleep.
 
 ## Completed Context
 
@@ -141,7 +141,7 @@ Event examples:
 {"type":"git.branch.created","ts":"2026-05-17T00:00:01Z","branch":"wip/0001"}
 {"type":"git.branch.renamed","ts":"2026-05-17T00:00:10Z","from":"wip/0001","to":"feat/add-login-flow"}
 {"type":"validation.command.completed","ts":"2026-05-17T00:03:00Z","name":"test","exit_code":0}
-{"type":"iteration.completed","ts":"2026-05-17T00:04:00Z","status":"completed"}
+{"type":"iteration.merge","ts":"2026-05-17T00:04:00Z","action":"merge"}
 ```
 
 `agent.stdout.log`, `agent.stderr.log`, and `agent-exit.json` are not written. `errors.log` is created only when an agent, process, or validation phase fails.

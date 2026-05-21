@@ -302,7 +302,7 @@ func commandPRMerge(ctx context.Context, g globals, args []string) error {
 	if err := writePRState(prCtx.iterDir, state); err != nil {
 		return codedError{1, err}
 	}
-	if prCtx.cfg.Git.Integration.PR.DeleteBranch && state.Branch != "" && state.Branch != state.Base {
+	if state.Branch != "" && state.Branch != state.Base {
 		if err := deleteRemoteBranchAfterPRMerge(ctx, gitx.Runner{Dir: prCtx.workDir}, state.Branch); err != nil {
 			_ = runstate.AppendEvent(prCtx.paths.Events, runstate.Event{"type": "pr.remote_branch_cleanup.failed", "branch": state.Branch, "error": err.Error()})
 		}
@@ -435,7 +435,7 @@ func validatePRBranchCommits(ctx context.Context, prCtx prCommandContext) error 
 		return err
 	}
 	if len(commits) == 0 {
-		return fmt.Errorf("completed iteration did not create commits")
+		return fmt.Errorf("mergeable iteration did not create commits")
 	}
 	return validateIterationCommitSubjects(commits)
 }
@@ -504,13 +504,13 @@ func finalizeAgentOwnedPR(ctx context.Context, runner gitx.Runner, cleanup *iter
 	if _, err := runner.Run(ctx, "pull", "--ff-only"); err != nil {
 		return err
 	}
-	if cfg.Git.Integration.PR.DeleteBranch && branch != "" && branch != cfg.Git.BaseBranch {
+	if branch != "" && branch != cfg.Git.BaseBranch {
 		if err := deleteRemoteBranchAfterPRMerge(ctx, runner, branch); err != nil && cleanup != nil {
 			cleanup.appendEvent(runstate.Event{"type": "pr.remote_branch_cleanup.failed", "branch": branch, "error": err.Error()})
 		}
 	}
 	pruneRemoteBranches(ctx, runner)
-	if cfg.Git.Integration.PR.DeleteBranch && branch != "" && branch != cfg.Git.BaseBranch {
+	if branch != "" && branch != cfg.Git.BaseBranch {
 		if err := runner.DeleteBranch(ctx, branch, true); err != nil && localBranchExists(ctx, runner, branch) {
 			return err
 		}

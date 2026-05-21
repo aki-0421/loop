@@ -10,18 +10,18 @@ import (
 )
 
 type IterationResult struct {
-	SchemaVersion   int              `json:"schema_version"`
-	Status          string           `json:"status"`
-	SummarySentence string           `json:"summary_sentence"`
-	ShouldFullyStop bool             `json:"should_fully_stop"`
-	GoalEvaluation  string           `json:"goal_evaluation"`
-	Branch          BranchResult     `json:"branch"`
-	Commits         []CommitResult   `json:"commits"`
-	Validation      ValidationResult `json:"validation"`
-	Artifacts       ArtifactResult   `json:"artifacts"`
-	Assumptions     []string         `json:"assumptions,omitempty"`
-	BlockedReason   string           `json:"blocked_reason,omitempty"`
-	Error           string           `json:"error,omitempty"`
+	SchemaVersion          int              `json:"schema_version"`
+	Action                 string           `json:"action"`
+	SummarySentence        string           `json:"summary_sentence,omitempty"`
+	ShouldFullyStop        bool             `json:"should_fully_stop"`
+	GoalEvaluation         string           `json:"goal_evaluation"`
+	Branch                 BranchResult     `json:"branch"`
+	Commits                []CommitResult   `json:"commits"`
+	Validation             ValidationResult `json:"validation"`
+	Artifacts              ArtifactResult   `json:"artifacts"`
+	Assumptions            []string         `json:"assumptions,omitempty"`
+	SkipMergeReason        string           `json:"skip_merge_reason,omitempty"`
+	SleepUntilGitHubUpdate bool             `json:"sleep_until_github_update,omitempty"`
 }
 
 type BranchResult struct {
@@ -61,7 +61,7 @@ type ResultValidationError struct {
 }
 
 func (e *ResultValidationError) Error() string {
-	return "invalid iteration result: " + fmt.Sprint(e.Problems)
+	return "invalid iteration close: " + fmt.Sprint(e.Problems)
 }
 
 func ValidateResultFile(path string) (*IterationResult, error) {
@@ -92,14 +92,23 @@ func validateResult(r IterationResult) []string {
 	if r.SchemaVersion != 1 {
 		problems = append(problems, "schema_version must be 1")
 	}
-	if !oneOf(r.Status, "completed", "no_change", "needs_repair", "blocked", "failed") {
-		problems = append(problems, "status must be completed, no_change, needs_repair, blocked, or failed")
+	if !oneOf(r.Action, "merge", "skip_merge") {
+		problems = append(problems, "action must be merge or skip_merge")
 	}
-	if r.SummarySentence == "" {
+	if r.Action == "merge" && r.SummarySentence == "" {
 		problems = append(problems, "summary_sentence is required")
 	}
 	if len(r.SummarySentence) > 120 {
 		problems = append(problems, "summary_sentence must be at most 120 characters")
+	}
+	if r.Action == "skip_merge" && strings.TrimSpace(r.SkipMergeReason) == "" {
+		problems = append(problems, "skip_merge_reason is required")
+	}
+	if r.SleepUntilGitHubUpdate && r.Action != "skip_merge" {
+		problems = append(problems, "sleep_until_github_update is only valid with skip_merge")
+	}
+	if r.SleepUntilGitHubUpdate && r.ShouldFullyStop {
+		problems = append(problems, "sleep_until_github_update requires should_fully_stop=false")
 	}
 	if r.GoalEvaluation == "" {
 		problems = append(problems, "goal_evaluation is required")
@@ -123,8 +132,8 @@ func validateResult(r IterationResult) []string {
 			problems = append(problems, fmt.Sprintf("validation.commands[%d].command is required", i))
 		}
 	}
-	if r.Status == "completed" && r.Validation.Status == "failed" {
-		problems = append(problems, "completed results cannot have failed validation")
+	if r.Action == "merge" && (r.Validation.Status == "failed" || r.Validation.Status == "partial") {
+		problems = append(problems, "merge results require passed or skipped validation")
 	}
 	return problems
 }

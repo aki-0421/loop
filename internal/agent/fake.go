@@ -25,16 +25,13 @@ func RunFakeAgentFromEnv() int {
 		return 0
 	case "dirty":
 		_ = os.WriteFile(filepath.Join(getenv("LOOP_WORKDIR", "."), "loop-fake-dirty.txt"), []byte("dirty\n"), 0o644)
-		writeFakeResult(iterationDir, "completed")
+		writeFakeResult(iterationDir, "merge")
 		return 0
-	case "blocked":
-		writeFakeResult(iterationDir, "blocked")
-		return 1
-	case "no_change":
-		writeFakeResult(iterationDir, "no_change")
+	case "skip_merge":
+		writeFakeResult(iterationDir, "skip_merge")
 		return 0
-	case "needs_repair":
-		writeFakeResult(iterationDir, "needs_repair")
+	case "sleep":
+		writeFakeResult(iterationDir, "skip_merge", true)
 		return 0
 	case "validation_fix":
 		workDir := getenv("LOOP_WORKDIR", ".")
@@ -43,24 +40,24 @@ func RunFakeAgentFromEnv() int {
 		_ = os.WriteFile(changePath, []byte("validation repaired at "+time.Now().UTC().Format(time.RFC3339Nano)+"\n"), 0o644)
 		_ = git(workDir, "add", "validation-ok.txt")
 		_ = git(workDir, "commit", "-m", "F: repair validation fixture")
-		writeFakeResult(iterationDir, "completed", fakeCommit(workDir))
+		writeFakeResult(iterationDir, "merge", fakeCommit(workDir))
 		return 0
-	case "completed_unrenamed":
+	case "merge_unrenamed":
 		workDir := getenv("LOOP_WORKDIR", ".")
 		changePath := filepath.Join(workDir, "loop-fake-change.txt")
-		_ = os.WriteFile(changePath, []byte("fake agent completed without branch rename at "+time.Now().UTC().Format(time.RFC3339Nano)+"\n"), 0o644)
+		_ = os.WriteFile(changePath, []byte("fake agent merge close without branch rename at "+time.Now().UTC().Format(time.RFC3339Nano)+"\n"), 0o644)
 		_ = git(workDir, "add", "loop-fake-change.txt")
 		_ = git(workDir, "commit", "-m", "F: run fake agent behavior")
-		writeFakeResult(iterationDir, "completed", fakeCommit(workDir))
+		writeFakeResult(iterationDir, "merge", fakeCommit(workDir))
 		return 0
 	default:
 		workDir := getenv("LOOP_WORKDIR", ".")
 		_ = loopBranchRename(workDir, "test/fake-agent")
 		changePath := filepath.Join(workDir, "loop-fake-change.txt")
-		_ = os.WriteFile(changePath, []byte("fake agent completed at "+time.Now().UTC().Format(time.RFC3339Nano)+"\n"), 0o644)
+		_ = os.WriteFile(changePath, []byte("fake agent merge close at "+time.Now().UTC().Format(time.RFC3339Nano)+"\n"), 0o644)
 		_ = git(workDir, "add", "loop-fake-change.txt")
 		_ = git(workDir, "commit", "-m", "F: run fake agent behavior")
-		writeFakeResult(iterationDir, "completed", fakeCommit(workDir))
+		writeFakeResult(iterationDir, "merge", fakeCommit(workDir))
 		return 0
 	}
 }
@@ -68,7 +65,7 @@ func RunFakeAgentFromEnv() int {
 func fakeModeFromEnv() string {
 	sequence := strings.TrimSpace(os.Getenv("LOOP_FAKE_AGENT_SEQUENCE"))
 	if sequence == "" {
-		return getenv("LOOP_FAKE_AGENT_MODE", "completed")
+		return getenv("LOOP_FAKE_AGENT_MODE", "merge")
 	}
 	var modes []string
 	for _, item := range strings.Split(sequence, ",") {
@@ -77,7 +74,7 @@ func fakeModeFromEnv() string {
 		}
 	}
 	if len(modes) == 0 {
-		return getenv("LOOP_FAKE_AGENT_MODE", "completed")
+		return getenv("LOOP_FAKE_AGENT_MODE", "merge")
 	}
 	index := nextFakeInvocationIndex()
 	if index >= len(modes) {
@@ -112,37 +109,47 @@ func loopBranchRename(dir, branch string) error {
 	return cmd.Run()
 }
 
-func writeFakeResult(iterationDir, status string, commits ...map[string]any) {
-	_ = writeFakeResultHandoff(iterationDir, status, commits...)
+func writeFakeResult(iterationDir, action string, args ...any) {
+	_ = writeFakeResultHandoff(iterationDir, action, args...)
 }
 
-func writeFakeResultHandoff(iterationDir, status string, commits ...map[string]any) error {
+func writeFakeResultHandoff(iterationDir, action string, args ...any) error {
 	validationStatus := "passed"
-	if status == "blocked" {
+	if action == "skip_merge" {
 		validationStatus = "skipped"
 	}
-	commitList := make([]map[string]any, 0, len(commits))
-	for _, commit := range commits {
-		if commit != nil {
-			commitList = append(commitList, commit)
+	sleepUntilGitHubUpdate := os.Getenv("LOOP_FAKE_AGENT_SLEEP") == "1"
+	hasGoal := strings.TrimSpace(os.Getenv("LOOP_RUN_GOAL")) != ""
+	commitList := make([]map[string]any, 0, len(args))
+	for _, arg := range args {
+		switch typed := arg.(type) {
+		case bool:
+			sleepUntilGitHubUpdate = typed
+		case map[string]any:
+			commit := typed
+			if commit != nil {
+				commitList = append(commitList, commit)
+			}
 		}
 	}
 	result := map[string]any{
-		"schema_version":       1,
-		"status":               status,
-		"summary_sentence":     "Run fake agent behavior",
-		"should_fully_stop":    status != "completed",
-		"goal_evaluation":      "Fake agent produced a deterministic test result.",
-		"branch":               fakeBranchResult(status),
-		"commits":              commitList,
-		"validation":           map[string]any{"status": validationStatus, "commands": []map[string]any{}},
-		"artifacts":            map[string]any{},
-		"assumptions":          []string{},
-		"blocked_reason":       "",
-		"follow_up_issue_refs": []string{},
+		"schema_version":    1,
+		"action":            action,
+		"summary_sentence":  "Run fake agent behavior",
+		"should_fully_stop": action != "merge" && !sleepUntilGitHubUpdate && hasGoal,
+		"goal_evaluation":   "Fake agent produced a deterministic test result.",
+		"branch":            fakeBranchResult(action),
+		"commits":           commitList,
+		"validation":        map[string]any{"status": validationStatus, "commands": []map[string]any{}},
+		"artifacts":         map[string]any{},
+		"assumptions":       []string{},
+		"skip_merge_reason": "",
 	}
-	if status == "blocked" {
-		result["blocked_reason"] = "Fake agent blocked by requested mode."
+	if action == "skip_merge" {
+		result["skip_merge_reason"] = "Fake agent chose not to merge this iteration."
+		if sleepUntilGitHubUpdate {
+			result["sleep_until_github_update"] = true
+		}
 	}
 	data, err := json.MarshalIndent(result, "", "  ")
 	if err != nil {
@@ -173,7 +180,7 @@ func writeFakeRawResultHandoff(iterationDir, resultJSON string) error {
 	return artifactdb.WriteResultHandoff(globalPath, runID, iterationID, resultJSON)
 }
 
-func fakeBranchResult(status string) map[string]any {
+func fakeBranchResult(action string) map[string]any {
 	initial := getenv("LOOP_INITIAL_BRANCH", "wip/0001")
 	current := currentBranch(getenv("LOOP_WORKDIR", "."))
 	if current == "" {
@@ -182,7 +189,7 @@ func fakeBranchResult(status string) map[string]any {
 	kind := "test"
 	slug := "fake-agent"
 	final := ""
-	if status == "completed" && current != "" && current != initial {
+	if action == "merge" && current != "" && current != initial {
 		final = current
 		if parsedKind, parsedSlug, ok := splitBranch(current); ok {
 			kind = parsedKind

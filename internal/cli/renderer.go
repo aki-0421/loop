@@ -53,6 +53,9 @@ type runRenderer struct {
 	usageBaseOutputTokens int
 	latestMsg             string
 	confirmation          *rendererConfirmation
+	sleeping              bool
+	sleepSince            time.Time
+	sleepDetail           string
 	done                  chan struct{}
 	ticker                *time.Ticker
 	titleEnabled          bool
@@ -164,6 +167,7 @@ func (r *runRenderer) Iteration(iterationID string, todoPath string) {
 	r.mu.Lock()
 	r.iteration = iterationID
 	r.todoPath = todoPath
+	r.clearSleepLocked()
 	if r.branch == "" || strings.HasPrefix(r.branch, "wip/") {
 		r.branch = "wip/" + iterationID
 	}
@@ -179,6 +183,7 @@ func (r *runRenderer) Stage(stage runstate.Stage, detail string) {
 		detail = strings.ReplaceAll(string(stage), "_", " ")
 	}
 	r.mu.Lock()
+	r.clearSleepLocked()
 	r.stage = string(stage)
 	r.stageDetail = detail
 	r.current = detail
@@ -369,6 +374,13 @@ func (r *runRenderer) SleepWaitingForGitHub() {
 	}
 	detail := "sleeping; waiting for GitHub Issue/PR updates"
 	r.mu.Lock()
+	now := time.Now()
+	r.sleeping = true
+	if r.sleepSince.IsZero() {
+		r.sleepSince = now
+	}
+	r.sleepDetail = detail
+	r.stage = "sleeping"
 	r.stageDetail = detail
 	r.current = detail
 	r.latestMsg = detail
@@ -383,7 +395,7 @@ func (r *runRenderer) SleepWaitingForGitHub() {
 		}
 	}
 	r.addEventLocked(rendererEvent{
-		At:     time.Now(),
+		At:     now,
 		Status: "active",
 		Title:  "Sleep",
 		Detail: detail,
@@ -395,6 +407,37 @@ func (r *runRenderer) SleepWaitingForGitHub() {
 		r.line("sleep", detail)
 	}
 	r.setTitle()
+}
+
+func (r *runRenderer) SleepFetchRequested() {
+	if !r.enabled {
+		return
+	}
+	detail := "fetching GitHub updates after keypress"
+	r.mu.Lock()
+	r.sleepDetail = detail
+	r.stageDetail = detail
+	r.current = detail
+	r.latestMsg = detail
+	r.addEventLocked(rendererEvent{
+		At:     time.Now(),
+		Status: "active",
+		Title:  "Sleep Fetch",
+		Detail: detail,
+	})
+	r.mu.Unlock()
+	if r.interactive {
+		r.render()
+	} else {
+		r.line("sleep", detail)
+	}
+	r.setTitle()
+}
+
+func (r *runRenderer) clearSleepLocked() {
+	r.sleeping = false
+	r.sleepSince = time.Time{}
+	r.sleepDetail = ""
 }
 
 func (r *runRenderer) startAgentUsageWindow() {
@@ -568,6 +611,9 @@ func (r *runRenderer) frame(width, height int) []string {
 		TokensEstimated: r.tokensEstimated,
 		LatestMsg:       r.latestMsg,
 		Confirmation:    cloneRendererConfirmation(r.confirmation),
+		Sleeping:        r.sleeping,
+		SleepSince:      r.sleepSince,
+		SleepDetail:     r.sleepDetail,
 		Now:             time.Now(),
 	}
 	r.mu.Unlock()

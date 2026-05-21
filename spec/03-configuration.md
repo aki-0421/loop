@@ -95,7 +95,7 @@ Modes:
 | Mode | Behavior |
 | --- | --- |
 | `local_merge` | Squash merge the iteration branch into the base branch locally. |
-| `pr` | Require the agent to create, check, repair, and merge the pull request through `loop pr`; then pull the base branch and continue. |
+| `pr` | Require the agent to create, check, fix when needed, and merge the pull request through `loop pr`; then pull the base branch and continue. |
 
 Pull request mode uses `gh` commands. The CLI writes the generated title and body to files before invoking `gh`.
 
@@ -105,10 +105,10 @@ Pull request check timing:
 | --- | ---: | --- |
 | `git.integration.pr.waitChecks` | `true` | Make `loop pr checks` and `loop pr merge` run `gh pr checks <pr> --watch`. |
 | `git.integration.pr.checksRequiredOnly` | `false` | Pass `--required` so only required checks affect the wait. |
-| `git.integration.pr.checksStartupDelaySeconds` | `5` | Wait after PR creation or repair push before asking GitHub for checks. |
+| `git.integration.pr.checksStartupDelaySeconds` | `5` | Wait after PR creation or fix push before asking GitHub for checks. |
 | `git.integration.pr.checksDiscoveryTimeoutSeconds` | `60` | Keep polling when GitHub reports no checks for the PR branch. |
 | `git.integration.pr.checksPollIntervalSeconds` | `5` | Delay between no-checks discovery polls and the `gh pr checks --watch --interval` value. |
-| `git.integration.pr.checksWatchTimeoutSeconds` | `3600` | Maximum time for a reported pending check set to complete before the run fails without launching repair. |
+| `git.integration.pr.checksWatchTimeoutSeconds` | `3600` | Maximum time for a reported pending check set to complete before the command fails. |
 
 If no checks are reported after the discovery timeout, the check wait is treated as skipped.
 
@@ -124,7 +124,7 @@ Each command has:
 | --- | --- |
 | `name` | Human-readable label used in validation logs. |
 | `run` | Shell command string to execute. |
-| `required` | When true, a non-zero exit code fails validation and blocks integration unless repair succeeds. |
+| `required` | When true, a non-zero exit code fails validation and prevents integration. |
 
 Validation commands use the user's default shell instead of hard-coded `sh` where possible. On Unix, the CLI reads `SHELL`; zsh, bash, fish, ksh, and csh-family shells run as login command shells, `nu` runs with `-l -c`, PowerShell-compatible shells run with `-Command`, and other shells run with `-c`. If `SHELL` is empty, the CLI falls back to `sh -c`. On Windows, the CLI uses `COMSPEC /C`, falling back to `cmd /C`.
 

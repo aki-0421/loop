@@ -12,7 +12,7 @@ import (
 func TestValidateResultJSON(t *testing.T) {
 	valid := []byte(`{
 		"schema_version": 1,
-		"status": "completed",
+		"action": "merge",
 		"summary_sentence": "Add checkout validation",
 		"should_fully_stop": true,
 		"goal_evaluation": "The requested goal is complete.",
@@ -27,6 +27,25 @@ func TestValidateResultJSON(t *testing.T) {
 	invalid := strings.Replace(string(valid), `"T: add checkout validation"`, `""`, 1)
 	if _, err := ValidateResultJSON([]byte(invalid)); err == nil {
 		t.Fatal("expected empty commit message to fail")
+	}
+	mergeSleep := strings.Replace(string(valid), `"validation":`, `"sleep_until_github_update": true, "validation":`, 1)
+	if _, err := ValidateResultJSON([]byte(mergeSleep)); err == nil {
+		t.Fatal("expected merge sleep to fail")
+	}
+	skipSleepStop := []byte(`{
+		"schema_version": 1,
+		"action": "skip_merge",
+		"skip_merge_reason": "Waiting for Issue context.",
+		"sleep_until_github_update": true,
+		"should_fully_stop": true,
+		"goal_evaluation": "The goal is complete.",
+		"branch": {"initial_name": "wip/0001"},
+		"commits": [],
+		"validation": {"status": "skipped", "commands": []},
+		"artifacts": {}
+	}`)
+	if _, err := ValidateResultJSON(skipSleepStop); err == nil {
+		t.Fatal("expected sleep with stop=true to fail")
 	}
 }
 

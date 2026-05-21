@@ -48,8 +48,7 @@ type AdapterConfig struct {
 }
 
 type RunConfig struct {
-	MaxIterations  int `yaml:"maxIterations" json:"maxIterations"`
-	RepairAttempts int `yaml:"repairAttempts" json:"repairAttempts"`
+	MaxIterations int `yaml:"maxIterations" json:"maxIterations"`
 }
 
 type SkillsConfig struct {
@@ -260,9 +259,6 @@ func Validate(cfg Config) error {
 	}
 	if cfg.Run.MaxIterations < 0 {
 		errs = append(errs, "run.maxIterations must be at least 0")
-	}
-	if cfg.Run.RepairAttempts < 0 {
-		errs = append(errs, "run.repairAttempts must be at least 0")
 	}
 	if cfg.Skills.SourceDir == "" {
 		errs = append(errs, "skills.sourceDir is required")

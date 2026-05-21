@@ -159,7 +159,7 @@ func rejectBranchRenameAfterIntegration(iterationDir string) error {
 		return err
 	}
 	switch state.Stage {
-	case runstate.StageIntegrating, runstate.StageCompleted, runstate.StageBlocked, runstate.StageFailed, runstate.StageCancelled:
+	case runstate.StageIntegrating, runstate.StageCompleted, runstate.StageFailed, runstate.StageCancelled:
 		return fmt.Errorf("branch rename is not allowed once the run stage is %q", state.Stage)
 	default:
 		return nil

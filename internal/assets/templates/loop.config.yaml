@@ -15,7 +15,6 @@ agent:
 
 run:
   maxIterations: 0
-  repairAttempts: 2
 
 skills:
   sourceDir: .agents/skills

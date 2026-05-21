@@ -44,6 +44,9 @@ type rendererSnapshot struct {
 	TokensEstimated bool
 	LatestMsg       string
 	Confirmation    *rendererConfirmation
+	Sleeping        bool
+	SleepSince      time.Time
+	SleepDetail     string
 }
 
 type dashboardSymbols struct {
@@ -70,6 +73,9 @@ func renderDashboard(s rendererSnapshot, width, height int) []string {
 	symbols := symbolsForEnvironment()
 	if s.Confirmation != nil {
 		return renderConfirmationDashboard(s, symbols, width, height)
+	}
+	if s.Sleeping {
+		return renderSleepDashboard(s, symbols, width, height)
 	}
 	if width < 72 || height < 18 {
 		return renderPlainStatusSnapshot(s, width, height)
@@ -179,6 +185,40 @@ func renderConfirmationDashboard(s rendererSnapshot, symbols dashboardSymbols, w
 		centerLine(ellipsize("Main branch: "+main, contentWidth), width),
 		"",
 		centerLine(colorize(s, ansiDim, "Continuing in "+formatDuration(remaining)+". Press Ctrl+C to cancel."), width),
+	)
+	return fitCanvasLines(lines, colorize(s, ansiDim, footerText(s, symbols)), width, height)
+}
+
+func renderSleepDashboard(s rendererSnapshot, symbols dashboardSymbols, width, height int) []string {
+	contentWidth := minInt(width-8, 84)
+	if contentWidth < 32 {
+		contentWidth = width - 2
+	}
+	detail := strings.TrimSpace(s.SleepDetail)
+	if detail == "" {
+		detail = "waiting for GitHub Issue/PR updates"
+	}
+	detail = strings.TrimPrefix(detail, "sleeping; ")
+	sleepSince := s.SleepSince
+	if sleepSince.IsZero() {
+		sleepSince = s.Started
+	}
+	asleepFor := formatDuration(s.Now.Sub(sleepSince))
+	lines := []string{}
+	for i := 0; i < logoTopPadding; i++ {
+		lines = append(lines, "")
+	}
+	for _, line := range loopLogo(s) {
+		lines = append(lines, centerLine(line, width))
+	}
+	lines = append(lines,
+		"",
+		centerLine(colorize(s, ansiCyan+ansiBold, "GitHub Sleep Mode"), width),
+		"",
+		centerLine(spinnerSymbol(s)+" Waiting for GitHub Issue/PR updates", width),
+		centerLine(colorize(s, ansiDim, ellipsize(detail, contentWidth)), width),
+		"",
+		centerLine(colorize(s, ansiDim, "Polling every 5m. Press any key to fetch now. Ctrl+C to cancel. Asleep for "+asleepFor+"."), width),
 	)
 	return fitCanvasLines(lines, colorize(s, ansiDim, footerText(s, symbols)), width, height)
 }
@@ -424,10 +464,10 @@ func phaseColor(stage string) string {
 	switch stage {
 	case "completed":
 		return ansiGreen
-	case "blocked", "failed", "cancelled", "stopped":
+	case "failed", "cancelled", "stopped":
 		return ansiRed
-	case "repair_running":
-		return ansiMagenta
+	case "sleeping":
+		return ansiCyan
 	case "validating":
 		return ansiCyan
 	default:
@@ -443,6 +483,23 @@ func minInt(a, b int) int {
 }
 
 func renderPlainStatusSnapshot(s rendererSnapshot, width, height int) []string {
+	if s.Sleeping {
+		current := strings.TrimSpace(s.SleepDetail)
+		if current == "" {
+			current = "waiting for GitHub Issue/PR updates"
+		}
+		lines := []string{
+			fmt.Sprintf("loop sleeping iter=%s elapsed=%s", iterationDisplay(s), formatDuration(s.Now.Sub(s.Started))),
+			truncateDisplay(current, width),
+		}
+		if height > 2 {
+			lines = append(lines, "polling GitHub every 5m")
+		}
+		if len(lines) > height {
+			return lines[:height]
+		}
+		return lines
+	}
 	iter := iterationDisplay(s)
 	current := strings.TrimSpace(s.Current)
 	if current == "" {
@@ -521,16 +578,14 @@ func phaseLabel(stage string) string {
 		return "Planning"
 	case "agent_running":
 		return "Implementing"
-	case "repair_running":
-		return "Repairing"
 	case "validating":
 		return "Testing"
 	case "integrating":
 		return "Squashing"
 	case "completed":
 		return "Completed"
-	case "blocked":
-		return "Blocked"
+	case "sleeping":
+		return "Sleeping"
 	case "failed":
 		return "Failed"
 	case "cancelled", "stopped":
@@ -544,10 +599,8 @@ func eventStatusForStage(stage string) string {
 	switch stage {
 	case "completed":
 		return "done"
-	case "blocked", "failed", "cancelled", "stopped":
+	case "failed", "cancelled", "stopped":
 		return "blocked"
-	case "repair_running":
-		return "retrying"
 	default:
 		return "active"
 	}

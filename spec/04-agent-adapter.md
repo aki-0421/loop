@@ -22,7 +22,7 @@ An adapter receives:
 - Environment variables.
 - Code-generated skill bootstrap.
 - Prompt text or prompt stream.
-- Expected result JSON path.
+- Iteration directory path for terminal close commands.
 - Iteration directory path.
 - Configured timeout.
 
@@ -37,7 +37,7 @@ Detailed loop behavior and CLI usage live in repository skills, especially `loop
 
 ## Bootstrap requirements
 
-The code-generated bootstrap activates the `loop` skill. In pull request mode it tells the agent to read template text with `loop iteration read pr-template`. Skills use `loop iteration`, `loop memory`, `loop issue`, and `loop pr` commands for mechanical runtime artifact reads, writes, and GitHub Issues. The agent decides when a commit-ready unit is complete, but commit creation goes through `loop commit`; result JSON, pull request text, check repair, and PR merge are handled inside the agent context through CLI commands.
+The code-generated bootstrap activates the `loop` skill. In pull request mode it tells the agent to read template text with `loop iteration read pr-template`. Skills use `loop iteration`, `loop memory`, `loop issue`, and `loop pr` commands for mechanical runtime artifact reads, writes, and GitHub Issues. The agent decides when a commit-ready unit is complete, but commit creation goes through `loop commit`; terminal close JSON, pull request text, check failure fixes, and PR merge are handled inside the agent context through CLI commands.
 
 ## Process output capture
 
@@ -61,16 +61,16 @@ Raw agent transcripts are not persisted. File contents, diffs, and thinking text
 
 ## Result handoff contract
 
-The agent writes the master-DB result handoff with `loop iteration result --write`. The CLI validates it against `schemas/iteration-result.schema.json`.
+The agent writes the master-DB terminal handoff with `loop iteration close --merge` or `loop iteration close --skip-merge`. The CLI validates it against `schemas/iteration-result.schema.json`.
 
-If the result handoff is missing or invalid, the CLI runs the repair flow when repair attempts remain. The code-generated repair contract includes the validation error and the required schema path.
+If the terminal handoff is missing or invalid, the run fails the iteration contract. The CLI does not relaunch the agent for correction.
 
 ## Agent exit interpretation
 
-| Agent exit | Result JSON | Working tree | CLI action |
+| Agent exit | Close JSON | Working tree | CLI action |
 | --- | --- | --- | --- |
-| zero | valid | clean or committed | integrate or stop |
-| zero | valid | dirty | repair dirty state |
-| zero | missing or invalid | any | repair result file |
-| non-zero | valid blocked result | any | record blocked state |
-| non-zero | missing or invalid | any | repair or fail iteration |
+| zero | valid merge | clean and committed | integrate |
+| zero | valid skip-merge | any | do not integrate; clean up branch/worktree |
+| zero | missing or invalid | any | fail iteration contract |
+| non-zero | valid skip-merge | any | do not integrate; clean up branch/worktree |
+| non-zero | missing or invalid | any | fail iteration contract |

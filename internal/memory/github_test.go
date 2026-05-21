@@ -102,7 +102,6 @@ func TestCreateIssueQuestionEnsuresLabelsAndStoresIssue(t *testing.T) {
 		RunsDir:     runsDir,
 		Title:       "Clarify retention policy",
 		Body:        "Which records are authoritative?",
-		Blocking:    true,
 		RunID:       "run-1",
 		IterationID: "0001",
 		GHPath:      ghPath,
@@ -110,8 +109,8 @@ func TestCreateIssueQuestionEnsuresLabelsAndStoresIssue(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create issue: %v", err)
 	}
-	if record.Number != 12 || record.Kind != "issue" || !strings.Contains(record.Labels, LabelBlocking) {
-		t.Fatalf("record = %+v, want blocking issue #12", record)
+	if record.Number != 12 || record.Kind != "issue" || !strings.Contains(record.Labels, LabelQuestion) {
+		t.Fatalf("record = %+v, want question issue #12", record)
 	}
 	hits, err := artifactdb.SearchGitHubContext(artifactdb.GlobalDBPathFromRunsPath(runsDir), artifactdb.GitHubContextSearchOptions{Query: "authoritative", Repo: "acme/app", Limit: 10})
 	if err != nil {
@@ -121,7 +120,7 @@ func TestCreateIssueQuestionEnsuresLabelsAndStoresIssue(t *testing.T) {
 		t.Fatalf("stored issue search hits = %+v", hits)
 	}
 	log := readFileForMemoryTest(t, logPath)
-	if strings.Count(log, "createLabel") != 2 || !strings.Contains(log, "blocking: true") || !strings.Contains(log, "loop:question") {
+	if strings.Count(log, "createLabel") != 1 || strings.Contains(log, "blocking:") || !strings.Contains(log, "loop:question") {
 		t.Fatalf("issue creation did not ensure labels and metadata:\n%s", log)
 	}
 }
@@ -138,7 +137,6 @@ func TestCreateIssueReportEnsuresLabelsAndStoresProposal(t *testing.T) {
 		Title:       "Report missing browser validation harness",
 		Body:        "The repository has no browser validation harness for UI paths.",
 		Kind:        "tool",
-		Blocking:    true,
 		RunID:       "run-1",
 		IterationID: "0001",
 		GHPath:      ghPath,
@@ -157,7 +155,7 @@ func TestCreateIssueReportEnsuresLabelsAndStoresProposal(t *testing.T) {
 		t.Fatalf("stored report search hits = %+v", hits)
 	}
 	log := readFileForMemoryTest(t, logPath)
-	if strings.Count(log, "createLabel") != 2 || !strings.Contains(log, "kind: tool") || strings.Contains(log, "loop:agent-gap") || !strings.Contains(log, "loop:proposal") {
+	if strings.Count(log, "createLabel") != 1 || !strings.Contains(log, "kind: tool") || strings.Contains(log, "loop:agent-gap") || !strings.Contains(log, "loop:proposal") {
 		t.Fatalf("report issue did not ensure labels and metadata:\n%s", log)
 	}
 }
@@ -221,12 +219,6 @@ JSON
 exit 0
 fi
 if echo "$args" | grep -q 'createLabel'; then
-if echo "$args" | grep -q 'loop:blocking'; then
-cat <<'JSON'
-{"data":{"createLabel":{"label":{"id":"blocking-label","name":"loop:blocking"}},"rateLimit":{"remaining":10,"resetAt":"2026-05-20T02:00:00Z","cost":1}}}
-JSON
-exit 0
-fi
 cat <<'JSON'
 {"data":{"createLabel":{"label":{"id":"question-label","name":"loop:question"}},"rateLimit":{"remaining":10,"resetAt":"2026-05-20T02:00:00Z","cost":1}}}
 JSON
@@ -234,7 +226,7 @@ exit 0
 fi
 if echo "$args" | grep -q 'createIssue'; then
 cat <<'JSON'
-{"data":{"createIssue":{"issue":{"__typename":"Issue","number":12,"url":"https://github.com/acme/app/issues/12","state":"OPEN","title":"Clarify retention policy","body":"Which records are authoritative?","updatedAt":"2026-05-20T00:00:00Z","closedAt":null,"author":{"login":"bot"},"labels":{"nodes":[{"name":"loop:question"},{"name":"loop:blocking"}]},"repository":{"nameWithOwner":"acme/app"}}},"rateLimit":{"remaining":10,"resetAt":"2026-05-20T02:00:00Z","cost":1}}}
+{"data":{"createIssue":{"issue":{"__typename":"Issue","number":12,"url":"https://github.com/acme/app/issues/12","state":"OPEN","title":"Clarify retention policy","body":"Which records are authoritative?","updatedAt":"2026-05-20T00:00:00Z","closedAt":null,"author":{"login":"bot"},"labels":{"nodes":[{"name":"loop:question"}]},"repository":{"nameWithOwner":"acme/app"}}},"rateLimit":{"remaining":10,"resetAt":"2026-05-20T02:00:00Z","cost":1}}}
 JSON
 exit 0
 fi
@@ -254,12 +246,6 @@ JSON
 exit 0
 fi
 if echo "$args" | grep -q 'createLabel'; then
-if echo "$args" | grep -q 'loop:blocking'; then
-cat <<'JSON'
-{"data":{"createLabel":{"label":{"id":"blocking-label","name":"loop:blocking"}},"rateLimit":{"remaining":10,"resetAt":"2026-05-20T02:00:00Z","cost":1}}}
-JSON
-exit 0
-fi
 if echo "$args" | grep -q 'loop:proposal'; then
 cat <<'JSON'
 {"data":{"createLabel":{"label":{"id":"proposal-label","name":"loop:proposal"}},"rateLimit":{"remaining":10,"resetAt":"2026-05-20T02:00:00Z","cost":1}}}
@@ -269,7 +255,7 @@ fi
 fi
 if echo "$args" | grep -q 'createIssue'; then
 cat <<'JSON'
-{"data":{"createIssue":{"issue":{"__typename":"Issue","number":13,"url":"https://github.com/acme/app/issues/13","state":"OPEN","title":"Report missing browser validation harness","body":"The repository has no browser validation harness for UI paths.","updatedAt":"2026-05-20T00:00:00Z","closedAt":null,"author":{"login":"bot"},"labels":{"nodes":[{"name":"loop:proposal"},{"name":"loop:blocking"}]},"repository":{"nameWithOwner":"acme/app"}}},"rateLimit":{"remaining":10,"resetAt":"2026-05-20T02:00:00Z","cost":1}}}
+{"data":{"createIssue":{"issue":{"__typename":"Issue","number":13,"url":"https://github.com/acme/app/issues/13","state":"OPEN","title":"Report missing browser validation harness","body":"The repository has no browser validation harness for UI paths.","updatedAt":"2026-05-20T00:00:00Z","closedAt":null,"author":{"login":"bot"},"labels":{"nodes":[{"name":"loop:proposal"}]},"repository":{"nameWithOwner":"acme/app"}}},"rateLimit":{"remaining":10,"resetAt":"2026-05-20T02:00:00Z","cost":1}}}
 JSON
 exit 0
 fi
@@ -289,13 +275,13 @@ exit 0
 fi
 if echo "$args" | grep -q 'is:issue updated:>='; then
 cat <<'JSON'
-{"data":{"search":{"pageInfo":{"hasNextPage":false,"endCursor":""},"nodes":[{"__typename":"Issue","number":4,"url":"https://github.com/acme/app/issues/4","state":"CLOSED","title":"Clarify cache authority","body":"Closed as confirmed.","updatedAt":"2026-05-20T02:00:00Z","closedAt":"2026-05-20T02:00:00Z","author":{"login":"pm"},"labels":{"nodes":[{"name":"loop:question"},{"name":"loop:blocking"}]},"repository":{"nameWithOwner":"acme/app"},"comments":{"nodes":[]}}]},"rateLimit":{"remaining":10,"resetAt":"2026-05-20T04:00:00Z","cost":1}}}
+{"data":{"search":{"pageInfo":{"hasNextPage":false,"endCursor":""},"nodes":[{"__typename":"Issue","number":4,"url":"https://github.com/acme/app/issues/4","state":"CLOSED","title":"Clarify cache authority","body":"Closed as confirmed.","updatedAt":"2026-05-20T02:00:00Z","closedAt":"2026-05-20T02:00:00Z","author":{"login":"pm"},"labels":{"nodes":[{"name":"loop:question"}]},"repository":{"nameWithOwner":"acme/app"},"comments":{"nodes":[]}}]},"rateLimit":{"remaining":10,"resetAt":"2026-05-20T04:00:00Z","cost":1}}}
 JSON
 exit 0
 fi
 if echo "$args" | grep -q 'is:issue'; then
 cat <<'JSON'
-{"data":{"search":{"pageInfo":{"hasNextPage":false,"endCursor":""},"nodes":[{"__typename":"Issue","number":4,"url":"https://github.com/acme/app/issues/4","state":"OPEN","title":"Clarify cache authority","body":"Is GitHub authoritative?","updatedAt":"2026-05-20T00:00:00Z","closedAt":null,"author":{"login":"pm"},"labels":{"nodes":[{"name":"loop:question"},{"name":"loop:blocking"}]},"repository":{"nameWithOwner":"acme/app"},"comments":{"nodes":[{"id":"ic1","url":"https://github.com/acme/app/issues/4#issuecomment-1","body":"Waiting for owner answer.","updatedAt":"2026-05-20T00:30:00Z","author":{"login":"dev"}}]}}]},"rateLimit":{"remaining":10,"resetAt":"2026-05-20T04:00:00Z","cost":1}}}
+{"data":{"search":{"pageInfo":{"hasNextPage":false,"endCursor":""},"nodes":[{"__typename":"Issue","number":4,"url":"https://github.com/acme/app/issues/4","state":"OPEN","title":"Clarify cache authority","body":"Is GitHub authoritative?","updatedAt":"2026-05-20T00:00:00Z","closedAt":null,"author":{"login":"pm"},"labels":{"nodes":[{"name":"loop:question"}]},"repository":{"nameWithOwner":"acme/app"},"comments":{"nodes":[{"id":"ic1","url":"https://github.com/acme/app/issues/4#issuecomment-1","body":"Waiting for owner answer.","updatedAt":"2026-05-20T00:30:00Z","author":{"login":"dev"}}]}}]},"rateLimit":{"remaining":10,"resetAt":"2026-05-20T04:00:00Z","cost":1}}}
 JSON
 exit 0
 fi

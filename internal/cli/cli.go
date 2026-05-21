@@ -349,6 +349,7 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 		return codedError{1, err}
 	}
 	var lastResult *validation.IterationResult
+	var pendingGitHubUpdates []memory.Record
 	mergedCount := 0
 	for i := 1; cfg.Run.MaxIterations == 0 || i <= cfg.Run.MaxIterations; i++ {
 		iterationID := runstate.IterationID(i)
@@ -431,6 +432,14 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 		if i > 1 {
 			syncMemoryBeforeIteration(ctx, root, cfg, paths)
 		}
+		if len(pendingGitHubUpdates) > 0 {
+			writeGitHubUpdatesArtifact(iterDir, pendingGitHubUpdates)
+			_ = runstate.AppendEvent(paths.Events, runstate.Event{
+				"type":    "github_sleep.updates_delivered",
+				"records": len(pendingGitHubUpdates),
+			})
+			pendingGitHubUpdates = nil
+		}
 		state.Stage = runstate.StageAgentRunning
 		_ = runstate.Write(statePath, state)
 		renderer.Stage(runstate.StageAgentRunning, "agent running")
@@ -438,40 +447,37 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 		if err != nil {
 			return codedError{4, err}
 		}
-		if result.Status == "needs_repair" {
-			state.Stage = runstate.StageRepairRunning
-			_ = runstate.Write(statePath, state)
-			renderer.Stage(runstate.StageRepairRunning, "agent requested repair")
-			result, err = repairRequested(ctx, cfg, workDir, &paths, result, renderer.AgentEvent)
-			if err != nil {
-				state.Stage = runstate.StageFailed
-				_ = runstate.Write(statePath, state)
-				return codedError{4, err}
-			}
-		}
-		slept := false
-		result, slept, err = sleepOnBlockingIssues(ctx, root, cfg, workDir, &paths, result, renderer)
-		if err != nil {
-			state.Stage = runstate.StageFailed
-			_ = runstate.Write(statePath, state)
-			return codedError{4, err}
-		}
 		renderer.Branch(paths.CurrentBranch)
 		cleanup.Branch = paths.CurrentBranch
 		state.Iterations[len(state.Iterations)-1].BranchCurrent = paths.CurrentBranch
 		lastResult = result
 		mergedPR := paths.PullRequestMode && prStateMerged(iterDir)
-		if slept {
-			_ = runstate.AppendEvent(paths.Events, runstate.Event{
-				"type":   "github_sleep.resumed",
-				"status": result.Status,
-			})
+		state.Iterations[len(state.Iterations)-1].SummarySentence = terminalSummary(result)
+		state.Iterations[len(state.Iterations)-1].ShouldFullyStop = result.ShouldFullyStop
+
+		if result.Action == "skip_merge" {
+			if err := finalizeSkipMerge(ctx, runner, cleanup, workDir, iterDir, cfg, paths, "skip merge: "+result.SkipMergeReason); err != nil {
+				state.Stage = runstate.StageFailed
+				_ = runstate.Write(statePath, state)
+				return codedError{1, err}
+			}
+			if updates, slept, err := maybeSleepForGitHubUpdates(ctx, root, cfg, result, paths, renderer); err != nil {
+				state.Stage = runstate.StageFailed
+				_ = runstate.Write(statePath, state)
+				return codedError{4, err}
+			} else if slept {
+				pendingGitHubUpdates = updates
+				continue
+			}
+			if result.ShouldFullyStop {
+				state.Stage = runstate.StageCompleted
+				_ = runstate.Write(statePath, state)
+				break
+			}
+			continue
 		}
-		if result.Status == "blocked" {
-			state.Stage = runstate.StageBlocked
-			_ = runstate.Write(statePath, state)
-			appendErrorLog(paths.Errors, "run blocked: "+result.BlockedReason)
-			return codedError{7, fmt.Errorf("run blocked: %s", result.BlockedReason)}
+		if result.Action != "merge" {
+			return codedError{4, fmt.Errorf("unknown iteration close action %q", result.Action)}
 		}
 		state.Stage = runstate.StageValidating
 		_ = runstate.Write(statePath, state)
@@ -481,53 +487,27 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 				return codedError{4, err}
 			}
 			validationResults, validationErr := runConfiguredValidation(ctx, workDir, paths, cfg.Validation.Commands)
-			if validationErr != nil && cfg.Run.RepairAttempts > 0 {
-				result, validationResults, validationErr = repairValidation(ctx, cfg, workDir, root, &paths, validationErr, renderer.AgentEvent)
-				if result != nil {
-					lastResult = result
-					renderer.Branch(paths.CurrentBranch)
-					cleanup.Branch = paths.CurrentBranch
-					state.Iterations[len(state.Iterations)-1].BranchCurrent = paths.CurrentBranch
-					mergedPR = paths.PullRequestMode && prStateMerged(iterDir)
-				}
-			}
 			if validationErr != nil {
-				appendErrorLog(paths.Errors, fmt.Sprintf("validation error: %v", validationErr))
-				return codedError{5, validationErr}
+				reason := fmt.Sprintf("validation error: %v", validationErr)
+				appendErrorLog(paths.Errors, reason)
+				if err := finalizeSkipMerge(ctx, runner, cleanup, workDir, iterDir, cfg, paths, reason); err != nil {
+					state.Stage = runstate.StageFailed
+					_ = runstate.Write(statePath, state)
+					return codedError{1, err}
+				}
+				continue
 			}
 			if validation.StatusFromResults(validationResults) == "failed" {
-				appendErrorLog(paths.Errors, "required validation failed")
-				return codedError{5, fmt.Errorf("required validation failed")}
-			}
-		}
-		if result.Status == "failed" {
-			state.Stage = runstate.StageFailed
-			_ = runstate.Write(statePath, state)
-			appendErrorLog(paths.Errors, "agent reported failed: "+result.Error)
-			return codedError{4, fmt.Errorf("agent reported failed: %s", result.Error)}
-		}
-		if result.Status == "no_change" {
-			state.Iterations[len(state.Iterations)-1].SummarySentence = result.SummarySentence
-			state.Iterations[len(state.Iterations)-1].ShouldFullyStop = result.ShouldFullyStop
-			if cleanup.Active {
-				if issues := cleanup.cleanup(ctx); len(issues) > 0 {
-					appendErrorLog(paths.Errors, "no-change cleanup failed: "+strings.Join(issues, "; "))
-					return codedError{1, fmt.Errorf("no-change cleanup failed: %s", strings.Join(issues, "; "))}
+				reason := "required validation failed"
+				appendErrorLog(paths.Errors, reason)
+				if err := finalizeSkipMerge(ctx, runner, cleanup, workDir, iterDir, cfg, paths, reason); err != nil {
+					state.Stage = runstate.StageFailed
+					_ = runstate.Write(statePath, state)
+					return codedError{1, err}
 				}
-				cleanup.Integrated = true
+				continue
 			}
-			if issues := cleanupDisposableIterationFiles(paths.ActiveDir, paths.Events); len(issues) > 0 {
-				appendErrorLog(paths.Errors, "iteration file cleanup failed: "+strings.Join(issues, "; "))
-			}
-			if result.ShouldFullyStop {
-				state.Stage = runstate.StageCompleted
-				_ = runstate.Write(statePath, state)
-				break
-			}
-			continue
 		}
-		state.Iterations[len(state.Iterations)-1].SummarySentence = result.SummarySentence
-		state.Iterations[len(state.Iterations)-1].ShouldFullyStop = result.ShouldFullyStop
 		var commits []gitx.Commit
 		if mergedPR {
 			commits = commitsFromResult(result)
@@ -540,7 +520,7 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 		renderer.Commits(len(commits))
 		if !mergedPR {
 			if len(commits) == 0 {
-				return codedError{4, fmt.Errorf("completed iteration did not create commits")}
+				return codedError{4, fmt.Errorf("merge iteration did not create commits")}
 			}
 			if err := validateIterationCommitSubjects(commits); err != nil {
 				return codedError{4, err}
@@ -548,18 +528,6 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 			clean, err := branchRunner.CheckClean(ctx, gitx.CleanOptions{IgnoreRuntime: true})
 			if err != nil {
 				return codedError{1, err}
-			}
-			if !clean.Clean && cfg.Run.RepairAttempts > 0 {
-				result, clean, err = repairDirty(ctx, cfg, workDir, &paths, clean, renderer.AgentEvent)
-				if err == nil && result != nil {
-					lastResult = result
-					renderer.Branch(paths.CurrentBranch)
-					cleanup.Branch = paths.CurrentBranch
-					state.Iterations[len(state.Iterations)-1].BranchCurrent = paths.CurrentBranch
-					state.Iterations[len(state.Iterations)-1].SummarySentence = result.SummarySentence
-					state.Iterations[len(state.Iterations)-1].ShouldFullyStop = result.ShouldFullyStop
-					mergedPR = paths.PullRequestMode && prStateMerged(iterDir)
-				}
 			}
 			if !clean.Clean && !mergedPR {
 				return codedError{4, fmt.Errorf("working tree is dirty after agent: %s", dirtyList(clean.Dirty))}
@@ -581,7 +549,7 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 			if !prStateMerged(iterDir) {
 				state.Stage = runstate.StageFailed
 				_ = runstate.Write(statePath, state)
-				return codedError{6, fmt.Errorf("completed pull request iteration was not merged; run `loop pr merge` before writing the result")}
+				return codedError{6, fmt.Errorf("merge close requires a merged PR; run `loop pr merge` before `loop iteration close --merge`")}
 			}
 			mergedCount++
 			renderer.Merged(mergedCount)
@@ -609,9 +577,12 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 			mergedCount++
 			renderer.Merged(mergedCount)
 			cleanup.Integrated = true
-			if cfg.Git.Integration.LocalMerge.DeleteBranch {
-				_ = runner.DeleteBranch(ctx, finalBranch, true)
-			}
+			_ = runner.DeleteBranch(ctx, finalBranch, true)
+		}
+		if err := refreshTargetBranch(ctx, runner, cfg.Git.BaseBranch); err != nil {
+			state.Stage = runstate.StageFailed
+			_ = runstate.Write(statePath, state)
+			return codedError{1, err}
 		}
 		if issues := cleanupDisposableIterationFiles(paths.ActiveDir, paths.Events); len(issues) > 0 {
 			appendErrorLog(paths.Errors, "iteration file cleanup failed: "+strings.Join(issues, "; "))
@@ -628,7 +599,7 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 	}
 	summary := ""
 	if lastResult != nil {
-		summary = lastResult.SummarySentence
+		summary = terminalSummary(lastResult)
 	}
 	return printResult(g, map[string]any{"run_id": runID, "status": state.Stage, "summary": summary, "logs": rel(root, runDir)}, fmt.Sprintf("Run: %s\nStatus: %s\nSummary: %s\nLogs: %s\n", runID, state.Stage, summary, rel(root, runDir)))
 }
@@ -960,6 +931,127 @@ func preparePRMerge(ctx context.Context, runner gitx.Runner, cleanup *iterationC
 	return nil
 }
 
+func finalizeSkipMerge(ctx context.Context, runner gitx.Runner, cleanup *iterationCleanup, workDir, iterDir string, cfg config.Config, paths pathSet, reason string) error {
+	if strings.TrimSpace(reason) != "" {
+		appendErrorLog(paths.Errors, reason)
+	}
+	if err := closeUnmergedPR(ctx, cfg, workDir, iterDir, paths); err != nil {
+		appendErrorLog(paths.Errors, "skip-merge PR cleanup failed: "+err.Error())
+	}
+	branch := ""
+	if cleanup != nil {
+		branch = cleanup.Branch
+		if cleanup.Active {
+			if issues := cleanup.cleanup(ctx); len(issues) > 0 {
+				return fmt.Errorf("skip-merge cleanup failed: %s", strings.Join(issues, "; "))
+			}
+			cleanup.Integrated = true
+		}
+	}
+	if branch != "" && branch != cfg.Git.BaseBranch {
+		if err := deleteRemoteBranchAfterPRMerge(ctx, runner, branch); err != nil {
+			_ = runstate.AppendEvent(paths.Events, runstate.Event{"type": "pr.remote_branch_cleanup.failed", "branch": branch, "error": err.Error()})
+		}
+	}
+	pruneRemoteBranches(ctx, runner)
+	if err := refreshTargetBranch(ctx, runner, cfg.Git.BaseBranch); err != nil {
+		return err
+	}
+	if issues := cleanupDisposableIterationFiles(paths.ActiveDir, paths.Events); len(issues) > 0 {
+		appendErrorLog(paths.Errors, "iteration file cleanup failed: "+strings.Join(issues, "; "))
+	}
+	_ = runstate.AppendEvent(paths.Events, runstate.Event{"type": "iteration.skip_merge", "reason": strings.TrimSpace(reason)})
+	return nil
+}
+
+func closeUnmergedPR(ctx context.Context, cfg config.Config, workDir, iterDir string, paths pathSet) error {
+	if cfg.Git.Integration.Mode != "pr" {
+		return nil
+	}
+	state, ok, err := readPRState(iterDir)
+	if err != nil || !ok || strings.TrimSpace(state.PR) == "" || state.Status == "merged" || state.Status == "closed" {
+		return err
+	}
+	runner := prRunner(cfg, workDir)
+	if _, err := runner.Close(ctx, state.PR); err != nil {
+		return err
+	}
+	state.Status = "closed"
+	if err := writePRState(iterDir, state); err != nil {
+		return err
+	}
+	_ = runstate.AppendEvent(paths.Events, runstate.Event{"type": "pr.closed", "pr": state.PR})
+	return nil
+}
+
+func refreshTargetBranch(ctx context.Context, runner gitx.Runner, base string) error {
+	if strings.TrimSpace(base) == "" {
+		return nil
+	}
+	if _, err := runner.Run(ctx, "checkout", base); err != nil {
+		return err
+	}
+	if _, err := runner.Run(ctx, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"); err != nil {
+		return nil
+	}
+	_, err := runner.Run(ctx, "pull", "--ff-only")
+	return err
+}
+
+func terminalSummary(result *validation.IterationResult) string {
+	if result == nil {
+		return ""
+	}
+	if strings.TrimSpace(result.SummarySentence) != "" {
+		return strings.TrimSpace(result.SummarySentence)
+	}
+	return strings.TrimSpace(result.SkipMergeReason)
+}
+
+func maybeSleepForGitHubUpdates(ctx context.Context, root string, cfg config.Config, result *validation.IterationResult, paths pathSet, renderer *runRenderer) ([]memory.Record, bool, error) {
+	if result == nil || result.Action != "skip_merge" || !result.SleepUntilGitHubUpdate {
+		return nil, false, nil
+	}
+	if _, _, _, err := memory.ResolveGitHubRepository(ctx, root); err != nil {
+		return nil, false, err
+	}
+	updates, err := waitForGitHubUpdates(ctx, root, cfg, paths, renderer)
+	return updates, true, err
+}
+
+func waitForGitHubUpdates(ctx context.Context, root string, cfg config.Config, paths pathSet, renderer *runRenderer) ([]memory.Record, error) {
+	for {
+		if renderer != nil {
+			renderer.SleepWaitingForGitHub()
+		}
+		_ = runstate.AppendEvent(paths.Events, runstate.Event{"type": "github_sleep.waiting"})
+		if err := waitForGitHubSleepPoll(ctx, githubSleepPollInterval, renderer); err != nil {
+			return nil, err
+		}
+		updates, err := memory.SyncGitHubUpdates(ctx, memory.SyncOptions{WorkDir: root, RunsDir: filepath.Join(root, cfg.Logs.Dir)})
+		if err != nil {
+			recordGitHubContextWarning(paths, err)
+			if errors.Is(err, memory.ErrNoGitHubRemote) {
+				return nil, err
+			}
+			continue
+		}
+		if len(updates.Records) == 0 {
+			_ = runstate.AppendEvent(paths.Events, runstate.Event{
+				"type": "github_sleep.no_updates",
+				"repo": updates.Repo,
+			})
+			continue
+		}
+		_ = runstate.AppendEvent(paths.Events, runstate.Event{
+			"type":    "github_sleep.updates",
+			"repo":    updates.Repo,
+			"records": len(updates.Records),
+		})
+		return updates.Records, nil
+	}
+}
+
 func commandResume(ctx context.Context, g globals, args []string) error {
 	args = flagsFirst(args, map[string]bool{
 		"from-iteration": true,
@@ -967,12 +1059,10 @@ func commandResume(ctx context.Context, g globals, args []string) error {
 	fs := flag.NewFlagSet("resume", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	from := fs.Int("from-iteration", 0, "iteration")
-	repair := fs.Bool("repair", true, "repair before resuming")
 	if err := fs.Parse(args); err != nil {
 		return codedError{2, err}
 	}
 	_ = from
-	_ = repair
 	if fs.NArg() != 1 {
 		return codedError{2, fmt.Errorf("usage: loop resume <run-id>")}
 	}
@@ -1233,7 +1323,6 @@ func commandIssueAsk(ctx context.Context, g globals, args []string) error {
 	title := fs.String("title", "", "issue title")
 	body := fs.String("body", "", "issue body")
 	bodyFile := fs.String("body-file", "", "read issue body from file")
-	blocking := fs.Bool("blocking", false, "mark the question as blocking")
 	iterDir := fs.String("iteration-dir", "", "iteration directory")
 	dirAlias := fs.String("dir", "", "iteration directory")
 	runID := fs.String("run", os.Getenv("LOOP_RUN_ID"), "run id")
@@ -1242,7 +1331,7 @@ func commandIssueAsk(ctx context.Context, g globals, args []string) error {
 		return codedError{2, err}
 	}
 	if fs.NArg() != 0 {
-		return codedError{2, fmt.Errorf("usage: loop issue ask --title <text> --body <text> [--blocking]")}
+		return codedError{2, fmt.Errorf("usage: loop issue ask --title <text> --body <text>")}
 	}
 	if *dirAlias != "" {
 		*iterDir = *dirAlias
@@ -1286,7 +1375,6 @@ func commandIssueAsk(ctx context.Context, g globals, args []string) error {
 		RunsDir:     filepath.Join(storageRoot, cfg.Logs.Dir),
 		Title:       *title,
 		Body:        *body,
-		Blocking:    *blocking,
 		RunID:       metadataRunID,
 		IterationID: metadataIterationID,
 	})
@@ -1294,10 +1382,9 @@ func commandIssueAsk(ctx context.Context, g globals, args []string) error {
 		return codedError{1, err}
 	}
 	value := map[string]any{
-		"number":   record.Number,
-		"url":      record.URL,
-		"title":    record.Title,
-		"blocking": *blocking,
+		"number": record.Number,
+		"url":    record.URL,
+		"title":  record.Title,
 	}
 	return printResult(g, value, fmt.Sprintf("created issue #%d %s\n", record.Number, record.URL))
 }
@@ -1313,7 +1400,6 @@ func commandIssueReport(ctx context.Context, g globals, args []string) error {
 	body := fs.String("body", "", "issue body")
 	bodyFile := fs.String("body-file", "", "read issue body from file")
 	kind := fs.String("kind", "other", "proposal kind: tool, docs, guardrail, observability, environment, workflow, or other")
-	blocking := fs.Bool("blocking", false, "mark the improvement proposal as blocking")
 	iterDir := fs.String("iteration-dir", "", "iteration directory")
 	dirAlias := fs.String("dir", "", "iteration directory")
 	runID := fs.String("run", os.Getenv("LOOP_RUN_ID"), "run id")
@@ -1322,7 +1408,7 @@ func commandIssueReport(ctx context.Context, g globals, args []string) error {
 		return codedError{2, err}
 	}
 	if fs.NArg() != 0 {
-		return codedError{2, fmt.Errorf("usage: loop issue report --title <text> --body <text> [--kind <kind>] [--blocking]")}
+		return codedError{2, fmt.Errorf("usage: loop issue report --title <text> --body <text> [--kind <kind>]")}
 	}
 	if *dirAlias != "" {
 		*iterDir = *dirAlias
@@ -1367,7 +1453,6 @@ func commandIssueReport(ctx context.Context, g globals, args []string) error {
 		Title:       *title,
 		Body:        *body,
 		Kind:        *kind,
-		Blocking:    *blocking,
 		RunID:       metadataRunID,
 		IterationID: metadataIterationID,
 	})
@@ -1375,11 +1460,10 @@ func commandIssueReport(ctx context.Context, g globals, args []string) error {
 		return codedError{1, err}
 	}
 	value := map[string]any{
-		"number":   record.Number,
-		"url":      record.URL,
-		"title":    record.Title,
-		"kind":     *kind,
-		"blocking": *blocking,
+		"number": record.Number,
+		"url":    record.URL,
+		"title":  record.Title,
+		"kind":   *kind,
 	}
 	return printResult(g, value, fmt.Sprintf("reported issue #%d %s\n", record.Number, record.URL))
 }
@@ -1508,127 +1592,11 @@ func recordGitHubContextWarning(paths pathSet, err error) {
 	})
 }
 
-func sleepOnBlockingIssues(ctx context.Context, root string, cfg config.Config, workDir string, paths *pathSet, result *validation.IterationResult, renderer *runRenderer) (*validation.IterationResult, bool, error) {
-	if result == nil || result.Status != "blocked" {
-		return result, false, nil
-	}
-	open, err := hasOpenBlockingIssues(ctx, root, cfg, result.BlockedReason)
-	if err != nil {
-		recordGitHubContextWarning(*paths, err)
-		return result, false, nil
-	}
-	if !open {
-		return result, false, nil
-	}
-	slept := false
-	for {
-		slept = true
-		if renderer != nil {
-			renderer.SleepWaitingForGitHub()
-		}
-		_ = runstate.AppendEvent(paths.Events, runstate.Event{
-			"type":   "github_sleep.waiting",
-			"reason": result.BlockedReason,
-		})
-		if err := githubSleepPoll(ctx, githubSleepPollInterval); err != nil {
-			return result, slept, err
-		}
-		updates, err := memory.SyncGitHubUpdates(ctx, memory.SyncOptions{WorkDir: root, RunsDir: filepath.Join(root, cfg.Logs.Dir)})
-		if err != nil {
-			recordGitHubContextWarning(*paths, err)
-			continue
-		}
-		if len(updates.Records) == 0 {
-			_ = runstate.AppendEvent(paths.Events, runstate.Event{
-				"type": "github_sleep.no_updates",
-				"repo": updates.Repo,
-			})
-			continue
-		}
-		writeGitHubUpdatesArtifact(filepath.Dir(paths.Result), updates.Records)
-		_ = runstate.AppendEvent(paths.Events, runstate.Event{
-			"type":    "github_sleep.updates",
-			"repo":    updates.Repo,
-			"records": len(updates.Records),
-		})
-		previousExtra := paths.AgentPromptExtra
-		paths.AgentPromptExtra = githubUpdatesPromptExtra(updates.Records)
-		next, err := runAgentAndReadResult(ctx, cfg, workDir, paths, renderer.AgentEvent)
-		paths.AgentPromptExtra = previousExtra
-		if err != nil {
-			return nil, slept, err
-		}
-		if next.Status == "needs_repair" {
-			next, err = repairRequested(ctx, cfg, workDir, paths, next, renderer.AgentEvent)
-			if err != nil {
-				return nil, slept, err
-			}
-		}
-		if next.Status != "blocked" {
-			return next, slept, nil
-		}
-		open, err = hasOpenBlockingIssues(ctx, root, cfg, next.BlockedReason)
-		if err != nil {
-			recordGitHubContextWarning(*paths, err)
-			return next, slept, nil
-		}
-		if !open {
-			return next, slept, nil
-		}
-		result = next
-	}
-}
-
-func hasOpenBlockingIssues(ctx context.Context, root string, cfg config.Config, blockedReason string) (bool, error) {
-	numbers := issueNumbersFromText(blockedReason)
-	if len(numbers) == 0 {
-		return false, nil
-	}
-	records, err := memory.OpenBlockingIssues(ctx, memory.BlockingIssueOptions{
-		WorkDir: root,
-		RunsDir: filepath.Join(root, cfg.Logs.Dir),
-		Numbers: numbers,
-	})
-	if errors.Is(err, memory.ErrNoGitHubRemote) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	return len(records) > 0, nil
-}
-
-func issueNumbersFromText(text string) []int {
-	seen := map[int]bool{}
-	var numbers []int
-	for _, field := range strings.FieldsFunc(text, func(r rune) bool {
-		switch r {
-		case ' ', '\n', '\t', '\r', '<', '>', '(', ')', '[', ']', ',', ';':
-			return true
-		default:
-			return false
-		}
-	}) {
-		field = strings.Trim(field, ".:")
-		number := memory.IssueNumber(field)
-		if number <= 0 || seen[number] {
-			continue
-		}
-		seen[number] = true
-		numbers = append(numbers, number)
-	}
-	return numbers
-}
-
 func writeGitHubUpdatesArtifact(iterDir string, records []memory.Record) {
 	if len(records) == 0 {
 		return
 	}
 	_ = artifactdb.Write(iterDir, "github-updates", formatGitHubUpdates(records))
-}
-
-func githubUpdatesPromptExtra(records []memory.Record) string {
-	return "## GitHub Updates\n\n" + formatGitHubUpdates(records) + "\nUse these GitHub Issue and PR updates to decide whether the blocked work can proceed. If the updates are unrelated and no safe independent work remains, write another blocked result referencing the relevant Issue URL.\n"
 }
 
 func formatGitHubUpdates(records []memory.Record) string {
@@ -1861,27 +1829,10 @@ func runAgentAndReadResult(ctx context.Context, cfg config.Config, workDir strin
 		}
 		return nil, ctx.Err()
 	}
-	for attempt := 1; resultErr != nil && attempt <= cfg.Run.RepairAttempts && ctx.Err() == nil; attempt++ {
-		appendErrorLog(paths.Errors, fmt.Sprintf("result handoff missing or invalid before repair attempt %d: %v", attempt, resultErr))
-		previousExtra := paths.AgentPromptExtra
-		paths.AgentPromptExtra = repairContract(fmt.Sprintf("Repair attempt %d required because the result handoff was missing or invalid: %v", attempt, resultErr))
-		result, agentErr, resultErr = runAgentUntilResult(ctx, cfg, workDir, paths, onEvent)
-		paths.AgentPromptExtra = previousExtra
-		if err := refreshTrackedBranch(ctx, workDir, paths); err != nil {
-			appendErrorLog(paths.Errors, fmt.Sprintf("branch tracking validation failed before repair attempt %d completed: %v", attempt, err))
-			return nil, err
-		}
-		if ctx.Err() != nil {
-			if agentErr != nil {
-				return nil, fmt.Errorf("agent cancelled: %w", agentErr)
-			}
-			return nil, ctx.Err()
-		}
-	}
 	if resultErr != nil {
-		appendErrorLog(paths.Errors, fmt.Sprintf("result handoff validation failed: %v", resultErr))
+		appendErrorLog(paths.Errors, fmt.Sprintf("iteration close handoff validation failed: %v", resultErr))
 		if agentErr != nil {
-			return nil, fmt.Errorf("agent failed and result JSON is invalid: %w; agent error: %v", resultErr, agentErr)
+			return nil, fmt.Errorf("agent failed and iteration close handoff is invalid: %w; agent error: %v", resultErr, agentErr)
 		}
 		return nil, resultErr
 	}
@@ -1938,6 +1889,9 @@ func validateResultHandoff(ctx context.Context, workDir string, paths *pathSet, 
 	if err := validateResultBranchContract(result, *paths); err != nil {
 		return nil, err
 	}
+	if err := validateResultGoalContract(result, *paths); err != nil {
+		return nil, err
+	}
 	return result, nil
 }
 
@@ -1954,19 +1908,19 @@ func commitsFromResult(result *validation.IterationResult) []gitx.Commit {
 
 func validateResultBranchContract(result *validation.IterationResult, paths pathSet) error {
 	if result == nil {
-		return errors.New("iteration result is missing")
+		return errors.New("iteration close handoff is missing")
 	}
 	initialBranch := firstNonEmpty(paths.InitialBranch, paths.CurrentBranch)
 	currentBranch := paths.CurrentBranch
 	if result.Branch.InitialName != "" && initialBranch != "" && result.Branch.InitialName != initialBranch {
 		return fmt.Errorf("result branch.initial_name is %q, but loop created %q", result.Branch.InitialName, initialBranch)
 	}
-	if result.Status == "completed" {
+	if result.Action == "merge" {
 		if initialBranch == "" || currentBranch == "" || initialBranch == currentBranch {
-			return fmt.Errorf("completed result requires a renamed branch; run `loop branch rename <kind>/<slug>` before `loop iteration result --write`")
+			return fmt.Errorf("merge close requires a renamed branch; run `loop branch rename <kind>/<slug>` before `loop iteration close --merge`")
 		}
 		if result.Branch.FinalName == "" {
-			return fmt.Errorf("completed result branch.final_name must match tracked branch %q; use `loop iteration result --write` to generate it", currentBranch)
+			return fmt.Errorf("merge close branch.final_name must match tracked branch %q; use `loop iteration close --merge` to generate it", currentBranch)
 		}
 		if result.Branch.FinalName != "" && result.Branch.FinalName != currentBranch {
 			return fmt.Errorf("result branch.final_name is %q, but loop runtime tracks %q", result.Branch.FinalName, currentBranch)
@@ -1975,89 +1929,20 @@ func validateResultBranchContract(result *validation.IterationResult, paths path
 	if paths.BranchRenamed && result.Branch.FinalName != "" && currentBranch != "" && result.Branch.FinalName != currentBranch {
 		return fmt.Errorf("result branch.final_name is %q, but loop runtime tracks %q", result.Branch.FinalName, currentBranch)
 	}
-	if result.Status == "completed" && paths.PullRequestMode && !prStateMerged(filepath.Dir(paths.Result)) {
-		return errors.New("completed pull request results require a merged PR; run `loop pr merge` before writing the result")
+	if result.Action == "merge" && paths.PullRequestMode && !prStateMerged(filepath.Dir(paths.Result)) {
+		return errors.New("merge close requires a merged PR; run `loop pr merge` before `loop iteration close --merge`")
 	}
 	return nil
 }
 
-func repairValidation(ctx context.Context, cfg config.Config, workDir, root string, paths *pathSet, cause error, onEvent func(runstate.Event)) (*validation.IterationResult, []validation.CommandResult, error) {
-	var result *validation.IterationResult
-	var results []validation.CommandResult
-	var err error = cause
-	for attempt := 1; attempt <= cfg.Run.RepairAttempts && ctx.Err() == nil; attempt++ {
-		previousExtra := paths.AgentPromptExtra
-		paths.AgentPromptExtra = repairContract(fmt.Sprintf("Repair attempt %d required because validation failed: %v", attempt, err))
-		result, err = runAgentAndReadResult(ctx, cfg, workDir, paths, onEvent)
-		paths.AgentPromptExtra = previousExtra
-		if err != nil {
-			continue
-		}
-		results, err = runConfiguredValidation(ctx, workDir, *paths, cfg.Validation.Commands)
-		if err == nil && validation.StatusFromResults(results) != "failed" {
-			return result, results, nil
-		}
-		if err == nil {
-			err = fmt.Errorf("required validation failed")
-		}
+func validateResultGoalContract(result *validation.IterationResult, paths pathSet) error {
+	if result == nil {
+		return errors.New("iteration close handoff is missing")
 	}
-	return result, results, err
-}
-
-func repairRequested(ctx context.Context, cfg config.Config, workDir string, paths *pathSet, requested *validation.IterationResult, onEvent func(runstate.Event)) (*validation.IterationResult, error) {
-	if cfg.Run.RepairAttempts == 0 {
-		return requested, errors.New("agent requested repair, but run.repairAttempts is 0")
+	if strings.TrimSpace(paths.Goal) == "" && result.ShouldFullyStop {
+		return errors.New("should_fully_stop=true requires a CLI --goal")
 	}
-	result := requested
-	var err error
-	for attempt := 1; attempt <= cfg.Run.RepairAttempts && ctx.Err() == nil; attempt++ {
-		reason := "agent returned status needs_repair"
-		if result != nil && strings.TrimSpace(result.GoalEvaluation) != "" {
-			reason += ": " + strings.TrimSpace(result.GoalEvaluation)
-		}
-		appendErrorLog(paths.Errors, fmt.Sprintf("agent requested repair before attempt %d: %s", attempt, reason))
-		previousExtra := paths.AgentPromptExtra
-		paths.AgentPromptExtra = repairContract(fmt.Sprintf("Repair attempt %d required because %s", attempt, reason))
-		result, err = runAgentAndReadResult(ctx, cfg, workDir, paths, onEvent)
-		paths.AgentPromptExtra = previousExtra
-		if err != nil {
-			continue
-		}
-		if result == nil || result.Status != "needs_repair" {
-			return result, nil
-		}
-	}
-	if ctx.Err() != nil {
-		return result, ctx.Err()
-	}
-	if err != nil {
-		return result, err
-	}
-	return result, fmt.Errorf("agent still requested repair after %d attempt(s)", cfg.Run.RepairAttempts)
-}
-
-func repairDirty(ctx context.Context, cfg config.Config, workDir string, paths *pathSet, dirty gitx.CleanResult, onEvent func(runstate.Event)) (*validation.IterationResult, gitx.CleanResult, error) {
-	var result *validation.IterationResult
-	var err error
-	clean := dirty
-	for attempt := 1; attempt <= cfg.Run.RepairAttempts && !clean.Clean && ctx.Err() == nil; attempt++ {
-		previousExtra := paths.AgentPromptExtra
-		paths.AgentPromptExtra = repairContract(fmt.Sprintf("Repair attempt %d required because the working tree is dirty: %s", attempt, dirtyList(clean.Dirty)))
-		result, err = runAgentAndReadResult(ctx, cfg, workDir, paths, onEvent)
-		paths.AgentPromptExtra = previousExtra
-		if err != nil {
-			continue
-		}
-		clean, err = (gitx.Runner{Dir: workDir}).CheckClean(ctx, gitx.CleanOptions{IgnoreRuntime: true})
-		if err != nil {
-			return result, clean, err
-		}
-	}
-	return result, clean, err
-}
-
-func repairContract(note string) string {
-	return fmt.Sprintf("## Repair Contract\n\n%s\n\nUse the loop skill when available. Restore the iteration contract or produce a valid blocked result.\n", note)
+	return nil
 }
 
 func runConfiguredValidation(ctx context.Context, root string, paths pathSet, commands []config.ValidationCommand) ([]validation.CommandResult, error) {
@@ -2094,147 +1979,6 @@ type prIntegrationSession struct {
 	title    string
 	bodyFile string
 	cleanup  func()
-}
-
-func integratePR(ctx context.Context, root, workDir string, cfg config.Config, branch string, paths pathSet, onEvent func(runstate.Event), beforeMerge func() error) (*validation.IterationResult, error) {
-	session, err := startPRIntegration(ctx, root, cfg, branch, paths)
-	if err != nil {
-		return nil, err
-	}
-	defer session.cleanup()
-
-	repairResult, err := waitPRChecksWithRepair(ctx, session, root, workDir, cfg, branch, paths, onEvent)
-	if err != nil {
-		return repairResult, err
-	}
-	if cfg.Git.Integration.PR.MergeWhenChecksPass {
-		if beforeMerge != nil {
-			if err := beforeMerge(); err != nil {
-				return repairResult, err
-			}
-		}
-		if _, err := session.runner.Merge(ctx, pr.MergeOptions{PR: session.prID, Subject: session.title, BodyFile: session.bodyFile, DeleteBranch: cfg.Git.Integration.PR.DeleteBranch}); err != nil {
-			return repairResult, err
-		}
-		return repairResult, session.runner.PullBase(ctx, cfg.Git.BaseBranch)
-	}
-	return repairResult, nil
-}
-
-func startPRIntegration(ctx context.Context, root string, cfg config.Config, branch string, paths pathSet) (*prIntegrationSession, error) {
-	template := readPullRequestTemplate(root)
-	iterDir := firstNonEmpty(paths.ActiveDir, filepath.Dir(paths.Result))
-	title := strings.TrimSpace(readArtifactOptional(iterDir, "pr-title"))
-	if title == "" {
-		title = fallbackPRTitle(branch)
-		_ = artifactdb.Write(iterDir, "pr-title", title+"\n")
-	}
-	body := strings.TrimSpace(readArtifactOptional(iterDir, "pr-body"))
-	if body == "" {
-		body = fallbackPRBody(branch, template)
-		_ = artifactdb.Write(iterDir, "pr-body", body)
-	}
-	bodyFile, cleanupBody, err := materializePRBody(root, body)
-	if err != nil {
-		return nil, err
-	}
-	runner := pr.Runner{
-		Dir:                   root,
-		ChecksTimeout:         prChecksWatchTimeout(cfg),
-		ChecksIntervalSeconds: prChecksPollIntervalSeconds(cfg),
-		ChecksRequiredOnly:    cfg.Git.Integration.PR.ChecksRequiredOnly,
-	}
-	if cfg.Git.Integration.PR.Push {
-		if _, err := runner.Push(ctx, branch); err != nil {
-			cleanupBody()
-			return nil, err
-		}
-	}
-	created, err := runner.Create(ctx, pr.CreateOptions{Base: cfg.Git.BaseBranch, Head: branch, Title: title, BodyFile: bodyFile})
-	if err != nil {
-		cleanupBody()
-		return nil, err
-	}
-	prID := strings.TrimSpace(created.Stdout)
-	if prID == "" {
-		prID = branch
-	}
-	return &prIntegrationSession{runner: runner, prID: prID, title: title, bodyFile: bodyFile, cleanup: cleanupBody}, nil
-}
-
-func waitPRChecksWithRepair(ctx context.Context, session *prIntegrationSession, root, workDir string, cfg config.Config, branch string, paths pathSet, onEvent func(runstate.Event)) (*validation.IterationResult, error) {
-	if !cfg.Git.Integration.PR.WaitChecks {
-		return nil, nil
-	}
-
-	checks, skipped, err := waitForPRChecks(ctx, session, cfg)
-	if err == nil {
-		eventType := "pr.checks_passed"
-		if skipped {
-			eventType = "pr.checks_skipped"
-		}
-		appendPREvent(paths, onEvent, runstate.Event{"type": eventType, "pr": session.prID})
-		return nil, nil
-	}
-	appendPRCheckFailure(paths, onEvent, session.prID, checks, err)
-	if errors.Is(err, errPRChecksTimedOut) {
-		return nil, err
-	}
-
-	var repairResult *validation.IterationResult
-	lastErr := err
-	for attempt := 1; attempt <= cfg.Run.RepairAttempts && ctx.Err() == nil; attempt++ {
-		repairPaths := paths
-		repairPaths.AgentPromptExtra = prCheckRepairPrompt(session.prID, attempt, cfg.Run.RepairAttempts, checks, lastErr)
-		repairPaths.CurrentBranch = branch
-		repairPaths.BranchRenamed = true
-		repairPaths.WorkDir = workDir
-		_ = writeRuntimeArtifact(repairPaths)
-		appendPREvent(paths, onEvent, runstate.Event{"type": "pr.checks_repair.started", "pr": session.prID, "attempt": attempt})
-
-		result, repairErr := runAgentAndReadResult(ctx, cfg, workDir, &repairPaths, onEvent)
-		if result != nil {
-			repairResult = result
-		}
-		if repairErr != nil {
-			lastErr = repairErr
-			appendErrorLog(paths.Errors, fmt.Sprintf("pull request check repair attempt %d failed: %v", attempt, repairErr))
-			continue
-		}
-		if err := validatePRRepairResult(repairResult); err != nil {
-			lastErr = err
-			appendErrorLog(paths.Errors, fmt.Sprintf("pull request check repair attempt %d produced terminal result: %v", attempt, err))
-			continue
-		}
-		if err := validatePRRepairBranch(ctx, root, workDir, cfg, branch, paths); err != nil {
-			lastErr = err
-			appendErrorLog(paths.Errors, fmt.Sprintf("pull request check repair attempt %d did not leave a valid branch: %v", attempt, err))
-			continue
-		}
-		if cfg.Git.Integration.PR.Push {
-			if _, err := session.runner.Push(ctx, branch); err != nil {
-				return repairResult, err
-			}
-		}
-		checks, skipped, err = waitForPRChecks(ctx, session, cfg)
-		if err == nil {
-			eventType := "pr.checks_passed"
-			if skipped {
-				eventType = "pr.checks_skipped"
-			}
-			appendPREvent(paths, onEvent, runstate.Event{"type": eventType, "pr": session.prID, "after_repair_attempt": attempt})
-			return repairResult, nil
-		}
-		lastErr = err
-		appendPRCheckFailure(paths, onEvent, session.prID, checks, err)
-		if errors.Is(err, errPRChecksTimedOut) {
-			return repairResult, err
-		}
-	}
-	if ctx.Err() != nil {
-		return repairResult, ctx.Err()
-	}
-	return repairResult, lastErr
 }
 
 func waitForPRChecks(ctx context.Context, session *prIntegrationSession, cfg config.Config) (pr.CommandResult, bool, error) {
@@ -2319,100 +2063,6 @@ func sleepContext(ctx context.Context, d time.Duration) error {
 	case <-timer.C:
 		return nil
 	}
-}
-
-func validatePRRepairResult(result *validation.IterationResult) error {
-	if result == nil {
-		return errors.New("repair agent did not produce a result")
-	}
-	switch result.Status {
-	case "blocked":
-		if result.BlockedReason != "" {
-			return fmt.Errorf("repair agent blocked: %s", result.BlockedReason)
-		}
-		return errors.New("repair agent blocked")
-	case "failed":
-		if result.Error != "" {
-			return fmt.Errorf("repair agent failed: %s", result.Error)
-		}
-		return errors.New("repair agent failed")
-	case "needs_repair":
-		return errors.New("repair agent requested another repair")
-	default:
-		return nil
-	}
-}
-
-func validatePRRepairBranch(ctx context.Context, root, workDir string, cfg config.Config, branch string, paths pathSet) error {
-	branchRunner := gitx.Runner{Dir: workDir}
-	if err := ensureIterationBranch(ctx, branchRunner, branch); err != nil {
-		return err
-	}
-	validationResults, validationErr := runConfiguredValidation(ctx, workDir, paths, cfg.Validation.Commands)
-	if validationErr != nil {
-		return validationErr
-	}
-	if validation.StatusFromResults(validationResults) == "failed" {
-		return fmt.Errorf("required validation failed")
-	}
-	clean, err := branchRunner.CheckClean(ctx, gitx.CleanOptions{IgnoreRuntime: true})
-	if err != nil {
-		return err
-	}
-	if !clean.Clean {
-		return fmt.Errorf("working tree is dirty after pull request check repair: %s", dirtyList(clean.Dirty))
-	}
-	commits, err := (gitx.Runner{Dir: root}).ListCommits(ctx, cfg.Git.BaseBranch, branch)
-	if err != nil {
-		return err
-	}
-	if len(commits) == 0 {
-		return fmt.Errorf("pull request check repair left no iteration commits")
-	}
-	return validateIterationCommitSubjects(commits)
-}
-
-func appendPRCheckFailure(paths pathSet, onEvent func(runstate.Event), prID string, result pr.CommandResult, err error) {
-	appendErrorLog(paths.Errors, fmt.Sprintf("pull request checks failed for %s: %v%s", prID, err, commandOutputForLog(result)))
-	appendPREvent(paths, onEvent, runstate.Event{"type": "pr.checks_failed", "pr": prID, "error": err.Error()})
-}
-
-func prCheckRepairPrompt(prID string, attempt, total int, result pr.CommandResult, cause error) string {
-	details := commandOutputForPrompt(result, cause, 6000)
-	const repairPrompt = "\n## Pull Request Check Repair Contract\n\n" +
-		"Pull request checks failed after PR creation.\n\n" +
-		"- Pull request: %s\n" +
-		"- Repair attempt: %d of %d\n\n" +
-		"Failure details:\n\n" +
-		"```text\n%s\n```\n\n" +
-		"Embedded repair instructions:\n\n" +
-		"1. Before changing files, perform a web search for the exact failing check, error message, or stack trace and the likely root cause. Prefer official documentation, project issue trackers, and CI provider documentation.\n" +
-		"2. Use the local repository evidence together with the web findings to make the smallest fix on the current branch.\n" +
-		"3. Run relevant local validation, commit complete changes through `loop commit`, and leave the working tree clean.\n" +
-		"4. Write an updated result handoff with `loop iteration result --write`. If the failure cannot be repaired automatically, report the concrete repository or harness issue with `loop issue report` before returning blocked or failed.\n"
-	return fmt.Sprintf(repairPrompt, prID, attempt, total, details)
-}
-
-func commandOutputForLog(result pr.CommandResult) string {
-	output := strings.TrimSpace(result.Stdout + "\n" + result.Stderr)
-	if output == "" {
-		return ""
-	}
-	return "\n" + output
-}
-
-func commandOutputForPrompt(result pr.CommandResult, cause error, limit int) string {
-	output := strings.TrimSpace(result.Stdout + "\n" + result.Stderr)
-	if output == "" && cause != nil {
-		output = cause.Error()
-	}
-	if output == "" {
-		output = "pull request checks failed without output"
-	}
-	if limit > 0 && len(output) > limit {
-		return output[:limit] + "\n... truncated ..."
-	}
-	return output
 }
 
 func appendPREvent(paths pathSet, onEvent func(runstate.Event), event runstate.Event) {

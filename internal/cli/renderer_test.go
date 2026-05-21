@@ -132,6 +132,53 @@ func TestRunRendererShowsTargetBranchConfirmation(t *testing.T) {
 	assertFrameBounds(t, lines, 100, 20)
 }
 
+func TestRunRendererShowsGitHubSleepMode(t *testing.T) {
+	t.Setenv("LOOP_ASCII", "1")
+	var out bytes.Buffer
+	now := time.Now()
+	renderer := &runRenderer{
+		enabled:     true,
+		interactive: false,
+		writer:      &out,
+		started:     now.Add(-2 * time.Minute),
+		done:        make(chan struct{}),
+		stage:       string(runstate.StageIntegrating),
+		iteration:   "0001",
+	}
+
+	renderer.SleepWaitingForGitHub()
+
+	if !strings.Contains(out.String(), "waiting for GitHub Issue/PR updates") {
+		t.Fatalf("line renderer should print sleep status: %q", out.String())
+	}
+	frameLines := renderer.frame(100, 20)
+	frame := stripANSISequences(strings.Join(frameLines, "\n"))
+	for _, want := range []string{"GitHub Sleep Mode", "Waiting for GitHub Issue/PR updates", "Press any key to fetch now"} {
+		if !strings.Contains(frame, want) {
+			t.Fatalf("sleep frame missing %q:\n%s", want, frame)
+		}
+	}
+	assertFrameBounds(t, frameLines, 100, 20)
+}
+
+func TestRunRendererShowsSleepFetchRequested(t *testing.T) {
+	var out bytes.Buffer
+	renderer := &runRenderer{
+		enabled:     true,
+		interactive: false,
+		writer:      &out,
+		started:     time.Now(),
+		done:        make(chan struct{}),
+		stage:       "sleeping",
+	}
+
+	renderer.SleepFetchRequested()
+
+	if !strings.Contains(out.String(), "fetching GitHub updates after keypress") {
+		t.Fatalf("line renderer should print sleep fetch status: %q", out.String())
+	}
+}
+
 func TestParseTodoItemsNormalizesCommitTypeColon(t *testing.T) {
 	todos := parseTodoItems(strings.NewReader("- [ ] C scaffold Next.js app tooling\n- [>] F: add dashboard shell\n- [x] D update docs\n- [ ] Check setup\n"))
 

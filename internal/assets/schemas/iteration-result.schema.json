@@ -1,12 +1,11 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://loop.dev/schemas/iteration-result.schema.json",
-  "title": "loop iteration result",
+  "title": "loop iteration close",
   "type": "object",
   "required": [
     "schema_version",
-    "status",
-    "summary_sentence",
+    "action",
     "should_fully_stop",
     "goal_evaluation",
     "branch",
@@ -18,18 +17,14 @@
     "schema_version": {
       "const": 1
     },
-    "status": {
+    "action": {
       "enum": [
-        "completed",
-        "no_change",
-        "needs_repair",
-        "blocked",
-        "failed"
+        "merge",
+        "skip_merge"
       ]
     },
     "summary_sentence": {
       "type": "string",
-      "minLength": 1,
       "maxLength": 120
     },
     "should_fully_stop": {
@@ -151,12 +146,88 @@
       },
       "default": []
     },
-    "blocked_reason": {
+    "skip_merge_reason": {
       "type": "string"
     },
-    "error": {
-      "type": "string"
+    "sleep_until_github_update": {
+      "type": "boolean",
+      "default": false
     }
   },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "action": {
+            "const": "merge"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "summary_sentence"
+        ],
+        "properties": {
+          "summary_sentence": {
+            "minLength": 1
+          },
+          "sleep_until_github_update": {
+            "const": false
+          },
+          "validation": {
+            "properties": {
+              "status": {
+                "enum": [
+                  "passed",
+                  "skipped"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "action": {
+            "const": "skip_merge"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "skip_merge_reason"
+        ],
+        "properties": {
+          "skip_merge_reason": {
+            "minLength": 1
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "sleep_until_github_update"
+        ],
+        "properties": {
+          "sleep_until_github_update": {
+            "const": true
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "action": {
+            "const": "skip_merge"
+          },
+          "should_fully_stop": {
+            "const": false
+          }
+        }
+      }
+    }
+  ],
   "additionalProperties": false
 }

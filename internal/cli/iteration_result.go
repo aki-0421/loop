@@ -27,27 +27,28 @@ func (f *repeatedStringFlag) Set(value string) error {
 	return nil
 }
 
-func commandIterationResult(ctx context.Context, g globals, args []string) error {
+func commandIterationClose(ctx context.Context, g globals, args []string) error {
 	var validationCommandFlags repeatedStringFlag
 	var assumptionFlags repeatedStringFlag
 	var commitFlags repeatedStringFlag
 
-	fs := flag.NewFlagSet("iteration result", flag.ContinueOnError)
+	fs := flag.NewFlagSet("iteration close", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	iterDir := fs.String("iteration-dir", "", "iteration directory")
 	dirAlias := fs.String("dir", "", "iteration directory")
 	runID := fs.String("run", os.Getenv("LOOP_RUN_ID"), "run id")
 	iteration := fs.String("iteration", defaultIterationEnv(), "iteration id")
-	writeResult := fs.Bool("write", false, "write the generated JSON to the master DB result handoff")
-	status := fs.String("status", "completed", "result status")
+	merge := fs.Bool("merge", false, "close the iteration by merging")
+	skipMerge := fs.Bool("skip-merge", false, "close the iteration without merging")
+	sleep := fs.Bool("sleep", false, "enter GitHub sleep mode after skip-merge")
+	fs.BoolVar(sleep, "sleep-until-github-update", false, "enter GitHub sleep mode after skip-merge")
 	summary := fs.String("summary", "", "summary sentence")
 	fs.StringVar(summary, "summary-sentence", "", "summary sentence")
+	reason := fs.String("reason", "", "skip-merge reason")
 	shouldStopRaw := fs.String("should-stop", "", "whether the run goal is fully satisfied")
 	fs.StringVar(shouldStopRaw, "should-fully-stop", "", "whether the run goal is fully satisfied")
 	goalEvaluation := fs.String("goal-evaluation", "", "explanation of the stop decision")
 	validationStatus := fs.String("validation-status", "", "validation status")
-	blockedReason := fs.String("blocked-reason", "", "blocked reason")
-	errorMessage := fs.String("error", "", "failure error")
 	fs.Var(&validationCommandFlags, "validation-command", "validation command as JSON or name|command|exit_code|required[|output_path]")
 	fs.Var(&validationCommandFlags, "validation", "alias for --validation-command")
 	fs.Var(&assumptionFlags, "assumption", "recorded assumption")
@@ -58,13 +59,11 @@ func commandIterationResult(ctx context.Context, g globals, args []string) error
 		"dir":           true,
 		"run":           true,
 		"iteration":     true,
-		"status":        true,
 		"summary":       true, "summary-sentence": true,
+		"reason":      true,
 		"should-stop": true, "should-fully-stop": true,
 		"goal-evaluation":    true,
 		"validation-status":  true,
-		"blocked-reason":     true,
-		"error":              true,
 		"validation-command": true, "validation": true,
 		"assumption": true,
 		"commit":     true,
@@ -73,7 +72,7 @@ func commandIterationResult(ctx context.Context, g globals, args []string) error
 		return codedError{2, err}
 	}
 	if fs.NArg() != 0 {
-		return codedError{2, fmt.Errorf("usage: loop iteration result [flags]")}
+		return codedError{2, fmt.Errorf("usage: loop iteration close (--merge|--skip-merge) [flags]")}
 	}
 	if *dirAlias != "" {
 		*iterDir = *dirAlias
@@ -82,18 +81,32 @@ func commandIterationResult(ctx context.Context, g globals, args []string) error
 	if err != nil {
 		return codedError{1, err}
 	}
-	if *writeResult && strings.TrimSpace(resolvedDir) == "" {
-		return codedError{2, errors.New("iteration directory is required when --write is used")}
+	if strings.TrimSpace(resolvedDir) == "" {
+		return codedError{2, errors.New("iteration directory is required")}
+	}
+	action := ""
+	switch {
+	case *merge && *skipMerge:
+		return codedError{2, errors.New("choose exactly one of --merge or --skip-merge")}
+	case *merge:
+		action = "merge"
+	case *skipMerge:
+		action = "skip_merge"
+	default:
+		return codedError{2, errors.New("choose exactly one of --merge or --skip-merge")}
+	}
+	if *sleep && action != "skip_merge" {
+		return codedError{2, errors.New("--sleep is only valid with --skip-merge")}
 	}
 
 	result, err := buildIterationResult(ctx, resolvedDir, iterationResultOptions{
-		Status:                  *status,
+		Action:                  action,
 		SummarySentence:         *summary,
+		SkipMergeReason:         *reason,
+		SleepUntilGitHubUpdate:  *sleep,
 		ShouldFullyStopRaw:      *shouldStopRaw,
 		GoalEvaluation:          *goalEvaluation,
 		ValidationStatus:        *validationStatus,
-		BlockedReason:           *blockedReason,
-		Error:                   *errorMessage,
 		ValidationCommandInputs: []string(validationCommandFlags),
 		Assumptions:             []string(assumptionFlags),
 		CommitInputs:            []string(commitFlags),
@@ -109,44 +122,49 @@ func commandIterationResult(ctx context.Context, g globals, args []string) error
 	if _, err := validation.ValidateResultJSON(data); err != nil {
 		return codedError{2, err}
 	}
-	if *writeResult {
-		handoffRunID := strings.TrimSpace(*runID)
-		handoffIterationID := strings.TrimSpace(*iteration)
-		if parsedRunID, parsedIterationID := artifactdb.ParseIterationDir(resolvedDir); parsedRunID != "" || parsedIterationID != "" {
-			handoffRunID = firstNonEmpty(parsedRunID, handoffRunID)
-			handoffIterationID = firstNonEmpty(parsedIterationID, handoffIterationID)
-		}
-		if handoffRunID == "" || handoffIterationID == "" || handoffIterationID == "latest" {
-			return codedError{2, errors.New("run id and concrete iteration id are required when --write is used")}
-		}
-		globalPath := artifactdb.GlobalDBPathForIteration(resolvedDir)
-		if globalPath == "" {
-			return codedError{2, errors.New("iteration directory must be under .loop/runs when --write is used")}
-		}
-		if err := artifactdb.WriteResultHandoff(globalPath, handoffRunID, handoffIterationID, string(data)); err != nil {
-			return codedError{1, err}
-		}
+	handoffRunID := strings.TrimSpace(*runID)
+	handoffIterationID := strings.TrimSpace(*iteration)
+	if parsedRunID, parsedIterationID := artifactdb.ParseIterationDir(resolvedDir); parsedRunID != "" || parsedIterationID != "" {
+		handoffRunID = firstNonEmpty(parsedRunID, handoffRunID)
+		handoffIterationID = firstNonEmpty(parsedIterationID, handoffIterationID)
+	}
+	if handoffRunID == "" || handoffIterationID == "" || handoffIterationID == "latest" {
+		return codedError{2, errors.New("run id and concrete iteration id are required")}
+	}
+	globalPath := artifactdb.GlobalDBPathForIteration(resolvedDir)
+	if globalPath == "" {
+		return codedError{2, errors.New("iteration directory must be under .loop/runs")}
+	}
+	if err := artifactdb.WriteResultHandoff(globalPath, handoffRunID, handoffIterationID, string(data)); err != nil {
+		return codedError{1, err}
 	}
 	fmt.Print(string(data))
 	return nil
 }
 
 type iterationResultOptions struct {
-	Status                  string
+	Action                  string
 	SummarySentence         string
+	SkipMergeReason         string
+	SleepUntilGitHubUpdate  bool
 	ShouldFullyStopRaw      string
 	GoalEvaluation          string
 	ValidationStatus        string
-	BlockedReason           string
-	Error                   string
 	ValidationCommandInputs []string
 	Assumptions             []string
 	CommitInputs            []string
 }
 
 func buildIterationResult(ctx context.Context, iterationDir string, opts iterationResultOptions) (validation.IterationResult, error) {
-	if strings.TrimSpace(opts.SummarySentence) == "" {
+	action := strings.TrimSpace(opts.Action)
+	if action != "merge" && action != "skip_merge" {
+		return validation.IterationResult{}, errors.New("choose exactly one of --merge or --skip-merge")
+	}
+	if action == "merge" && strings.TrimSpace(opts.SummarySentence) == "" {
 		return validation.IterationResult{}, errors.New("--summary is required")
+	}
+	if action == "skip_merge" && strings.TrimSpace(opts.SkipMergeReason) == "" {
+		return validation.IterationResult{}, errors.New("--reason is required with --skip-merge")
 	}
 	if strings.TrimSpace(opts.GoalEvaluation) == "" {
 		return validation.IterationResult{}, errors.New("--goal-evaluation is required")
@@ -154,18 +172,21 @@ func buildIterationResult(ctx context.Context, iterationDir string, opts iterati
 	if strings.TrimSpace(opts.ShouldFullyStopRaw) == "" {
 		return validation.IterationResult{}, errors.New("--should-stop true|false is required")
 	}
-	if strings.TrimSpace(opts.Status) == "blocked" && strings.TrimSpace(opts.BlockedReason) == "" {
-		return validation.IterationResult{}, errors.New("--blocked-reason is required when --status blocked")
-	}
-	if strings.TrimSpace(opts.Status) == "failed" && strings.TrimSpace(opts.Error) == "" {
-		return validation.IterationResult{}, errors.New("--error is required when --status failed")
-	}
 	shouldStop, err := strconv.ParseBool(strings.TrimSpace(opts.ShouldFullyStopRaw))
 	if err != nil {
 		return validation.IterationResult{}, fmt.Errorf("--should-stop must be true or false: %w", err)
 	}
+	if opts.SleepUntilGitHubUpdate && action != "skip_merge" {
+		return validation.IterationResult{}, errors.New("--sleep is only valid with --skip-merge")
+	}
+	if opts.SleepUntilGitHubUpdate && shouldStop {
+		return validation.IterationResult{}, errors.New("--sleep requires --should-stop false")
+	}
 
 	runtime := readResultRuntime(iterationDir)
+	if shouldStop && strings.TrimSpace(runtime["goal"]) == "" {
+		return validation.IterationResult{}, errors.New("--should-stop true requires a CLI --goal")
+	}
 	workDir := firstNonEmpty(runtime["workdir"], os.Getenv("LOOP_WORKDIR"), ".")
 	baseBranch := firstNonEmpty(runtime["base_branch"], os.Getenv("LOOP_BASE_BRANCH"))
 	initialBranch := firstNonEmpty(runtime["initial_branch"], os.Getenv("LOOP_INITIAL_BRANCH"), runtime["current_branch"], os.Getenv("LOOP_CURRENT_BRANCH"))
@@ -186,7 +207,7 @@ func buildIterationResult(ctx context.Context, iterationDir string, opts iterati
 	if err != nil {
 		return validation.IterationResult{}, err
 	}
-	if len(commits) == 0 {
+	if len(commits) == 0 && action == "merge" {
 		commits, err = inferIterationCommits(ctx, workDir, baseBranch)
 		if err != nil {
 			return validation.IterationResult{}, err
@@ -217,11 +238,11 @@ func buildIterationResult(ctx context.Context, iterationDir string, opts iterati
 		finalName = ""
 	}
 
-	if err := validateResultCommandState(ctx, workDir, initialBranch, currentBranch, opts.Status, commits); err != nil {
+	if err := validateResultCommandState(ctx, workDir, initialBranch, currentBranch, action, commits); err != nil {
 		return validation.IterationResult{}, err
 	}
-	if strings.TrimSpace(opts.Status) == "completed" && runtime["integration_mode"] == "pr" && !prStateMerged(iterationDir) {
-		return validation.IterationResult{}, errors.New("completed pull request results require a merged PR; run `loop pr merge` before `loop iteration result --write`")
+	if action == "merge" && runtime["integration_mode"] == "pr" && !prStateMerged(iterationDir) {
+		return validation.IterationResult{}, errors.New("merge close requires a merged PR; run `loop pr merge` before `loop iteration close --merge`")
 	}
 
 	commands, err := parseValidationCommandInputs(opts.ValidationCommandInputs)
@@ -232,10 +253,13 @@ func buildIterationResult(ctx context.Context, iterationDir string, opts iterati
 	if vStatus == "" {
 		vStatus = validationStatusFromCommandLogs(commands)
 	}
+	if action == "merge" && (vStatus == "failed" || vStatus == "partial") {
+		return validation.IterationResult{}, errors.New("--merge requires validation status passed or skipped")
+	}
 
 	return validation.IterationResult{
 		SchemaVersion:   1,
-		Status:          strings.TrimSpace(opts.Status),
+		Action:          action,
 		SummarySentence: strings.TrimSpace(opts.SummarySentence),
 		ShouldFullyStop: shouldStop,
 		GoalEvaluation:  strings.TrimSpace(opts.GoalEvaluation),
@@ -250,15 +274,15 @@ func buildIterationResult(ctx context.Context, iterationDir string, opts iterati
 			Status:   vStatus,
 			Commands: commands,
 		},
-		Artifacts:     inferResultArtifacts(iterationDir),
-		Assumptions:   trimNonEmpty(opts.Assumptions),
-		BlockedReason: strings.TrimSpace(opts.BlockedReason),
-		Error:         strings.TrimSpace(opts.Error),
+		Artifacts:              inferResultArtifacts(iterationDir),
+		Assumptions:            trimNonEmpty(opts.Assumptions),
+		SkipMergeReason:        strings.TrimSpace(opts.SkipMergeReason),
+		SleepUntilGitHubUpdate: opts.SleepUntilGitHubUpdate,
 	}, nil
 }
 
-func validateResultCommandState(ctx context.Context, workDir, initialBranch, currentBranch, status string, commits []validation.CommitResult) error {
-	status = strings.TrimSpace(status)
+func validateResultCommandState(ctx context.Context, workDir, initialBranch, currentBranch, action string, commits []validation.CommitResult) error {
+	action = strings.TrimSpace(action)
 	if gitx.IsRepository(ctx, workDir) {
 		runner := gitx.Runner{Dir: workDir}
 		if current, err := runner.CurrentBranch(ctx); err == nil && currentBranch != "" && current != currentBranch {
@@ -268,21 +292,17 @@ func validateResultCommandState(ctx context.Context, workDir, initialBranch, cur
 		if err != nil {
 			return fmt.Errorf("check working tree cleanliness: %w", err)
 		}
-		if (status == "completed" || status == "no_change") && !clean.Clean {
-			return fmt.Errorf("%s result requires a clean working tree; commit complete work with `loop commit`, revert incomplete work, or use blocked/failed: %s", status, dirtyList(clean.Dirty))
+		if action == "merge" && !clean.Clean {
+			return fmt.Errorf("--merge requires a clean working tree; commit complete work with `loop commit` or use --skip-merge: %s", dirtyList(clean.Dirty))
 		}
 	}
-	switch status {
-	case "completed":
+	switch action {
+	case "merge":
 		if strings.TrimSpace(currentBranch) == "" || strings.TrimSpace(currentBranch) == strings.TrimSpace(initialBranch) {
-			return errors.New("completed result requires a renamed branch; run `loop branch rename <kind>/<slug>` before `loop iteration result --write`")
+			return errors.New("--merge requires a renamed branch; run `loop branch rename <kind>/<slug>` before `loop iteration close --merge`")
 		}
 		if len(commits) == 0 {
-			return errors.New("completed result requires at least one commit; use `loop commit` for completed work or `--status no_change` when nothing changed")
-		}
-	case "no_change":
-		if len(commits) > 0 {
-			return errors.New("no_change result must not report commits; use `--status completed` for committed work")
+			return errors.New("--merge requires at least one commit; use `loop commit` for mergeable work or `--skip-merge` when nothing should be merged")
 		}
 	}
 	return nil

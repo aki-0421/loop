@@ -35,7 +35,7 @@ Files are created as needed. `prompt.md`, `effective-config.yaml`, `agent-events
 
 During an active iteration, disposable runtime files are stored in a Go temp directory created with `os.MkdirTemp`. The durable iteration directory is exposed to subprocesses as `LOOP_ITERATION_DIR`; the temp-backed active artifact directory is exposed as `LOOP_ACTIVE_ITERATION_DIR` only so `loop iteration` commands can resolve artifact paths. `runtime`, `plan`, `todo`, `validation`, PR text, validation output, and prompt-audit files are active runtime files. They are ignored by Git, must not be committed as iteration work, and are disposable after the iteration completes.
 
-Agents access runtime artifacts through `loop iteration` commands instead of manually constructing paths. Writable agent artifacts are `plan`, `todo`, `pr-title`, and `pr-body`. `plan` uses `loop iteration plan`, `todo` uses `loop iteration todo`, and remaining writable artifacts use `loop iteration write` or `loop iteration append`. Agents generate the result handoff with `loop iteration result --write` so the CLI owns the mechanical JSON shape.
+Agents access runtime artifacts through `loop iteration` commands instead of manually constructing paths. Writable agent artifacts are `plan`, `todo`, `pr-title`, and `pr-body`. `plan` uses `loop iteration plan`, `todo` uses `loop iteration todo`, and remaining writable artifacts use `loop iteration write` or `loop iteration append`. Agents close the iteration with `loop iteration close --merge` or `loop iteration close --skip-merge` so the CLI owns the mechanical JSON shape.
 
 ## Live renderer
 
@@ -59,7 +59,7 @@ The CLI creates a numbered initial branch before launching the agent:
 wip/0001
 ```
 
-The agent starts on the initial branch and must rename it through the CLI before reporting completed work:
+The agent starts on the initial branch and must rename it through the CLI before closing with `--merge`:
 
 ```bash
 loop branch rename feat/add-password-reset-tests
@@ -68,7 +68,7 @@ loop branch rename --kind fix handle-empty-search-query
 
 The command accepts only loop's fixed branch kind preset, slugifies the branch subject, applies collision suffixes, and stores the current branch in runtime context. Aliases such as `feature` are not accepted. Direct Git branch switches or renames are rejected as lifecycle mismatches.
 
-Completed results are rejected while the tracked branch still equals the numbered initial branch. `no_change` results do not require a branch rename.
+Merge closes are rejected while the tracked branch still equals the numbered initial branch. Skip-merge closes do not require a branch rename.
 
 Example final branch names:
 
@@ -109,34 +109,31 @@ Required agent outputs:
 - `todo` artifact before repository edits.
 - Commits for complete logical units when changes are made, created through `loop commit`.
 - `pr-title` and `pr-body` when pull request mode is enabled.
-- Master-DB result handoff through `loop iteration result --write`.
+- Master-DB terminal handoff through `loop iteration close --merge` or `loop iteration close --skip-merge`.
 
-The agent first uses the plan to select the review slice, then manages TODOs one item at a time to decompose that slice into commit-sized tasks. Each TODO uses the same `--type` and message shape as `loop commit`, and one completed TODO equals one `loop commit` invocation except no-change confirmations. Before the iteration ends, the agent confirms that commits are complete and `git status --short` shows no changed files.
+The agent first uses the plan to select the review slice, then manages TODOs one item at a time to decompose that slice into commit-sized tasks. Each TODO uses the same `--type` and message shape as `loop commit`, and one completed TODO equals one `loop commit` invocation except skip-merge evidence. Before the iteration ends with `--merge`, the agent confirms that commits are complete and `git status --short` shows no changed files.
 
-## Result handling
+## Close handling
 
-The CLI validates the master-DB result handoff and decides the next action. After a completed or no-change iteration reaches its terminal action, the CLI deletes the Go temp directory that contains disposable active-work files such as `runtime.json`, `plan.md`, `todo.md`, validation output, PR text, and prompt-audit files. It preserves `prompt.md`, `effective-config.yaml`, `agent-events.jsonl`, `errors.log`, PR lifecycle diagnostics, GitHub update diffs, and run state in the durable iteration directory.
+The CLI validates the master-DB terminal handoff and decides the next action. After either terminal action, the CLI deletes the Go temp directory that contains disposable active-work files such as `runtime.json`, `plan.md`, `todo.md`, validation output, PR text, and prompt-audit files. It preserves `prompt.md`, `effective-config.yaml`, `agent-events.jsonl`, `errors.log`, PR lifecycle diagnostics, GitHub update diffs, and run state in the durable iteration directory.
 
-| Result status | Meaning | CLI action |
+| Close action | Meaning | CLI action |
 | --- | --- | --- |
-| `completed` | Work for this iteration is ready to integrate | validate and integrate |
-| `no_change` | No repository change was needed | stop or continue based on `should_fully_stop` |
-| `needs_repair` | Agent requests repair flow | launch repair if attempts remain |
-| `blocked` | No safe automated path exists | sleep when an open `loop:blocking` Issue is referenced; otherwise stop the run |
-| `failed` | Agent could not complete the contract | repair or stop |
+| `merge` | Work for this iteration is ready to integrate | validate, integrate, delete branches/worktree, refresh the target branch |
+| `skip_merge` | This branch should not be incorporated | close any unmerged PR, delete branches/worktree, refresh the target branch |
 
 ## Dirty state handling
 
 If the agent exits with uncommitted changes:
 
 1. The CLI records the dirty file list.
-2. The CLI relaunches the agent with a repair note when attempts remain.
-3. The repair agent must either commit complete work through `loop commit`, revert incomplete work, or produce a blocked result.
+2. A merge close is rejected before terminal handoff when the working tree is dirty.
+3. A skip-merge close discards the iteration branch during cleanup and never integrates the dirty work.
 4. Integration never starts while the working tree is dirty, except for ignored `.loop/` runtime files.
 
 ## Validation phase
 
-Validation commands come from configuration and agent result JSON. Commands marked required must pass before integration.
+Validation commands come from configuration and the close handoff. Commands marked required must pass before integration.
 
 Configured validation commands run from the current iteration work directory through the user's default shell as described in `03-configuration.md`.
 
@@ -144,16 +141,18 @@ Validation output is saved to the `validation` artifact and structured events ar
 
 ## Integration phase
 
-A completed iteration with changes is integrated through the configured mode:
+A merge close with changes is integrated through the configured mode:
 
 - Local merge mode: local squash merge into base branch.
-- Pull request mode: require that the agent has already created, checked, repaired, and merged the PR through `loop pr`; then pull the base branch and clean up local runtime resources.
+- Pull request mode: require that the agent has already created, checked, fixed any check failures, and merged the PR through `loop pr`; then pull the base branch and clean up local runtime resources.
 
-The one-sentence `summary_sentence` from result JSON becomes the squash commit message subject or the PR merge subject.
+The one-sentence `summary_sentence` from the close handoff becomes the squash commit message subject or the PR merge subject.
 
 ## Stop condition
 
-`should_fully_stop=true` means the goal is fully satisfied after this iteration is integrated, or no change is needed. In pull request mode, the agent must make this decision after `loop pr merge` succeeds, so CI repair prompts cannot replace the original run-goal evaluation. The CLI stops after the current integration action completes.
+`should_fully_stop=true` means the CLI-provided run goal is fully satisfied. It is invalid when the run has no CLI goal, regardless of instruction, Issue, PR, or comment text. In pull request mode, the agent must make this decision after `loop pr merge` succeeds when using `--merge`. The CLI stops after the current terminal action completes.
+
+`loop iteration close --skip-merge --sleep --should-stop false` enters GitHub sleep mode after skip-merge cleanup. Sleep mode polls Issue, PR, and comment updates every five minutes; in an interactive terminal, any keypress triggers the next fetch immediately. When updates appear, the CLI writes the `github-updates` artifact into the next iteration and lets the next agent decide whether to implement, comment or reopen an Issue, merge, skip merge again, or return to sleep.
 
 If `should_fully_stop=false`, the CLI starts the next iteration until the iteration limit or terminal state is reached.
 

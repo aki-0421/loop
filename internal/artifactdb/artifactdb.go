@@ -1034,53 +1034,6 @@ func GitHubContextLastSync(globalDBPath, metadataKey string) (string, error) {
 	return value, err
 }
 
-func OpenBlockingGitHubIssues(globalDBPath, repo string, numbers []int) ([]GitHubContextRecord, error) {
-	if repo == "" || len(numbers) == 0 {
-		return nil, nil
-	}
-	db, err := openGlobal(globalDBPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	defer db.Close()
-	if err := ensureGlobal(db); err != nil {
-		return nil, err
-	}
-	placeholders := make([]string, 0, len(numbers))
-	args := []any{repo, "issue", "open"}
-	for _, number := range numbers {
-		if number <= 0 {
-			continue
-		}
-		placeholders = append(placeholders, "?")
-		args = append(args, number)
-	}
-	if len(placeholders) == 0 {
-		return nil, nil
-	}
-	query := `SELECT repo, kind, number, comment_id, url, state, title, body, author, labels, updated_at, closed_at, fetched_at
-FROM github_records WHERE repo = ? AND kind = ? AND state = ? AND number IN (` + strings.Join(placeholders, ",") + `)`
-	rows, err := db.Query(query, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	records, err := scanGitHubContextRows(rows)
-	if err != nil {
-		return nil, err
-	}
-	out := records[:0]
-	for _, record := range records {
-		if contextLabelsContain(record.Labels, "loop:blocking") {
-			out = append(out, record)
-		}
-	}
-	return out, nil
-}
-
 func upsertPRMemory(db *sql.DB, record PRMemoryRecord) error {
 	tx, err := db.Begin()
 	if err != nil {
@@ -1230,16 +1183,6 @@ func normalizeContextKinds(kinds []string) []string {
 
 func normalizeGitHubContextKind(kind string) string {
 	return strings.ToLower(strings.TrimSpace(kind))
-}
-
-func contextLabelsContain(labels, want string) bool {
-	want = strings.ToLower(strings.TrimSpace(want))
-	for _, label := range strings.Split(labels, ",") {
-		if strings.ToLower(strings.TrimSpace(label)) == want {
-			return true
-		}
-	}
-	return false
 }
 
 func setGlobalMetadataTx(tx *sql.Tx, key, value string) error {
