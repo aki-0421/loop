@@ -61,7 +61,7 @@ Raw agent transcripts are not persisted. File contents, diffs, and thinking text
 
 ## Result handoff contract
 
-The agent writes the master-DB terminal handoff with `loop iteration close --merge` or `loop iteration close --skip-merge`. The CLI validates it against `schemas/iteration-result.schema.json`.
+The agent writes the master-DB terminal handoff with `loop iteration close --merge` or `loop iteration close --skip-merge`. The CLI validates it against the iteration close contract in `09-json-contracts.md`.
 
 If the terminal handoff is missing or invalid, the run fails the iteration contract. The CLI does not relaunch the agent for correction.
 

@@ -30,7 +30,6 @@ The specification defines what to implement. It does not include source comparis
 | `11-error-resume.md` | Error handling, GitHub sleep, and resume states |
 | `12-testing.md` | Test areas and fake-agent test harness |
 | `13-go-implementation.md` | Go package layout and implementation notes |
-| `schemas/*.schema.json` | JSON Schema definitions |
 | `templates/*` | Default configuration and skill examples |
 
 ## Primary command shape

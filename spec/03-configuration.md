@@ -12,6 +12,8 @@
 
 The effective configuration is written to each iteration directory as `effective-config.yaml`.
 
+The configuration contract is documented in this Markdown specification and summarized in `09-json-contracts.md`; loop does not maintain a separate JSON Schema file for config validation.
+
 ## Example
 
 `loop init` writes a minimal repository config. Built-in defaults supply everything else.

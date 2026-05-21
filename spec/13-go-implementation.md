@@ -16,7 +16,6 @@ internal/cli/
   doctor.go
 internal/config/
   load.go
-  schema.go
   defaults.go
 internal/agent/
   adapter.go
@@ -59,7 +58,7 @@ Responsibilities:
 
 - Load config files.
 - Merge defaults, user config, repo config, environment, and flags.
-- Validate against JSON Schema.
+- Validate with known-field YAML decoding and contract-specific Go checks.
 - Write effective config per iteration.
 
 ### `internal/agent`
