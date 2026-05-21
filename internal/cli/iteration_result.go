@@ -46,10 +46,6 @@ func commandIterationResult(ctx context.Context, g globals, args []string) error
 	fs.StringVar(shouldStopRaw, "should-fully-stop", "", "whether the run goal is fully satisfied")
 	goalEvaluation := fs.String("goal-evaluation", "", "explanation of the stop decision")
 	validationStatus := fs.String("validation-status", "", "validation status")
-	branchInitial := fs.String("branch-initial", "", "initial iteration branch")
-	branchKind := fs.String("branch-kind", "", "proposed final branch kind")
-	branchSlug := fs.String("branch-slug", "", "proposed final branch slug")
-	branchFinal := fs.String("branch-final", "", "proposed final branch name")
 	blockedReason := fs.String("blocked-reason", "", "blocked reason")
 	errorMessage := fs.String("error", "", "failure error")
 	fs.Var(&validationCommandFlags, "validation-command", "validation command as JSON or name|command|exit_code|required[|output_path]")
@@ -67,10 +63,6 @@ func commandIterationResult(ctx context.Context, g globals, args []string) error
 		"should-stop": true, "should-fully-stop": true,
 		"goal-evaluation":    true,
 		"validation-status":  true,
-		"branch-initial":     true,
-		"branch-kind":        true,
-		"branch-slug":        true,
-		"branch-final":       true,
 		"blocked-reason":     true,
 		"error":              true,
 		"validation-command": true, "validation": true,
@@ -100,10 +92,6 @@ func commandIterationResult(ctx context.Context, g globals, args []string) error
 		ShouldFullyStopRaw:      *shouldStopRaw,
 		GoalEvaluation:          *goalEvaluation,
 		ValidationStatus:        *validationStatus,
-		BranchInitial:           *branchInitial,
-		BranchKind:              *branchKind,
-		BranchSlug:              *branchSlug,
-		BranchFinal:             *branchFinal,
 		BlockedReason:           *blockedReason,
 		Error:                   *errorMessage,
 		ValidationCommandInputs: []string(validationCommandFlags),
@@ -137,10 +125,6 @@ type iterationResultOptions struct {
 	ShouldFullyStopRaw      string
 	GoalEvaluation          string
 	ValidationStatus        string
-	BranchInitial           string
-	BranchKind              string
-	BranchSlug              string
-	BranchFinal             string
 	BlockedReason           string
 	Error                   string
 	ValidationCommandInputs []string
@@ -172,7 +156,7 @@ func buildIterationResult(ctx context.Context, iterationDir string, opts iterati
 	runtime := readResultRuntime(iterationDir)
 	workDir := firstNonEmpty(runtime["workdir"], os.Getenv("LOOP_WORKDIR"), ".")
 	baseBranch := firstNonEmpty(runtime["base_branch"], os.Getenv("LOOP_BASE_BRANCH"))
-	initialBranch := firstNonEmpty(opts.BranchInitial, runtime["initial_branch"], os.Getenv("LOOP_INITIAL_BRANCH"), runtime["current_branch"], os.Getenv("LOOP_CURRENT_BRANCH"))
+	initialBranch := firstNonEmpty(runtime["initial_branch"], os.Getenv("LOOP_INITIAL_BRANCH"), runtime["current_branch"], os.Getenv("LOOP_CURRENT_BRANCH"))
 	currentBranch := firstNonEmpty(runtime["current_branch"], os.Getenv("LOOP_CURRENT_BRANCH"))
 	if currentBranch == "" && gitx.IsRepository(ctx, workDir) {
 		if branch, err := (gitx.Runner{Dir: workDir}).CurrentBranch(ctx); err == nil {
@@ -183,7 +167,7 @@ func buildIterationResult(ctx context.Context, iterationDir string, opts iterati
 		initialBranch = currentBranch
 	}
 	if initialBranch == "" {
-		return validation.IterationResult{}, errors.New("could not infer branch.initial_name; pass --branch-initial")
+		return validation.IterationResult{}, errors.New("could not infer branch.initial_name from loop runtime")
 	}
 
 	commits, err := parseCommitInputs(opts.CommitInputs)
@@ -196,45 +180,17 @@ func buildIterationResult(ctx context.Context, iterationDir string, opts iterati
 			return validation.IterationResult{}, err
 		}
 	}
-	kind := strings.TrimSpace(opts.BranchKind)
-	slug := strings.TrimSpace(opts.BranchSlug)
-	finalName := strings.TrimSpace(opts.BranchFinal)
+	kind := ""
+	slug := ""
+	finalName := ""
 	branchRenamed, _ := strconv.ParseBool(strings.TrimSpace(runtime["branch_renamed"]))
 	if currentBranch != "" && initialBranch != "" && currentBranch != initialBranch {
 		branchRenamed = true
 	}
-	if finalName != "" {
-		candidate, err := gitx.FinalBranchName(kind, finalName)
-		if err != nil {
-			return validation.IterationResult{}, err
-		}
-		if currentBranch != "" && candidate != currentBranch {
-			return validation.IterationResult{}, fmt.Errorf("--branch-final %q does not match tracked branch %q", candidate, currentBranch)
-		}
-		currentBranch = candidate
-		branchRenamed = initialBranch != "" && currentBranch != initialBranch
-	}
-	if kind != "" || slug != "" {
-		proposal := slug
-		if proposal == "" {
-			proposal = opts.SummarySentence
-		}
-		candidate, err := gitx.FinalBranchName(kind, proposal)
-		if err != nil {
-			return validation.IterationResult{}, err
-		}
-		if branchRenamed && currentBranch != "" && candidate != currentBranch {
-			return validation.IterationResult{}, fmt.Errorf("branch override %q does not match tracked branch %q", candidate, currentBranch)
-		}
-	}
 	if branchRenamed && currentBranch != "" {
 		if parsedKind, parsedSlug, ok := splitBranchName(currentBranch); ok {
-			if kind == "" {
-				kind = parsedKind
-			}
-			if slug == "" {
-				slug = parsedSlug
-			}
+			kind = parsedKind
+			slug = parsedSlug
 		}
 	}
 	if kind == "" {

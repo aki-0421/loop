@@ -81,18 +81,24 @@ func TestIterationResultCommandBuildsAndWritesResult(t *testing.T) {
 }
 
 func TestIterationResultCommandPrintsResultJSON(t *testing.T) {
-	t.Setenv("LOOP_WORKDIR", t.TempDir())
+	repo := newCleanupRepo(t)
+	git(t, repo, "checkout", "-b", "wip/0001", "develop")
+	git(t, repo, "branch", "-m", "wip/0001", "docs/document-result-helper")
+	mustWrite(t, filepath.Join(repo, "result-helper.md"), "done\n")
+	git(t, repo, "add", "result-helper.md")
+	git(t, repo, "commit", "-m", "D: document result helper")
+
+	iterDir := filepath.Join(repo, ".loop", "runs", "run-1", "iterations", "0001")
+	writeRuntimeForResultTest(t, iterDir, repo, "wip/0001", "docs/document-result-helper")
 
 	out, err := captureStdout(t, func() error {
 		return commandIteration(context.Background(), globals{}, []string{
 			"result",
-			"--branch-initial", "wip/0001",
+			"--iteration-dir", iterDir,
 			"--summary", "Document result helper",
 			"--should-stop", "true",
 			"--goal-evaluation", "The requested documentation is complete.",
 			"--validation-status", "skipped",
-			"--branch-final", "docs/document-result-helper",
-			"--commit", "abc123|D: document result helper",
 		})
 	})
 	if err != nil {
@@ -113,7 +119,6 @@ func TestIterationResultCommandPrintsResultJSON(t *testing.T) {
 func TestIterationResultCommandRequiresSemanticFields(t *testing.T) {
 	err := commandIteration(context.Background(), globals{}, []string{
 		"result",
-		"--branch-initial", "wip/0001",
 		"--summary", "Missing stop decision",
 		"--goal-evaluation", "Not enough fields.",
 	})
@@ -125,15 +130,31 @@ func TestIterationResultCommandRequiresSemanticFields(t *testing.T) {
 	}
 }
 
+func TestIterationResultCommandRejectsBranchOverrideFlags(t *testing.T) {
+	err := commandIteration(context.Background(), globals{}, []string{
+		"result",
+		"--branch-final", "feat/old-override",
+		"--summary", "Old branch override",
+		"--should-stop", "true",
+		"--goal-evaluation", "Branch metadata comes from loop runtime.",
+	})
+	if err == nil {
+		t.Fatal("expected branch override flag to fail")
+	}
+	if !strings.Contains(err.Error(), "flag provided but not defined") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 func TestIterationResultCommandRejectsCompletedWithoutCommits(t *testing.T) {
 	repo := newCleanupRepo(t)
 	git(t, repo, "checkout", "-b", "feat/finish-empty-slice", "develop")
-	t.Setenv("LOOP_WORKDIR", repo)
+	iterDir := filepath.Join(repo, ".loop", "runs", "run-1", "iterations", "0001")
+	writeRuntimeForResultTest(t, iterDir, repo, "wip/0001", "feat/finish-empty-slice")
 
 	err := commandIteration(context.Background(), globals{}, []string{
 		"result",
-		"--branch-initial", "develop",
-		"--branch-final", "feat/finish-empty-slice",
+		"--iteration-dir", iterDir,
 		"--summary", "Finish empty slice",
 		"--should-stop", "true",
 		"--goal-evaluation", "The slice is complete.",

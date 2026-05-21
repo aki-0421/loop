@@ -212,12 +212,11 @@ run:
 	repo = t.TempDir()
 	mustWrite(t, filepath.Join(repo, ".loop", "config.yaml"), `version: 1
 git:
-  branch:
-    allowedKinds: [feat, hotfix]
+  branch: {}
 `)
 	_, err = Load(LoadOptions{CWD: repo, Env: []string{}, ConfigPath: filepath.Join(repo, ".loop", "config.yaml")})
-	if err == nil || !strings.Contains(err.Error(), "field allowedKinds not found") {
-		t.Fatalf("expected removed git.branch.allowedKinds error, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "field branch not found") {
+		t.Fatalf("expected removed git.branch error, got %v", err)
 	}
 
 	repo = t.TempDir()

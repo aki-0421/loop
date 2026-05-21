@@ -85,20 +85,9 @@ Sync modes:
 | Key | Type | Behavior |
 | --- | --- | --- |
 | `baseBranch` | string | Optional pinned integration target. When omitted, `loop run` uses the branch that was checked out when the command started. |
+| `worktree` | boolean | Run each iteration in a Git worktree when true. |
 
-## `git.branch`
-
-`initialPattern` creates a numbered branch before the agent plans. The default is `wip/{iteration}`, for example `wip/0001`.
-
-After plan creation, the agent chooses a review branch name and runs `loop branch rename`. The CLI validates the kind against its fixed preset, slugifies the branch subject, and tracks the renamed branch for integration, for example:
-
-```text
-feat/add-token-refresh-tests
-fix/handle-empty-profile-response
-refactor/extract-auth-client
-```
-
-No built-in final branch pattern uses a `loop/` prefix. If the final name already exists, the CLI appends `conflictSuffix`.
+Branch naming is not configurable. The CLI creates temporary iteration branches as `wip/<iteration>`, accepts only its fixed branch kind preset for `loop branch rename`, slugifies the branch subject, and appends `-<iteration>` only when needed to avoid collisions.
 
 ## `git.commits`
 

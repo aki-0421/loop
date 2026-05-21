@@ -206,7 +206,7 @@ PR command artifacts `pr-state`, `pr-checks`, and `pr-check-log` are read-only t
 
 `pr-template` is a read-only artifact. `loop iteration read pr-template` prints the selected repository pull request template when present, otherwise it prints the CLI-owned fallback template. `loop iteration path pr-template` prints a path only when a repository template file exists.
 
-`loop iteration result` builds valid iteration result JSON from CLI-owned runtime data and agent-supplied semantic fields. It prints JSON by default, or writes the `result` artifact with `--write`. The command infers `schema_version`, `branch.initial_name`, `branch.final_name`, commits from `base_branch..HEAD`, logical artifact names, branch kind, and branch slug. Required semantic flags are `--summary`, `--should-stop true|false`, and `--goal-evaluation`. Agents pass `--validation-status` or repeat `--validation-command name|command|exit_code|required`; branch override flags remain available for compatibility but must match the tracked branch. The command rejects mechanical contract problems such as dirty completed work, missing commits for `completed`, completed work still on the initial branch, branch mismatches, and missing blocked/failed reasons.
+`loop iteration result` builds valid iteration result JSON from CLI-owned runtime data and agent-supplied semantic fields. It prints JSON by default, or writes the `result` artifact with `--write`. The command infers `schema_version`, `branch.initial_name`, `branch.final_name`, commits from `base_branch..HEAD`, logical artifact names, branch kind, and branch slug. Required semantic flags are `--summary`, `--should-stop true|false`, and `--goal-evaluation`. Agents pass `--validation-status` or repeat `--validation-command name|command|exit_code|required`; branch metadata is always taken from loop runtime and the tracked Git branch. The command rejects mechanical contract problems such as dirty completed work, missing commits for `completed`, completed work still on the initial branch, branch mismatches, and missing blocked/failed reasons.
 
 ## `loop branch`
 
@@ -217,7 +217,7 @@ loop branch rename <kind>/<slug> [--iteration-dir <dir>|--run <run-id> --iterati
 loop branch rename --kind <kind> <slug words...> [--iteration-dir <dir>|--run <run-id> --iteration <n>]
 ```
 
-`loop branch rename` validates the branch kind against loop's fixed preset, slugifies the branch subject, applies the configured collision suffix when needed, renames the checked-out iteration branch, updates runtime context, and prints the actual branch name. Agents must use this command instead of direct Git branch switching or renaming. The command is rejected after integration has started.
+`loop branch rename` validates the branch kind against loop's fixed preset, slugifies the branch subject, applies the fixed iteration collision suffix when needed, renames the checked-out iteration branch, updates runtime context, and prints the actual branch name. Agents must use this command instead of direct Git branch switching or renaming. The command is rejected after integration has started.
 
 ## `loop pr`
 

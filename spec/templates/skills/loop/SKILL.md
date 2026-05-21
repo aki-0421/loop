@@ -222,7 +222,7 @@ Generate the final result through the CLI:
 loop iteration result --write --status completed --summary "..." --should-stop false --goal-evaluation "..." --validation-status passed
 ```
 
-Add validation command, assumption, blocked reason, error, or branch override flags only when needed. The CLI owns the JSON shape. Fix any CLI feedback and rerun.
+Add validation command, assumption, blocked reason, or error flags only when needed. The CLI owns the JSON shape and branch metadata. Fix any CLI feedback and rerun.
 
 Use `completed` only when the selected slice is complete and required merge steps are finished. Use `blocked` when no safe path exists after any necessary blocking Issue has been created and unrelated work is exhausted. Use `failed` for unrecoverable execution errors. Use `no_change` only when repository evidence shows no change is needed.
 

@@ -28,10 +28,6 @@ skills:
 git:
   worktree: true
   cleanPolicy: require_clean_before_start
-  branch:
-    initialPattern: wip/{iteration}
-    finalPattern: "{kind}/{slug}"
-    conflictSuffix: "-{iteration}"
   commits:
     requireAgentCommits: true
     allowCliFallbackCommit: false

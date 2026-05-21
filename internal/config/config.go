@@ -68,15 +68,8 @@ type GitConfig struct {
 	BaseBranch  string            `yaml:"baseBranch" json:"baseBranch"`
 	Worktree    bool              `yaml:"worktree" json:"worktree"`
 	CleanPolicy string            `yaml:"cleanPolicy" json:"cleanPolicy"`
-	Branch      BranchConfig      `yaml:"branch" json:"branch"`
 	Commits     CommitConfig      `yaml:"commits" json:"commits"`
 	Integration IntegrationConfig `yaml:"integration" json:"integration"`
-}
-
-type BranchConfig struct {
-	InitialPattern string `yaml:"initialPattern" json:"initialPattern"`
-	FinalPattern   string `yaml:"finalPattern" json:"finalPattern"`
-	ConflictSuffix string `yaml:"conflictSuffix" json:"conflictSuffix"`
 }
 
 type CommitConfig struct {
@@ -296,9 +289,6 @@ func Validate(cfg Config) error {
 		if !oneOf(target.Mode, "copy", "symlink", "off") {
 			errs = append(errs, "skills.targets."+agent+".mode must be copy, symlink, or off")
 		}
-	}
-	if cfg.Git.Branch.InitialPattern == "" || cfg.Git.Branch.FinalPattern == "" {
-		errs = append(errs, "git.branch patterns are required")
 	}
 	if !oneOf(cfg.Git.Integration.Mode, "local_merge", "pr") {
 		errs = append(errs, "git.integration.mode must be local_merge or pr")
