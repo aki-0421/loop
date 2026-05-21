@@ -500,23 +500,6 @@ func objectLooksLikeToolOutput(obj map[string]any) bool {
 	return false
 }
 
-func formatAuditEvent(event runstate.Event) string {
-	switch event["type"] {
-	case "agent.command":
-		args := stringifyArgs(event["args"])
-		command, _ := event["command"].(string)
-		if args != "" {
-			return "command: " + strings.TrimSpace(command+" "+args)
-		}
-		return "command: " + command
-	case "agent.file_read":
-		path, _ := event["path"].(string)
-		return "file_read: " + path
-	default:
-		return fmt.Sprintf("%s", event["type"])
-	}
-}
-
 func stringifyArgs(v any) string {
 	switch typed := v.(type) {
 	case []string:

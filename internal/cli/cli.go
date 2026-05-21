@@ -1679,8 +1679,6 @@ type pathSet struct {
 	Validation      string
 	Result          string
 	Events          string
-	Stdout          string
-	Stderr          string
 	PRTitle         string
 	PRBody          string
 	Errors          string
@@ -1718,8 +1716,6 @@ func promptPathsWithActive(iterDir, activeDir string) pathSet {
 		Validation:      filepath.Join(activeDir, "validation.md"),
 		Result:          filepath.Join(iterDir, "result.json"),
 		Events:          filepath.Join(iterDir, "agent-events.jsonl"),
-		Stdout:          filepath.Join(iterDir, "agent.stdout.log"),
-		Stderr:          filepath.Join(iterDir, "agent.stderr.log"),
 		PRTitle:         filepath.Join(activeDir, "pr-title.txt"),
 		PRBody:          filepath.Join(activeDir, "pr-body.md"),
 		Errors:          filepath.Join(iterDir, "errors.log"),
@@ -1763,9 +1759,6 @@ func runAgent(ctx context.Context, cfg config.Config, root string, paths pathSet
 			adapterCfg.Command = exe
 		}
 		adapterCfg.Args = []string{"__fake-agent"}
-	}
-	if agent.PromptMode(adapterCfg.Prompt) == agent.PromptFileArg {
-		return fmt.Errorf("agent adapter %q uses unsupported prompt mode file_arg", cfg.Agent.Default)
 	}
 	promptText := buildAgentPrompt(paths)
 	recordAgentPromptAudit(paths.ActiveDir, promptText)
@@ -1974,11 +1967,8 @@ func runConfiguredValidation(ctx context.Context, root string, paths pathSet, co
 }
 
 type prIntegrationSession struct {
-	runner   pr.Runner
-	prID     string
-	title    string
-	bodyFile string
-	cleanup  func()
+	runner pr.Runner
+	prID   string
 }
 
 func waitForPRChecks(ctx context.Context, session *prIntegrationSession, cfg config.Config) (pr.CommandResult, bool, error) {
@@ -2065,15 +2055,6 @@ func sleepContext(ctx context.Context, d time.Duration) error {
 	}
 }
 
-func appendPREvent(paths pathSet, onEvent func(runstate.Event), event runstate.Event) {
-	if paths.Events != "" {
-		_ = runstate.AppendEvent(paths.Events, event)
-	}
-	if onEvent != nil {
-		onEvent(event)
-	}
-}
-
 func readPullRequestTemplate(root string) string {
 	_, content, ok := findPullRequestTemplate(root)
 	if !ok {
@@ -2155,22 +2136,6 @@ func latestIteration(iterDir string) (string, error) {
 	}
 	sort.Strings(names)
 	return names[len(names)-1], nil
-}
-
-func convertSkills(list []skills.Skill) []prompt.Skill {
-	out := make([]prompt.Skill, 0, len(list))
-	for _, s := range list {
-		out = append(out, prompt.Skill{Name: s.Name, Path: s.Path})
-	}
-	return out
-}
-
-func convertMemory(items []string) []prompt.MemoryItem {
-	out := make([]prompt.MemoryItem, 0, len(items))
-	for i, item := range items {
-		out = append(out, prompt.MemoryItem{Title: "Recent summary " + strconv.Itoa(i+1), Content: item})
-	}
-	return out
 }
 
 func dirtyList(entries []gitx.StatusEntry) string {

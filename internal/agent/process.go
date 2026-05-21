@@ -17,9 +17,8 @@ import (
 type PromptMode string
 
 const (
-	PromptStdin   PromptMode = "stdin"
-	PromptFileArg PromptMode = "file_arg"
-	PromptArg     PromptMode = "arg"
+	PromptStdin PromptMode = "stdin"
+	PromptArg   PromptMode = "arg"
 )
 
 type ProcessAdapter struct {
@@ -54,9 +53,7 @@ func (a ProcessAdapter) Prepare(ctx context.Context, req PrepareRequest) (*Prepa
 
 func (a ProcessAdapter) Run(ctx context.Context, req RunRequest) (*RunResult, error) {
 	prepared, err := a.Prepare(ctx, PrepareRequest{
-		WorkDir: req.WorkDir, PromptText: req.PromptText, PromptFile: req.PromptFile,
-		ResultPath: req.ResultPath, IterationDir: req.IterationDir, Environment: req.Env,
-		Timeout: req.Timeout,
+		WorkDir: req.WorkDir, PromptText: req.PromptText, Environment: req.Env, Timeout: req.Timeout,
 	})
 	if err != nil {
 		return nil, err
@@ -118,7 +115,7 @@ func (a ProcessAdapter) Run(ctx context.Context, req RunRequest) (*RunResult, er
 	}
 	result := &RunResult{
 		ExitCode: exitCode, StartedAt: started, FinishedAt: finished,
-		EventPath: req.EventLogPath, ResultPath: req.ResultPath, Err: waitErr,
+		EventPath: req.EventLogPath, Err: waitErr,
 	}
 	return result, waitErr
 }
@@ -127,10 +124,7 @@ func (a ProcessAdapter) expandArgs(req PrepareRequest) []string {
 	args := make([]string, len(a.Args))
 	for i, arg := range a.Args {
 		arg = strings.ReplaceAll(arg, "{prompt}", req.PromptText)
-		arg = strings.ReplaceAll(arg, "{prompt_file}", req.PromptFile)
 		arg = strings.ReplaceAll(arg, "{cwd}", req.WorkDir)
-		arg = strings.ReplaceAll(arg, "{result_file}", req.ResultPath)
-		arg = strings.ReplaceAll(arg, "{iteration_dir}", req.IterationDir)
 		args[i] = arg
 	}
 	return args

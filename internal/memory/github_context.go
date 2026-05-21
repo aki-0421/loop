@@ -181,36 +181,6 @@ func CreateIssueReport(ctx context.Context, opts IssueReportOptions) (Record, er
 	return recordFromGitHubContext(issue), nil
 }
 
-func IssueNumber(ref string) int {
-	ref = strings.TrimSpace(strings.TrimSuffix(ref, "/"))
-	if ref == "" {
-		return 0
-	}
-	if n, err := strconv.Atoi(ref); err == nil {
-		return n
-	}
-	for _, marker := range []string{"/issues/"} {
-		if i := strings.LastIndex(ref, marker); i >= 0 {
-			rest := ref[i+len(marker):]
-			if slash := strings.Index(rest, "/"); slash >= 0 {
-				rest = rest[:slash]
-			}
-			if query := strings.IndexAny(rest, "?#"); query >= 0 {
-				rest = rest[:query]
-			}
-			if n, err := strconv.Atoi(rest); err == nil {
-				return n
-			}
-		}
-	}
-	if i := strings.LastIndex(ref, "#"); i >= 0 {
-		if n, err := strconv.Atoi(ref[i+1:]); err == nil {
-			return n
-		}
-	}
-	return 0
-}
-
 const searchGitHubContextGraphQL = `
 query($searchQuery: String!, $after: String) {
   search(type: ISSUE, query: $searchQuery, first: 50, after: $after) {
