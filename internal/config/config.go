@@ -66,15 +66,7 @@ type SkillTarget struct {
 
 type GitConfig struct {
 	BaseBranch  string            `yaml:"baseBranch" json:"baseBranch"`
-	Commits     CommitConfig      `yaml:"commits" json:"commits"`
 	Integration IntegrationConfig `yaml:"integration" json:"integration"`
-}
-
-type CommitConfig struct {
-	RequireAgentCommits    bool `yaml:"requireAgentCommits" json:"requireAgentCommits"`
-	AllowCliFallbackCommit bool `yaml:"allowCliFallbackCommit" json:"allowCliFallbackCommit"`
-	EnforcePattern         bool `yaml:"enforcePattern" json:"enforcePattern"`
-	MessageMaxLength       int  `yaml:"messageMaxLength" json:"messageMaxLength"`
 }
 
 type IntegrationConfig struct {

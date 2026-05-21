@@ -124,7 +124,7 @@ Rules:
 
 - The CLI stages repository changes, excluding ignored loop runtime files.
 - The message body must start with a lowercase English letter and must not end with a period.
-- The final subject must respect `git.commits.messageMaxLength`.
+- The final subject must be at most 72 characters.
 - Validation failures exit non-zero before any commit is created.
 - On success, text output prints the short SHA and subject; JSON output prints `sha` and `message`.
 

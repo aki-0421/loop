@@ -26,11 +26,6 @@ skills:
       path: .agents/skills
 
 git:
-  commits:
-    requireAgentCommits: true
-    allowCliFallbackCommit: false
-    enforcePattern: true
-    messageMaxLength: 72
   integration:
     mode: local_merge
     local_merge:

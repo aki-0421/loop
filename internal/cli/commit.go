@@ -8,9 +8,10 @@ import (
 	"os"
 	"strings"
 
-	"github.com/aki-0421/loop/internal/config"
 	"github.com/aki-0421/loop/internal/gitx"
 )
+
+const loopCommitMessageMaxLength = 72
 
 func commandCommit(ctx context.Context, g globals, args []string) error {
 	fs := flag.NewFlagSet("commit", flag.ContinueOnError)
@@ -27,11 +28,7 @@ func commandCommit(ctx context.Context, g globals, args []string) error {
 	if err != nil {
 		return codedError{1, fmt.Errorf("not inside a git repository: %w", err)}
 	}
-	cfg, err := config.Load(config.LoadOptions{CWD: root, ConfigPath: g.ConfigPath, Overrides: config.Overrides{Agent: g.Agent}})
-	if err != nil {
-		return codedError{3, err}
-	}
-	subject, err := buildLoopCommitSubject(*kind, strings.Join(fs.Args(), " "), cfg.Git.Commits.MessageMaxLength)
+	subject, err := buildLoopCommitSubject(*kind, strings.Join(fs.Args(), " "), loopCommitMessageMaxLength)
 	if err != nil {
 		return codedError{2, err}
 	}
@@ -138,13 +135,10 @@ func validateLoopCommitSubject(subject string, maxLength int) error {
 	return nil
 }
 
-func validateIterationCommitSubjects(commits []gitx.Commit, cfg config.Config) error {
-	if !cfg.Git.Commits.EnforcePattern {
-		return nil
-	}
+func validateIterationCommitSubjects(commits []gitx.Commit) error {
 	var problems []string
 	for _, commit := range commits {
-		if err := validateLoopCommitSubject(commit.Subject, cfg.Git.Commits.MessageMaxLength); err != nil {
+		if err := validateLoopCommitSubject(commit.Subject, loopCommitMessageMaxLength); err != nil {
 			problems = append(problems, fmt.Sprintf("commit %s %q is invalid: %v", shortSHA(commit.Hash), commit.Subject, err))
 		}
 	}

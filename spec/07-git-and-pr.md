@@ -82,7 +82,7 @@ Default prefixes:
 | `V` | Versioning and dependencies |
 | `C` | Configuration and tooling |
 
-The CLI may reject commits that do not match the configured pattern when `git.commits.enforcePattern=true`.
+The CLI rejects commits that do not match the loop commit pattern.
 
 TODOs are sized so that one completed TODO corresponds to one `loop commit` invocation, except no-change confirmations. The agent marks a TODO complete only after the matching commit exists, unless the TODO required no repository change.
 

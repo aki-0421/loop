@@ -527,10 +527,10 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 		}
 		renderer.Commits(len(commits))
 		if !mergedPR {
-			if len(commits) == 0 && cfg.Git.Commits.RequireAgentCommits {
+			if len(commits) == 0 {
 				return codedError{4, fmt.Errorf("completed iteration did not create commits")}
 			}
-			if err := validateIterationCommitSubjects(commits, cfg); err != nil {
+			if err := validateIterationCommitSubjects(commits); err != nil {
 				return codedError{4, err}
 			}
 			clean, err := branchRunner.CheckClean(ctx, gitx.CleanOptions{IgnoreRuntime: true})
@@ -2197,10 +2197,10 @@ func validatePRRepairBranch(ctx context.Context, root, workDir string, cfg confi
 	if err != nil {
 		return err
 	}
-	if len(commits) == 0 && cfg.Git.Commits.RequireAgentCommits {
+	if len(commits) == 0 {
 		return fmt.Errorf("pull request check repair left no iteration commits")
 	}
-	return validateIterationCommitSubjects(commits, cfg)
+	return validateIterationCommitSubjects(commits)
 }
 
 func appendPRCheckFailure(paths pathSet, onEvent func(runstate.Event), prID string, result pr.CommandResult, err error) {

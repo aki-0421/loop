@@ -88,16 +88,6 @@ Sync modes:
 
 Branch naming is not configurable. The CLI creates each iteration in a Git worktree on a temporary branch named `wip/<iteration>`, accepts only its fixed branch kind preset for `loop branch rename`, slugifies the branch subject, and appends `-<iteration>` only when needed to avoid collisions.
 
-## `git.commits`
-
-`loop commit` uses this section when creating iteration commits.
-
-| Field | Behavior |
-| --- | --- |
-| `requireAgentCommits` | Require at least one commit for completed iterations with repository changes. |
-| `enforcePattern` | Reject iteration commits whose subjects do not follow the loop commit format. |
-| `messageMaxLength` | Maximum length for the final `<TYPE>: <message>` subject. |
-
 ## `git.integration`
 
 Modes:

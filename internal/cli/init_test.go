@@ -24,7 +24,7 @@ func TestInitWritesMinimalConfigForDefaults(t *testing.T) {
 			t.Fatalf("config missing %q:\n%s", want, text)
 		}
 	}
-	for _, notWant := range []string{"baseBranch", "maxIterations", "adapters", "validation", "memory", "logs", "worktree"} {
+	for _, notWant := range []string{"baseBranch", "maxIterations", "adapters", "validation", "memory", "logs", "worktree", "commits"} {
 		if strings.Contains(text, notWant) {
 			t.Fatalf("config should omit %q:\n%s", notWant, text)
 		}

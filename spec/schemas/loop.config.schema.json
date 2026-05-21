@@ -62,7 +62,89 @@
     },
     "git": {
       "type": "object",
-      "additionalProperties": true
+      "properties": {
+        "baseBranch": {
+          "type": "string"
+        },
+        "integration": {
+          "type": "object",
+          "properties": {
+            "mode": {
+              "enum": [
+                "local_merge",
+                "pr"
+              ],
+              "default": "local_merge"
+            },
+            "local_merge": {
+              "type": "object",
+              "properties": {
+                "squash": {
+                  "type": "boolean",
+                  "default": true
+                },
+                "deleteBranch": {
+                  "type": "boolean",
+                  "default": true
+                }
+              },
+              "additionalProperties": false
+            },
+            "pr": {
+              "type": "object",
+              "properties": {
+                "create": {
+                  "type": "boolean",
+                  "default": false
+                },
+                "push": {
+                  "type": "boolean",
+                  "default": true
+                },
+                "waitChecks": {
+                  "type": "boolean",
+                  "default": true
+                },
+                "checksRequiredOnly": {
+                  "type": "boolean",
+                  "default": false
+                },
+                "checksStartupDelaySeconds": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "default": 5
+                },
+                "checksDiscoveryTimeoutSeconds": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "default": 60
+                },
+                "checksPollIntervalSeconds": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "default": 5
+                },
+                "checksWatchTimeoutSeconds": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "default": 3600
+                },
+                "mergeWhenChecksPass": {
+                  "type": "boolean",
+                  "default": true
+                },
+                "deleteBranch": {
+                  "type": "boolean",
+                  "default": true
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
     },
     "validation": {
       "type": "object",
