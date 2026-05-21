@@ -22,9 +22,8 @@ An adapter receives:
 - Environment variables.
 - Code-generated skill bootstrap.
 - Prompt text or prompt stream.
-- Iteration directory path for terminal close commands.
 - Iteration directory path.
-- Configured timeout.
+- Optional timeout.
 
 ## Prompt assembly
 
@@ -33,7 +32,7 @@ The assembled prompt is a compact, non-user-editable skill bootstrap:
 1. A short instruction to use the `loop` skill.
 2. A short instruction to use `loop iteration`, `loop memory`, `loop issue`, and `loop commit` commands.
 
-Detailed loop behavior and CLI usage live in repository skills, especially `loop`. The prompt intentionally does not inline skill instructions, effective config, schema summaries, required file paths, runtime values, recent GitHub context memory, goal text, instruction Markdown content, or instruction file paths.
+Detailed loop behavior and CLI usage live in repository skills, especially `loop`. The prompt intentionally does not inline skill instructions, effective config, JSON contract details, required file paths, runtime values, recent GitHub context memory, goal text, instruction Markdown content, or instruction file paths.
 
 ## Bootstrap requirements
 

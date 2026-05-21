@@ -2,7 +2,7 @@
 
 `loop` is a command-line tool for running and managing automated coding iterations in a Git repository.
 
-It keeps iteration state, logs, artifacts, skills, and validation results close to the project so repeated agent work can be resumed, inspected, and reviewed.
+It keeps iteration state, logs, artifacts, skills, and validation results close to the project so repeated agent work can be inspected and reviewed.
 
 ## Installation
 

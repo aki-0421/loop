@@ -456,10 +456,10 @@ func allHelpCommands() []helpCommand {
 				{Name: "--max-iterations <n>", Description: "maximum iterations; 0 means unlimited", Default: "config value"},
 				{Name: "--pr", Description: "use pull request integration", Default: "config value"},
 				{Name: "--base <branch>", Description: "base branch for integration", Default: "current branch at run start"},
-				{Name: "--resume <run-id>", Description: "resume an existing run"},
-				{Name: "--from-iteration <n>", Description: "resume from a specific iteration"},
-				{Name: "--keep-branches <mode>", Description: "branch cleanup mode", Default: "config value"},
-				{Name: "--keep-worktrees <mode>", Description: "worktree cleanup mode", Default: "config value"},
+				{Name: "--resume <run-id>", Description: "accepted for older scripts; use loop resume"},
+				{Name: "--from-iteration <n>", Description: "accepted for older scripts with --resume; currently ignored"},
+				{Name: "--keep-branches <mode>", Description: "accepted for older scripts; cleanup is automatic"},
+				{Name: "--keep-worktrees <mode>", Description: "accepted for older scripts; cleanup is automatic"},
 				{Name: "--dry-run", Description: "build prompt and state files without launching the agent", Default: "false"},
 			},
 		},
@@ -575,9 +575,9 @@ func allHelpCommands() []helpCommand {
 		{
 			Path:    []string{"resume"},
 			Usage:   "loop resume <run-id> [flags]",
-			Summary: "Resume a stored run",
+			Summary: "Show stored run state through the resume entry point",
 			Flags: []helpFlag{
-				{Name: "--from-iteration <n>", Description: "resume from iteration n", Default: "latest incomplete"},
+				{Name: "--from-iteration <n>", Description: "accepted for older scripts; currently ignored", Default: "latest incomplete"},
 			},
 		},
 		{
@@ -591,7 +591,7 @@ func allHelpCommands() []helpCommand {
 			Summary: "Print iteration logs or a specific runtime file",
 			Flags: []helpFlag{
 				{Name: "--iteration <n>", Description: "select an iteration", Default: "latest"},
-				{Name: "--follow", Description: "follow agent event stream", Default: "false"},
+				{Name: "--follow", Description: "accepted for older scripts; currently ignored", Default: "false"},
 				{Name: "--file <name>", Description: "print a specific file from the iteration directory"},
 			},
 		},

@@ -50,7 +50,7 @@ git:
 | `default` | string | Default language tag for generated human-readable content. Built-in value is `en`. |
 | `allowSkillOverride` | boolean | Allows skills to request another output language for repository-specific workflows. |
 
-JSON keys and schema values are always English identifiers.
+JSON keys and contract values are always English identifiers.
 
 ## `agent`
 
@@ -97,7 +97,7 @@ Modes:
 | Mode | Behavior |
 | --- | --- |
 | `local_merge` | Squash merge the iteration branch into the base branch locally. |
-| `pr` | Require the agent to create, check, fix when needed, and merge the pull request through `loop pr`; then pull the base branch and continue. |
+| `pr` | Require the agent to create, check, fix when needed, and merge the pull request through `loop pr`; then refresh the base branch and continue. |
 
 Pull request mode uses `gh` commands. The CLI writes the generated title and body to files before invoking `gh`.
 

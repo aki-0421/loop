@@ -29,7 +29,7 @@ The Go implementation includes tests for:
 - Pull request command construction.
 - Check waiting behavior.
 - Memory recent and search behavior.
-- Resume stages.
+- Run-state reads and resume status reporting.
 - Fully automated run contract violations.
 - Value-critical run resilience:
   - continuing from one merge iteration into the next until

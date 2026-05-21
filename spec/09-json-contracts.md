@@ -246,7 +246,7 @@ Iteration record fields:
 | `branch_current` | string | Optional current tracked branch name. |
 | `branch_final` | string | Optional final branch name after integration. |
 | `stage` | string | Required iteration stage. |
-| `result_path` | string | Optional terminal close result path. |
+| `result_path` | string | Optional legacy result path. Current runs leave it empty because the close handoff is stored in `.loop/loop.db`. |
 | `summary_sentence` | string | Optional merge summary. |
 | `should_fully_stop` | boolean | Optional final stop decision from the iteration close. |
 
