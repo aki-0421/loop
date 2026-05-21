@@ -302,6 +302,11 @@ func resolveIterationArtifact(ctx context.Context, iterationDir, name string) (s
 	if strings.TrimSpace(iterationDir) == "" {
 		return "", artifact, errors.New("iteration directory is required; pass --iteration-dir, pass --run, or run inside an agent iteration")
 	}
+	if artifactdb.IsActiveArtifact(artifact.Name) {
+		if activeDir := artifactdb.ActiveDirFromEnv(iterationDir); activeDir != "" {
+			return filepath.Join(activeDir, artifact.File), artifact, nil
+		}
+	}
 	return filepath.Join(iterationDir, artifact.File), artifact, nil
 }
 

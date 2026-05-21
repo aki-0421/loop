@@ -52,7 +52,7 @@ loop.db
 
 ## Runtime artifacts
 
-Every iteration writes structured runtime artifacts as files in `.loop/runs/<run-id>/iterations/<id>/`. These artifacts explain the current run and are not long-term memory.
+Every active iteration writes disposable runtime artifacts as files in a Go temp directory. These artifacts explain the current run and are not long-term memory.
 
 - `runtime`: JSON runtime context.
 - `plan`: intended work.
@@ -60,12 +60,19 @@ Every iteration writes structured runtime artifacts as files in `.loop/runs/<run
 - `worklog`: notable commands, decisions, and issues.
 - `validation`: validation commands and results.
 - `pr-title` and `pr-body`: pull request text.
+
+The durable iteration directory stores audit and replay files plus PR lifecycle diagnostics:
+
+- `prompt`: instruction snapshot for the iteration.
+- `effective-config`: effective configuration snapshot.
+- `agent-events`: structured audit events.
+- `errors`: process, result, validation, or sync warnings.
 - `pr-state`, `pr-checks`, and `pr-check-log`: pull request lifecycle state and check diagnostics written by `loop pr`.
 - `github-updates`: newly observed GitHub Issue, PR, or comment diffs for an iteration boundary or sleep wake cycle.
 
 Agents should read and write these artifacts through `loop iteration` commands so path resolution and artifact boundaries stay in the CLI. `plan` and `todo` have dedicated `loop iteration plan` and `loop iteration todo` commands; other writable artifacts use `loop iteration write` or `loop iteration append`. The iteration result is a master-DB handoff row written by `loop iteration result --write`.
 
-After a completed or no-change iteration reaches its terminal action, disposable active files are removed. `prompt.md`, `effective-config.yaml`, `agent-events.jsonl`, `errors.log`, PR lifecycle diagnostics, GitHub update diffs, and run state remain for audit and replay.
+After a completed or no-change iteration reaches its terminal action, the active temp directory is removed. `prompt.md`, `effective-config.yaml`, `agent-events.jsonl`, `errors.log`, PR lifecycle diagnostics, GitHub update diffs, and run state remain for audit and replay.
 
 ## GitHub context memory
 
@@ -100,7 +107,7 @@ After asking a question, agents continue TODOs that are unrelated to that clarif
 
 ## Completed Context
 
-Completed implementation context is durable in the pull request body. The local iteration directory may hold active work files while the iteration is running, but it does not keep a separate summary artifact after completion.
+Completed implementation context is durable in the pull request body. The local iteration directory does not hold disposable active work files; those live in the active Go temp directory while the iteration is running. The iteration directory does not keep a separate summary artifact after completion.
 
 ## Search index
 

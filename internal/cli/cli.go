@@ -354,6 +354,14 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 		iterationID := runstate.IterationID(i)
 		renderer.Stage(runstate.StageBranchCreated, "starting iteration "+iterationID)
 		iterDir := filepath.Join(runDir, "iterations", iterationID)
+		activeDir := iterDir
+		if !*dryRun {
+			var err error
+			activeDir, err = createIterationTempDir(runID, iterationID)
+			if err != nil {
+				return codedError{1, err}
+			}
+		}
 		initialBranch := gitx.InitialBranchName(i)
 		renderer.Branch(initialBranch)
 		state.CurrentIteration = iterationID
@@ -386,7 +394,7 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 			branchRunner = gitx.Runner{Dir: workDir}
 			cleanup.WorkDir = workDir
 		}
-		paths := promptPaths(iterDir)
+		paths := promptPathsWithActive(iterDir, activeDir)
 		paths.Goal = *goal
 		paths.Language = cfg.Language.Default
 		paths.RunID = runID
@@ -508,7 +516,7 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 				}
 				cleanup.Integrated = true
 			}
-			if issues := cleanupDisposableIterationFiles(iterDir, paths.Events); len(issues) > 0 {
+			if issues := cleanupDisposableIterationFiles(paths.ActiveDir, paths.Events); len(issues) > 0 {
 				appendErrorLog(paths.Errors, "iteration file cleanup failed: "+strings.Join(issues, "; "))
 			}
 			if result.ShouldFullyStop {
@@ -605,7 +613,7 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 				_ = runner.DeleteBranch(ctx, finalBranch, true)
 			}
 		}
-		if issues := cleanupDisposableIterationFiles(iterDir, paths.Events); len(issues) > 0 {
+		if issues := cleanupDisposableIterationFiles(paths.ActiveDir, paths.Events); len(issues) > 0 {
 			appendErrorLog(paths.Errors, "iteration file cleanup failed: "+strings.Join(issues, "; "))
 		}
 		if result.ShouldFullyStop {
@@ -802,44 +810,78 @@ func removeEmptyDir(path string) {
 	_ = os.Remove(path)
 }
 
-func cleanupDisposableIterationFiles(iterDir, eventLogPath string) []string {
-	if strings.TrimSpace(iterDir) == "" {
-		return nil
+func createIterationTempDir(runID, iterationID string) (string, error) {
+	prefix := "loop-" + sanitizeTempPart(runID) + "-" + sanitizeTempPart(iterationID) + "-"
+	dir, err := os.MkdirTemp("", prefix)
+	if err != nil {
+		return "", err
 	}
-	names := []string{
-		"runtime.json",
-		"plan.md",
-		"todo.md",
-		"worklog.md",
-		"validation.md",
-		"pr-title.txt",
-		"pr-body.md",
-		"agent-prompt-audit.md",
+	if err := os.WriteFile(filepath.Join(dir, ".loop-active-temp"), []byte("1\n"), 0o644); err != nil {
+		_ = os.RemoveAll(dir)
+		return "", err
+	}
+	return dir, nil
+}
+
+func sanitizeTempPart(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	var b strings.Builder
+	lastDash := false
+	for _, r := range value {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+			lastDash = false
+			continue
+		}
+		if !lastDash {
+			b.WriteByte('-')
+			lastDash = true
+		}
+	}
+	out := strings.Trim(b.String(), "-")
+	if out == "" {
+		return "iteration"
+	}
+	return out
+}
+
+func cleanupDisposableIterationFiles(activeDir, eventLogPath string) []string {
+	if strings.TrimSpace(activeDir) == "" {
+		return nil
 	}
 	var removed []string
 	var issues []string
-	remove := func(path string) {
-		if err := os.Remove(path); err != nil {
-			if !errors.Is(err, os.ErrNotExist) {
-				issues = append(issues, filepath.Base(path)+": "+err.Error())
+	marker := filepath.Join(activeDir, ".loop-active-temp")
+	if _, err := os.Stat(marker); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		issues = append(issues, "active temp marker: "+err.Error())
+		return issues
+	}
+	if err := filepath.WalkDir(activeDir, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			issues = append(issues, path+": "+err.Error())
+			return nil
+		}
+		if !entry.IsDir() {
+			name, relErr := filepath.Rel(activeDir, path)
+			if relErr != nil {
+				name = filepath.Base(path)
 			}
-			return
+			if name != ".loop-active-temp" {
+				removed = append(removed, name)
+			}
 		}
-		removed = append(removed, filepath.Base(path))
+		return nil
+	}); err != nil {
+		issues = append(issues, "walk active temp dir: "+err.Error())
 	}
-	for _, name := range names {
-		remove(filepath.Join(iterDir, name))
-	}
-	outputs, err := filepath.Glob(filepath.Join(iterDir, "validation-output-*.log"))
-	if err == nil {
-		for _, path := range outputs {
-			remove(path)
-		}
-	} else {
-		issues = append(issues, "validation output glob: "+err.Error())
+	if err := os.RemoveAll(activeDir); err != nil {
+		issues = append(issues, "remove active temp dir: "+err.Error())
 	}
 	if eventLogPath != "" {
-		event := runstate.Event{"type": "iteration.active_files.cleanup.completed", "removed": removed}
+		event := runstate.Event{"type": "iteration.active_temp.cleanup.completed", "active_dir": activeDir, "removed": removed}
 		if len(issues) > 0 {
 			event["issues"] = issues
 		}
@@ -1659,6 +1701,8 @@ func commandDoctor(ctx context.Context, g globals, args []string) error {
 }
 
 type pathSet struct {
+	IterationDir    string
+	ActiveDir       string
 	EffectiveConfig string
 	Runtime         string
 	Prompt          string
@@ -1689,20 +1733,29 @@ type pathSet struct {
 }
 
 func promptPaths(iterDir string) pathSet {
+	return promptPathsWithActive(iterDir, artifactdb.ActiveDirFromEnv(iterDir))
+}
+
+func promptPathsWithActive(iterDir, activeDir string) pathSet {
+	if strings.TrimSpace(activeDir) == "" {
+		activeDir = iterDir
+	}
 	return pathSet{
+		IterationDir:    iterDir,
+		ActiveDir:       activeDir,
 		EffectiveConfig: filepath.Join(iterDir, "effective-config.yaml"),
-		Runtime:         filepath.Join(iterDir, "runtime.json"),
+		Runtime:         filepath.Join(activeDir, "runtime.json"),
 		Prompt:          filepath.Join(iterDir, "prompt.md"),
-		Plan:            filepath.Join(iterDir, "plan.md"),
-		Todo:            filepath.Join(iterDir, "todo.md"),
-		Worklog:         filepath.Join(iterDir, "worklog.md"),
-		Validation:      filepath.Join(iterDir, "validation.md"),
+		Plan:            filepath.Join(activeDir, "plan.md"),
+		Todo:            filepath.Join(activeDir, "todo.md"),
+		Worklog:         filepath.Join(activeDir, "worklog.md"),
+		Validation:      filepath.Join(activeDir, "validation.md"),
 		Result:          filepath.Join(iterDir, "result.json"),
 		Events:          filepath.Join(iterDir, "agent-events.jsonl"),
 		Stdout:          filepath.Join(iterDir, "agent.stdout.log"),
 		Stderr:          filepath.Join(iterDir, "agent.stderr.log"),
-		PRTitle:         filepath.Join(iterDir, "pr-title.txt"),
-		PRBody:          filepath.Join(iterDir, "pr-body.md"),
+		PRTitle:         filepath.Join(activeDir, "pr-title.txt"),
+		PRBody:          filepath.Join(activeDir, "pr-body.md"),
 		Errors:          filepath.Join(iterDir, "errors.log"),
 	}
 }
@@ -1749,7 +1802,7 @@ func runAgent(ctx context.Context, cfg config.Config, root string, paths pathSet
 		return fmt.Errorf("agent adapter %q uses unsupported prompt mode file_arg", cfg.Agent.Default)
 	}
 	promptText := buildAgentPrompt(paths)
-	recordAgentPromptAudit(filepath.Dir(paths.Result), promptText)
+	recordAgentPromptAudit(paths.ActiveDir, promptText)
 	pa := agent.ProcessAdapter{
 		AdapterName: cfg.Agent.Default,
 		Command:     adapterCfg.Command,
@@ -1758,23 +1811,25 @@ func runAgent(ctx context.Context, cfg config.Config, root string, paths pathSet
 		Env:         adapterCfg.Env,
 	}
 	env := map[string]string{
-		"LOOP_RESULT_HANDOFF":    "master-db",
-		"LOOP_WORKDIR":           root,
-		"LOOP_RUN_GOAL":          paths.Goal,
-		"LOOP_OUTPUT_LANGUAGE":   paths.Language,
-		"LOOP_RUN_ID":            paths.RunID,
-		"LOOP_ITERATION_ID":      paths.IterationID,
-		"LOOP_BASE_BRANCH":       paths.BaseBranch,
-		"LOOP_INITIAL_BRANCH":    firstNonEmpty(paths.InitialBranch, paths.CurrentBranch),
-		"LOOP_CURRENT_BRANCH":    paths.CurrentBranch,
-		"LOOP_BRANCH_RENAMED":    strconv.FormatBool(paths.BranchRenamed),
-		"LOOP_INTEGRATION_MODE":  paths.IntegrationMode,
-		"LOOP_PULL_REQUEST_MODE": strconv.FormatBool(paths.PullRequestMode),
-		"LOOP_PR_MODE":           strconv.FormatBool(paths.PullRequestMode),
+		"LOOP_RESULT_HANDOFF":            "master-db",
+		"LOOP_ITERATION_DIR":             paths.IterationDir,
+		artifactdb.ActiveIterationDirEnv: paths.ActiveDir,
+		"LOOP_WORKDIR":                   root,
+		"LOOP_RUN_GOAL":                  paths.Goal,
+		"LOOP_OUTPUT_LANGUAGE":           paths.Language,
+		"LOOP_RUN_ID":                    paths.RunID,
+		"LOOP_ITERATION_ID":              paths.IterationID,
+		"LOOP_BASE_BRANCH":               paths.BaseBranch,
+		"LOOP_INITIAL_BRANCH":            firstNonEmpty(paths.InitialBranch, paths.CurrentBranch),
+		"LOOP_CURRENT_BRANCH":            paths.CurrentBranch,
+		"LOOP_BRANCH_RENAMED":            strconv.FormatBool(paths.BranchRenamed),
+		"LOOP_INTEGRATION_MODE":          paths.IntegrationMode,
+		"LOOP_PULL_REQUEST_MODE":         strconv.FormatBool(paths.PullRequestMode),
+		"LOOP_PR_MODE":                   strconv.FormatBool(paths.PullRequestMode),
 	}
 	_, err := pa.Run(ctx, agent.RunRequest{
 		WorkDir: root, Env: env, PromptText: promptText,
-		IterationDir: filepath.Dir(paths.Result), EventLogPath: paths.Events, ErrorsLogPath: paths.Errors,
+		IterationDir: paths.IterationDir, EventLogPath: paths.Events, ErrorsLogPath: paths.Errors,
 		OnEvent: onEvent,
 	})
 	return err
@@ -2013,7 +2068,7 @@ func runConfiguredValidation(ctx context.Context, root string, paths pathSet, co
 		converted = append(converted, validation.Command{Name: command.Name, Run: command.Run, Required: command.Required})
 	}
 	results, err := validation.Runner{WorkDir: root}.Run(ctx, converted)
-	iterDir := filepath.Dir(paths.Result)
+	iterDir := firstNonEmpty(paths.ActiveDir, filepath.Dir(paths.Result))
 	for i, result := range results {
 		name := result.Name
 		if name == "" {
@@ -2070,7 +2125,7 @@ func integratePR(ctx context.Context, root, workDir string, cfg config.Config, b
 
 func startPRIntegration(ctx context.Context, root string, cfg config.Config, branch string, paths pathSet) (*prIntegrationSession, error) {
 	template := readPullRequestTemplate(root)
-	iterDir := filepath.Dir(paths.Result)
+	iterDir := firstNonEmpty(paths.ActiveDir, filepath.Dir(paths.Result))
 	title := strings.TrimSpace(readArtifactOptional(iterDir, "pr-title"))
 	if title == "" {
 		title = fallbackPRTitle(branch)
@@ -2387,7 +2442,7 @@ func fallbackPRTitle(branch string) string {
 func fallbackPRBody(branch, template string) string {
 	if strings.TrimSpace(template) != "" {
 		body := strings.TrimRight(template, "\n")
-		return body + "\n\n## Loop Notes\n\n- Branch: `" + branch + "`\n- See loop `summary` and `validation` artifacts for generated details.\n"
+		return body + "\n\n## Loop Notes\n\n- Branch: `" + branch + "`\n- See loop validation logs for generated details.\n"
 	}
 	return "## Summary\n\nGenerated by loop.\n\n## Verification\n\nSee loop validation logs.\n"
 }

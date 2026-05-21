@@ -15,6 +15,7 @@ import (
 )
 
 const GlobalDBName = "loop.db"
+const ActiveIterationDirEnv = "LOOP_ACTIVE_ITERATION_DIR"
 
 var ErrNotFound = errors.New("artifact not found")
 
@@ -141,6 +142,38 @@ var artifactFileNames = map[string]string{
 	"agent-prompt-audit": "agent-prompt-audit.md",
 }
 
+var activeArtifactNames = map[string]bool{
+	"runtime":            true,
+	"plan":               true,
+	"todo":               true,
+	"worklog":            true,
+	"validation":         true,
+	"pr-title":           true,
+	"pr-body":            true,
+	"agent-prompt-audit": true,
+}
+
+func IsActiveArtifact(name string) bool {
+	return activeArtifactNames[name]
+}
+
+func ActiveDirFromEnv(iterationDir string) string {
+	activeDir := strings.TrimSpace(os.Getenv(ActiveIterationDirEnv))
+	if activeDir == "" {
+		return ""
+	}
+	wantRun, wantIteration := ParseIterationDir(iterationDir)
+	envRun := strings.TrimSpace(os.Getenv("LOOP_RUN_ID"))
+	envIteration := strings.TrimSpace(os.Getenv("LOOP_ITERATION_ID"))
+	if wantRun != "" && envRun != "" && wantRun != envRun {
+		return ""
+	}
+	if wantIteration != "" && envIteration != "" && wantIteration != envIteration {
+		return ""
+	}
+	return activeDir
+}
+
 func ArtifactPath(iterationDir, name string) (string, error) {
 	if strings.TrimSpace(iterationDir) == "" {
 		return "", errors.New("iteration directory is required")
@@ -148,6 +181,11 @@ func ArtifactPath(iterationDir, name string) (string, error) {
 	file, ok := artifactFileNames[name]
 	if !ok {
 		return "", fmt.Errorf("%w: %s", ErrNotFound, name)
+	}
+	if IsActiveArtifact(name) {
+		if activeDir := ActiveDirFromEnv(iterationDir); activeDir != "" {
+			return filepath.Join(activeDir, file), nil
+		}
 	}
 	return filepath.Join(iterationDir, file), nil
 }
@@ -165,6 +203,9 @@ func ValidationOutputPath(iterationDir, name string) (string, error) {
 	name = sanitizeArtifactFilePart(name)
 	if name == "" {
 		name = "command"
+	}
+	if activeDir := ActiveDirFromEnv(iterationDir); activeDir != "" {
+		return filepath.Join(activeDir, "validation-output-"+name+".log"), nil
 	}
 	return filepath.Join(iterationDir, "validation-output-"+name+".log"), nil
 }

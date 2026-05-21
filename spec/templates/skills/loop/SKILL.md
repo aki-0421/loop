@@ -44,7 +44,7 @@ Use the `loop` CLI as the source of truth for runtime artifacts, GitHub context 
 5. Validate the relevant behavior.
 6. Commit each completed TODO through `loop commit` before moving to unrelated work.
 7. Stop after the selected slice is complete; do not begin a follow-up slice.
-8. Write `worklog` and `summary`.
+8. Write `worklog` and durable PR body context when pull request mode is enabled.
 9. If the result will be `completed`, rename the branch through `loop branch rename`.
 10. If pull request mode is enabled, create the PR, wait for checks, repair failures narrowly, and merge through `loop pr`.
 11. Confirm `git status --short` has no changed files before writing the final `result`.
@@ -176,7 +176,7 @@ Write enough context for the next iteration to continue without guessing.
 - decisions and assumptions,
 - reverted or deferred work.
 
-`summary` should include:
+In pull request mode, `pr-body` should include durable completed-work context:
 
 - what changed,
 - commit SHA and subject,

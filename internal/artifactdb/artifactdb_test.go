@@ -34,6 +34,39 @@ func TestWriteAppendReadUsesIterationFilesOnly(t *testing.T) {
 	}
 }
 
+func TestActiveArtifactsUseTempDirFromEnvironment(t *testing.T) {
+	root := t.TempDir()
+	iterDir := filepath.Join(root, ".loop", "runs", "run-1", "iterations", "0001")
+	activeDir := filepath.Join(t.TempDir(), "active")
+	t.Setenv("LOOP_RUN_ID", "run-1")
+	t.Setenv("LOOP_ITERATION_ID", "0001")
+	t.Setenv(ActiveIterationDirEnv, activeDir)
+
+	if err := Write(iterDir, "plan", "active plan\n"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Read(iterDir, "plan")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "active plan\n" {
+		t.Fatalf("plan = %q", got)
+	}
+	if _, err := os.Stat(filepath.Join(activeDir, "plan.md")); err != nil {
+		t.Fatalf("active plan file missing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(iterDir, "plan.md")); !os.IsNotExist(err) {
+		t.Fatalf("iteration plan should not be written, err=%v", err)
+	}
+
+	if err := Write(iterDir, "pr-state", "{}\n"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(iterDir, "pr-state.json")); err != nil {
+		t.Fatalf("durable pr-state missing: %v", err)
+	}
+}
+
 func TestRebuildGlobalFromRunsDoesNotIndexRuntimeArtifacts(t *testing.T) {
 	root := t.TempDir()
 	iterDir := filepath.Join(root, ".loop", "runs", "run-1", "iterations", "0001")
