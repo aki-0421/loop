@@ -17,23 +17,23 @@ func TestIterationCommandWritesReadsAndAppendsArtifact(t *testing.T) {
 	dir := t.TempDir()
 
 	if _, err := captureStdout(t, func() error {
-		return commandIteration(ctx, globals{}, []string{"write", "--iteration-dir", dir, "worklog", "--value", "one\n"})
+		return commandIteration(ctx, globals{}, []string{"write", "--iteration-dir", dir, "pr-body", "--value", "one\n"})
 	}); err != nil {
-		t.Fatalf("write worklog: %v", err)
+		t.Fatalf("write pr-body: %v", err)
 	}
 	if _, err := captureStdout(t, func() error {
-		return commandIteration(ctx, globals{}, []string{"append", "worklog", "--iteration-dir", dir, "--value", "two\n"})
+		return commandIteration(ctx, globals{}, []string{"append", "pr-body", "--iteration-dir", dir, "--value", "two\n"})
 	}); err != nil {
-		t.Fatalf("append worklog: %v", err)
+		t.Fatalf("append pr-body: %v", err)
 	}
 	out, err := captureStdout(t, func() error {
-		return commandIteration(ctx, globals{}, []string{"read", "worklog", "--iteration-dir", dir})
+		return commandIteration(ctx, globals{}, []string{"read", "pr-body", "--iteration-dir", dir})
 	})
 	if err != nil {
-		t.Fatalf("read worklog: %v", err)
+		t.Fatalf("read pr-body: %v", err)
 	}
 	if out != "one\ntwo\n" {
-		t.Fatalf("worklog content = %q", out)
+		t.Fatalf("pr-body content = %q", out)
 	}
 }
 
@@ -371,7 +371,7 @@ func TestIterationCommandResolvesRunAndIteration(t *testing.T) {
 	if err := os.MkdirAll(iterDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := artifactdb.Write(iterDir, "worklog", "stored worklog\n"); err != nil {
+	if err := artifactdb.Write(iterDir, "pr-body", "stored PR body\n"); err != nil {
 		t.Fatal(err)
 	}
 	oldwd, err := os.Getwd()
@@ -386,13 +386,13 @@ func TestIterationCommandResolvesRunAndIteration(t *testing.T) {
 	}()
 
 	out, err := captureStdout(t, func() error {
-		return commandIteration(context.Background(), globals{ConfigPath: ".loop/config.yaml", Agent: "codex"}, []string{"read", "worklog", "--run", "run-1", "--iteration", "0002"})
+		return commandIteration(context.Background(), globals{ConfigPath: ".loop/config.yaml", Agent: "codex"}, []string{"read", "pr-body", "--run", "run-1", "--iteration", "0002"})
 	})
 	if err != nil {
 		t.Fatalf("read by run and iteration: %v", err)
 	}
-	if strings.TrimSpace(out) != "stored worklog" {
-		t.Fatalf("worklog output = %q", out)
+	if strings.TrimSpace(out) != "stored PR body" {
+		t.Fatalf("pr-body output = %q", out)
 	}
 }
 

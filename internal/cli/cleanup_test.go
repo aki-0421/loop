@@ -139,7 +139,6 @@ func TestCleanupDisposableIterationFilesPreservesAuditFiles(t *testing.T) {
 		"runtime.json",
 		"plan.md",
 		"todo.md",
-		"worklog.md",
 		"validation.md",
 		"validation-output-test.log",
 		"pr-title.txt",
@@ -187,7 +186,7 @@ func TestPromptPathsPlaceDisposableArtifactsInActiveTempDir(t *testing.T) {
 	iterDir := filepath.Join(t.TempDir(), ".loop", "runs", "run-1", "iterations", "0001")
 	activeDir := filepath.Join(os.TempDir(), "loop-test-active")
 	paths := promptPathsWithActive(iterDir, activeDir)
-	for _, path := range []string{paths.Runtime, paths.Plan, paths.Todo, paths.Worklog, paths.Validation, paths.PRTitle, paths.PRBody} {
+	for _, path := range []string{paths.Runtime, paths.Plan, paths.Todo, paths.Validation, paths.PRTitle, paths.PRBody} {
 		if !strings.HasPrefix(path, activeDir+string(filepath.Separator)) {
 			t.Fatalf("disposable path %q should be under active temp dir %q", path, activeDir)
 		}

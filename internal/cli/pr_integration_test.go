@@ -972,7 +972,6 @@ func runTestFakeAgentOwnedPR(iterDir string, repair bool, resultCommitMessage st
 		_ = os.WriteFile(repairPath, []byte("fake pr repair at "+time.Now().UTC().Format(time.RFC3339Nano)+"\n"), 0o644)
 		_ = gitForTestAgent(workDir, "add", "loop-fake-pr-repair.txt")
 		_ = gitForTestAgent(workDir, "commit", "-m", "C: repair fake pr checks")
-		_ = artifactdb.Append(iterDir, "worklog", "Repaired fake PR checks after loop pr checks failed.\n")
 		if err := commandPR(ctx, globals{JSON: true, NoColor: true}, []string{"checks"}); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return 1

@@ -57,7 +57,6 @@ Every active iteration writes disposable runtime artifacts as files in a Go temp
 - `runtime`: JSON runtime context.
 - `plan`: intended work.
 - `todo`: execution checklist.
-- `worklog`: notable commands, decisions, and issues.
 - `validation`: validation commands and results.
 - `pr-title` and `pr-body`: pull request text.
 

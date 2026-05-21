@@ -67,7 +67,7 @@ func TestRunKeepsDisposableArtifactsInGoTempDir(t *testing.T) {
 	}
 
 	iterDir := latestIterationDir(t, repo, "0001")
-	for _, name := range []string{"runtime.json", "plan.md", "todo.md", "worklog.md", "validation.md", "pr-title.txt", "pr-body.md", "agent-prompt-audit.md"} {
+	for _, name := range []string{"runtime.json", "plan.md", "todo.md", "validation.md", "pr-title.txt", "pr-body.md", "agent-prompt-audit.md"} {
 		if _, err := os.Stat(filepath.Join(iterDir, name)); !os.IsNotExist(err) {
 			t.Fatalf("%s should not be written to iteration dir, err=%v", name, err)
 		}

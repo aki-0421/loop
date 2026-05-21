@@ -1708,7 +1708,6 @@ type pathSet struct {
 	Prompt          string
 	Plan            string
 	Todo            string
-	Worklog         string
 	Validation      string
 	Result          string
 	Events          string
@@ -1748,7 +1747,6 @@ func promptPathsWithActive(iterDir, activeDir string) pathSet {
 		Prompt:          filepath.Join(iterDir, "prompt.md"),
 		Plan:            filepath.Join(activeDir, "plan.md"),
 		Todo:            filepath.Join(activeDir, "todo.md"),
-		Worklog:         filepath.Join(activeDir, "worklog.md"),
 		Validation:      filepath.Join(activeDir, "validation.md"),
 		Result:          filepath.Join(iterDir, "result.json"),
 		Events:          filepath.Join(iterDir, "agent-events.jsonl"),
@@ -2389,10 +2387,9 @@ func prCheckRepairPrompt(prID string, attempt, total int, result pr.CommandResul
 		"```text\n%s\n```\n\n" +
 		"Embedded repair instructions:\n\n" +
 		"1. Before changing files, perform a web search for the exact failing check, error message, or stack trace and the likely root cause. Prefer official documentation, project issue trackers, and CI provider documentation.\n" +
-		"2. Record the search queries, useful links or source names, and the conclusion in the worklog artifact before editing.\n" +
-		"3. Use the local repository evidence together with the web findings to make the smallest fix on the current branch.\n" +
-		"4. Run relevant local validation, commit complete changes through `loop commit`, and leave the working tree clean.\n" +
-		"5. Write an updated result handoff with `loop iteration result --write`. If web search is unavailable, record that limitation in the worklog and continue from local diagnostics.\n"
+		"2. Use the local repository evidence together with the web findings to make the smallest fix on the current branch.\n" +
+		"3. Run relevant local validation, commit complete changes through `loop commit`, and leave the working tree clean.\n" +
+		"4. Write an updated result handoff with `loop iteration result --write`. If the failure cannot be repaired automatically, report the concrete repository or harness issue with `loop issue report` before returning blocked or failed.\n"
 	return fmt.Sprintf(repairPrompt, prID, attempt, total, details)
 }
 

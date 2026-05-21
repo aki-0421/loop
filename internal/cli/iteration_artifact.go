@@ -32,7 +32,6 @@ var iterationArtifacts = map[string]iterationArtifact{
 	"prompt":           {Name: "prompt", File: "prompt.md", NoPath: true},
 	"plan":             {Name: "plan", File: "plan.md", Writable: true},
 	"todo":             {Name: "todo", File: "todo.md", Writable: true},
-	"worklog":          {Name: "worklog", File: "worklog.md", Writable: true},
 	"validation":       {Name: "validation", File: "validation.md"},
 	"events":           {Name: "events", File: "agent-events.jsonl"},
 	"errors":           {Name: "errors", File: "errors.log"},

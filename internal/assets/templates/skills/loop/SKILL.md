@@ -44,7 +44,7 @@ Use the `loop` CLI as the source of truth for runtime artifacts, GitHub context 
 5. Validate the relevant behavior.
 6. Commit each completed TODO through `loop commit` before moving to unrelated work.
 7. Stop after the selected slice is complete; do not begin a follow-up slice.
-8. Write `worklog` and durable PR body context when pull request mode is enabled.
+8. Write durable PR body context when pull request mode is enabled.
 9. If the result will be `completed`, rename the branch through `loop branch rename`.
 10. If pull request mode is enabled, create the PR, wait for checks, repair failures narrowly, and merge through `loop pr`.
 11. Confirm `git status --short` has no changed files before writing the final `result`.
@@ -83,7 +83,7 @@ loop issue report --title "Improve ..." --body "..." [--kind tool|docs|guardrail
 ```
 
 - Use `--blocking` only when the answer can block a large implementation choice or no safe final decision exists.
-- After creating an Issue, record the URL in `worklog` and continue TODOs unrelated to that clarification.
+- After creating an Issue, continue TODOs unrelated to that clarification.
 - Do not use Issues for minor local uncertainties that can be resolved from code, tests, docs, or a safe explicit assumption.
 - Use `loop issue report` only for concrete repository or harness improvement proposals. Do not persist unsupported-agent findings; rediscover them each iteration.
 - Write Issue bodies as GitHub-flavored Markdown. For improvement proposals, use clear sections for evidence from the current run, impact, and a suggested harness or repository change.
@@ -145,7 +145,7 @@ Prefer configured validation from runtime. If none is configured, use the narrow
 - Do not run persistent servers in the foreground.
 - If validation needs a server, start it in the background, capture the PID, run the check, and kill the server before continuing.
 - If validation was already failing before your change, report the baseline and do not repair unrelated failures unless that repair is the selected slice.
-- If validation cannot run, record the missing dependency, command, credential, or unsafe condition in `worklog`, PR notes, and `result`.
+- If validation cannot run, record the missing dependency, command, credential, or unsafe condition in `result`, and in `pr-body` when pull request mode is enabled.
 
 ## Commit
 
@@ -165,16 +165,7 @@ Use `loop commit` for commits. Do not run `git add` or `git commit` directly.
 
 ## Handoff
 
-Write enough context for the next iteration to continue without guessing.
-
-`worklog` should include:
-
-- selected slice,
-- important commands,
-- validation commands and outcomes,
-- changed files or subsystems,
-- decisions and assumptions,
-- reverted or deferred work.
+Write enough durable context for the next iteration to continue without guessing.
 
 In pull request mode, `pr-body` should include durable completed-work context:
 

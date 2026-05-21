@@ -16,7 +16,7 @@ Required fields:
 | `branch` | object | Initial and tracked branch metadata for the iteration. |
 | `commits` | array | Commits created through `loop commit` during the iteration. |
 | `validation` | object | Validation commands and results. |
-| `artifacts` | object | Logical names for active plan, TODO, worklog, and PR text files. |
+| `artifacts` | object | Logical names for active plan, TODO, and PR text files. |
 
 Example:
 
@@ -53,7 +53,6 @@ Example:
   "artifacts": {
     "plan": "plan",
     "todo": "todo",
-    "worklog": "worklog",
     "pr_title": "pr-title",
     "pr_body": "pr-body"
   },
