@@ -211,6 +211,7 @@ func TestHelperProcessCaptureAgent(t *testing.T) {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	_ = artifactdb.Write(iterDir, "result", result)
+	runID, iterationID := artifactdb.ParseIterationDir(iterDir)
+	_ = artifactdb.WriteResultHandoff(artifactdb.GlobalDBPathForIteration(iterDir), runID, iterationID, result)
 	os.Exit(0)
 }

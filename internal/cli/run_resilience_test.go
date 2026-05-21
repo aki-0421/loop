@@ -194,7 +194,7 @@ func TestRunRepairsInvalidResultAndIntegrates(t *testing.T) {
 	if got := countEventType(t, iterDir, "agent.started"); got != 2 {
 		t.Fatalf("agent.started count = %d, want 2", got)
 	}
-	if !strings.Contains(readText(t, filepath.Join(iterDir, "errors.log")), "result artifact missing or invalid") {
+	if !strings.Contains(readText(t, filepath.Join(iterDir, "errors.log")), "result handoff missing or invalid") {
 		t.Fatalf("errors.log did not record invalid-result repair:\n%s", readText(t, filepath.Join(iterDir, "errors.log")))
 	}
 	if _, err := os.Stat(filepath.Join(repo, "loop-fake-change.txt")); err != nil {

@@ -48,13 +48,12 @@ func TestIterationResultCommandBuildsAndWritesResult(t *testing.T) {
 	if err != nil {
 		t.Fatalf("iteration result: %v", err)
 	}
-	if strings.TrimSpace(out) != "wrote result" {
-		t.Fatalf("write output = %q", out)
-	}
-
-	data, err := artifactdb.Read(iterDir, "result")
+	data, err := artifactdb.ReadResultHandoff(filepath.Join(repo, ".loop", artifactdb.GlobalDBName), "run-1", "0001")
 	if err != nil {
 		t.Fatal(err)
+	}
+	if strings.TrimSpace(out) != strings.TrimSpace(data) {
+		t.Fatalf("stdout should contain the written result JSON\nstdout:\n%s\nhandoff:\n%s", out, data)
 	}
 	result, err := validation.ValidateResultJSON([]byte(data))
 	if err != nil {

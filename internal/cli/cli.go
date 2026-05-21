@@ -42,6 +42,7 @@ var targetBranchConfirmationSleep = sleepContext
 
 var githubSleepPollInterval = 5 * time.Minute
 var targetBranchConfirmationDuration = 5 * time.Second
+var resultHandoffPollInterval = 200 * time.Millisecond
 
 var errPRChecksTimedOut = errors.New("pull request checks timed out")
 
@@ -1707,7 +1708,7 @@ func runAgent(ctx context.Context, cfg config.Config, root string, paths pathSet
 		Env:         adapterCfg.Env,
 	}
 	env := map[string]string{
-		"LOOP_RESULT_ARTIFACT":   "result",
+		"LOOP_RESULT_HANDOFF":    "master-db",
 		"LOOP_WORKDIR":           root,
 		"LOOP_RUN_GOAL":          paths.Goal,
 		"LOOP_OUTPUT_LANGUAGE":   paths.Language,
@@ -1746,12 +1747,11 @@ func runAgentAndReadResult(ctx context.Context, cfg config.Config, workDir strin
 	if paths == nil {
 		return nil, errors.New("path set is required")
 	}
-	agentErr := runAgent(ctx, cfg, workDir, *paths, onEvent)
+	result, agentErr, resultErr := runAgentUntilResult(ctx, cfg, workDir, paths, onEvent)
 	if err := refreshTrackedBranch(ctx, workDir, paths); err != nil {
 		appendErrorLog(paths.Errors, fmt.Sprintf("branch tracking validation failed: %v", err))
 		return nil, err
 	}
-	result, resultErr := validateResultArtifact(*paths)
 	if ctx.Err() != nil {
 		if agentErr != nil {
 			return nil, fmt.Errorf("agent cancelled: %w", agentErr)
@@ -1759,16 +1759,15 @@ func runAgentAndReadResult(ctx context.Context, cfg config.Config, workDir strin
 		return nil, ctx.Err()
 	}
 	for attempt := 1; resultErr != nil && attempt <= cfg.Run.RepairAttempts && ctx.Err() == nil; attempt++ {
-		appendErrorLog(paths.Errors, fmt.Sprintf("result artifact missing or invalid before repair attempt %d: %v", attempt, resultErr))
+		appendErrorLog(paths.Errors, fmt.Sprintf("result handoff missing or invalid before repair attempt %d: %v", attempt, resultErr))
 		previousExtra := paths.AgentPromptExtra
-		paths.AgentPromptExtra = repairContract(fmt.Sprintf("Repair attempt %d required because the result artifact was missing or invalid: %v", attempt, resultErr))
-		agentErr = runAgent(ctx, cfg, workDir, *paths, onEvent)
+		paths.AgentPromptExtra = repairContract(fmt.Sprintf("Repair attempt %d required because the result handoff was missing or invalid: %v", attempt, resultErr))
+		result, agentErr, resultErr = runAgentUntilResult(ctx, cfg, workDir, paths, onEvent)
 		paths.AgentPromptExtra = previousExtra
 		if err := refreshTrackedBranch(ctx, workDir, paths); err != nil {
 			appendErrorLog(paths.Errors, fmt.Sprintf("branch tracking validation failed before repair attempt %d completed: %v", attempt, err))
 			return nil, err
 		}
-		result, resultErr = validateResultArtifact(*paths)
 		if ctx.Err() != nil {
 			if agentErr != nil {
 				return nil, fmt.Errorf("agent cancelled: %w", agentErr)
@@ -1777,7 +1776,7 @@ func runAgentAndReadResult(ctx context.Context, cfg config.Config, workDir strin
 		}
 	}
 	if resultErr != nil {
-		appendErrorLog(paths.Errors, fmt.Sprintf("result artifact validation failed: %v", resultErr))
+		appendErrorLog(paths.Errors, fmt.Sprintf("result handoff validation failed: %v", resultErr))
 		if agentErr != nil {
 			return nil, fmt.Errorf("agent failed and result JSON is invalid: %w; agent error: %v", resultErr, agentErr)
 		}
@@ -1786,8 +1785,43 @@ func runAgentAndReadResult(ctx context.Context, cfg config.Config, workDir strin
 	return result, nil
 }
 
-func validateResultArtifact(paths pathSet) (*validation.IterationResult, error) {
-	data, err := artifactdb.Read(filepath.Dir(paths.Result), "result")
+func runAgentUntilResult(ctx context.Context, cfg config.Config, workDir string, paths *pathSet, onEvent func(runstate.Event)) (*validation.IterationResult, error, error) {
+	globalPath := artifactdb.GlobalDBPathForIteration(filepath.Dir(paths.Result))
+	if globalPath == "" {
+		return nil, nil, errors.New("result handoff requires an iteration directory under .loop/runs")
+	}
+	_ = artifactdb.ClearResultHandoff(globalPath, paths.RunID, paths.IterationID)
+	runCtx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	done := make(chan error, 1)
+	go func() {
+		done <- runAgent(runCtx, cfg, workDir, *paths, onEvent)
+	}()
+
+	ticker := time.NewTicker(resultHandoffPollInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case agentErr := <-done:
+			result, resultErr := validateResultHandoff(ctx, workDir, paths, globalPath)
+			return result, agentErr, resultErr
+		case <-ticker.C:
+			result, resultErr := validateResultHandoff(ctx, workDir, paths, globalPath)
+			if resultErr == nil {
+				cancel(agent.ErrResultReceived)
+				agentErr := <-done
+				return result, agentErr, nil
+			}
+		case <-ctx.Done():
+			cancel(ctx.Err())
+			agentErr := <-done
+			return nil, agentErr, ctx.Err()
+		}
+	}
+}
+
+func validateResultHandoff(ctx context.Context, workDir string, paths *pathSet, globalPath string) (*validation.IterationResult, error) {
+	data, err := artifactdb.ReadResultHandoff(globalPath, paths.RunID, paths.IterationID)
 	if err != nil {
 		return nil, err
 	}
@@ -1795,7 +1829,10 @@ func validateResultArtifact(paths pathSet) (*validation.IterationResult, error) 
 	if err != nil {
 		return nil, err
 	}
-	if err := validateResultBranchContract(result, paths); err != nil {
+	if err := refreshTrackedBranch(ctx, workDir, paths); err != nil {
+		return nil, err
+	}
+	if err := validateResultBranchContract(result, *paths); err != nil {
 		return nil, err
 	}
 	return result, nil
@@ -2250,7 +2287,7 @@ func prCheckRepairPrompt(prID string, attempt, total int, result pr.CommandResul
 		"2. Record the search queries, useful links or source names, and the conclusion in the worklog artifact before editing.\n" +
 		"3. Use the local repository evidence together with the web findings to make the smallest fix on the current branch.\n" +
 		"4. Run relevant local validation, commit complete changes through `loop commit`, and leave the working tree clean.\n" +
-		"5. Write an updated result artifact. If web search is unavailable, record that limitation in the worklog and continue from local diagnostics.\n"
+		"5. Write an updated result handoff with `loop iteration result --write`. If web search is unavailable, record that limitation in the worklog and continue from local diagnostics.\n"
 	return fmt.Sprintf(repairPrompt, prID, attempt, total, details)
 }
 

@@ -38,7 +38,7 @@ func commandIterationResult(ctx context.Context, g globals, args []string) error
 	dirAlias := fs.String("dir", "", "iteration directory")
 	runID := fs.String("run", os.Getenv("LOOP_RUN_ID"), "run id")
 	iteration := fs.String("iteration", defaultIterationEnv(), "iteration id")
-	writeResult := fs.Bool("write", false, "write the generated JSON to the result artifact")
+	writeResult := fs.Bool("write", false, "write the generated JSON to the master DB result handoff")
 	status := fs.String("status", "completed", "result status")
 	summary := fs.String("summary", "", "summary sentence")
 	fs.StringVar(summary, "summary-sentence", "", "summary sentence")
@@ -110,10 +110,22 @@ func commandIterationResult(ctx context.Context, g globals, args []string) error
 		return codedError{2, err}
 	}
 	if *writeResult {
-		if err := artifactdb.Write(resolvedDir, "result", string(data)); err != nil {
+		handoffRunID := strings.TrimSpace(*runID)
+		handoffIterationID := strings.TrimSpace(*iteration)
+		if parsedRunID, parsedIterationID := artifactdb.ParseIterationDir(resolvedDir); parsedRunID != "" || parsedIterationID != "" {
+			handoffRunID = firstNonEmpty(parsedRunID, handoffRunID)
+			handoffIterationID = firstNonEmpty(parsedIterationID, handoffIterationID)
+		}
+		if handoffRunID == "" || handoffIterationID == "" || handoffIterationID == "latest" {
+			return codedError{2, errors.New("run id and concrete iteration id are required when --write is used")}
+		}
+		globalPath := artifactdb.GlobalDBPathForIteration(resolvedDir)
+		if globalPath == "" {
+			return codedError{2, errors.New("iteration directory must be under .loop/runs when --write is used")}
+		}
+		if err := artifactdb.WriteResultHandoff(globalPath, handoffRunID, handoffIterationID, string(data)); err != nil {
 			return codedError{1, err}
 		}
-		return printResult(g, map[string]any{"artifact": "result", "action": "write"}, "wrote result\n")
 	}
 	fmt.Print(string(data))
 	return nil

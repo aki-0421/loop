@@ -884,7 +884,7 @@ func runTestFakeAgent() int {
 	mode := testFakeAgentMode()
 	switch mode {
 	case "invalid_json":
-		_ = artifactdb.Write(iterDir, "result", "{invalid json\n")
+		writeTestFakeRawResult(iterDir, "{invalid json\n")
 		return 0
 	case "dirty":
 		_ = os.WriteFile(filepath.Join(getenvForTestAgent("LOOP_WORKDIR", "."), "loop-fake-dirty.txt"), []byte("dirty\n"), 0o644)
@@ -1061,7 +1061,12 @@ func writeTestFakeResult(iterDir, status string, commit map[string]any) {
 		result["blocked_reason"] = getenvForTestAgent("LOOP_FAKE_BLOCKED_REASON", "Fake agent blocked by requested mode.")
 	}
 	data, _ := json.MarshalIndent(result, "", "  ")
-	_ = artifactdb.Write(iterDir, "result", string(append(data, '\n')))
+	writeTestFakeRawResult(iterDir, string(append(data, '\n')))
+}
+
+func writeTestFakeRawResult(iterDir, resultJSON string) {
+	runID, iterationID := artifactdb.ParseIterationDir(iterDir)
+	_ = artifactdb.WriteResultHandoff(artifactdb.GlobalDBPathForIteration(iterDir), runID, iterationID, resultJSON)
 }
 
 func testFakeBranchResult(status string) map[string]any {

@@ -133,7 +133,6 @@ var artifactFileNames = map[string]string{
 	"worklog":            "worklog.md",
 	"validation":         "validation.md",
 	"summary":            "summary.md",
-	"result":             "result.json",
 	"pr-title":           "pr-title.txt",
 	"pr-body":            "pr-body.md",
 	"pr-state":           "pr-state.json",
@@ -453,12 +452,70 @@ func RebuildGlobalFromRuns(runsDir string) (int, error) {
 		`DELETE FROM artifact_index_fts`,
 		`DELETE FROM iterations`,
 		`DELETE FROM runs`,
+		`DELETE FROM iteration_results`,
 	} {
 		if _, err := db.Exec(stmt); err != nil {
 			return 0, err
 		}
 	}
 	return 0, nil
+}
+
+func WriteResultHandoff(globalDBPath, runID, iterationID, resultJSON string) error {
+	if runID == "" || iterationID == "" {
+		return errors.New("run id and iteration id are required")
+	}
+	db, err := openGlobal(globalDBPath)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	if err := ensureGlobal(db); err != nil {
+		return err
+	}
+	_, err = db.Exec(`INSERT INTO iteration_results(run_id, iteration_id, result_json, updated_at) VALUES(?, ?, ?, ?)
+ON CONFLICT(run_id, iteration_id) DO UPDATE SET result_json = excluded.result_json, updated_at = excluded.updated_at`,
+		runID, iterationID, resultJSON, now())
+	return err
+}
+
+func ReadResultHandoff(globalDBPath, runID, iterationID string) (string, error) {
+	if runID == "" || iterationID == "" {
+		return "", fmt.Errorf("%w: result", ErrNotFound)
+	}
+	db, err := openGlobal(globalDBPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", fmt.Errorf("%w: result", ErrNotFound)
+		}
+		return "", err
+	}
+	defer db.Close()
+	if err := ensureGlobal(db); err != nil {
+		return "", err
+	}
+	var resultJSON string
+	err = db.QueryRow(`SELECT result_json FROM iteration_results WHERE run_id = ? AND iteration_id = ?`, runID, iterationID).Scan(&resultJSON)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", fmt.Errorf("%w: result", ErrNotFound)
+	}
+	return resultJSON, err
+}
+
+func ClearResultHandoff(globalDBPath, runID, iterationID string) error {
+	if runID == "" || iterationID == "" {
+		return nil
+	}
+	db, err := openGlobal(globalDBPath)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	if err := ensureGlobal(db); err != nil {
+		return err
+	}
+	_, err = db.Exec(`DELETE FROM iteration_results WHERE run_id = ? AND iteration_id = ?`, runID, iterationID)
+	return err
 }
 
 func UpsertPRMemory(globalDBPath string, record PRMemoryRecord) error {
@@ -1179,6 +1236,7 @@ func ensureGlobal(db *sql.DB) error {
 		`CREATE TABLE IF NOT EXISTS iterations(run_id TEXT NOT NULL, iteration_id TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY(run_id, iteration_id))`,
 		`CREATE TABLE IF NOT EXISTS artifact_index(run_id TEXT NOT NULL, iteration_id TEXT NOT NULL, artifact TEXT NOT NULL, content TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY(run_id, iteration_id, artifact))`,
 		`CREATE VIRTUAL TABLE IF NOT EXISTS artifact_index_fts USING fts5(run_id UNINDEXED, iteration_id UNINDEXED, artifact UNINDEXED, content, tokenize = 'unicode61')`,
+		`CREATE TABLE IF NOT EXISTS iteration_results(run_id TEXT NOT NULL, iteration_id TEXT NOT NULL, result_json TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY(run_id, iteration_id))`,
 		`CREATE TABLE IF NOT EXISTS global_metadata(key TEXT PRIMARY KEY, value TEXT NOT NULL)`,
 		`CREATE TABLE IF NOT EXISTS pr_memory(repo TEXT NOT NULL, number INTEGER NOT NULL, url TEXT NOT NULL, state TEXT NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL, updated_at TEXT NOT NULL, merged_at TEXT NOT NULL, fetched_at TEXT NOT NULL, PRIMARY KEY(repo, number))`,
 		`CREATE VIRTUAL TABLE IF NOT EXISTS pr_memory_fts USING fts5(repo UNINDEXED, number UNINDEXED, url UNINDEXED, state UNINDEXED, title, body, updated_at UNINDEXED, merged_at UNINDEXED, fetched_at UNINDEXED, tokenize = 'unicode61')`,
