@@ -128,6 +128,58 @@ func TestRemoveWorktreeBeforePRIntegrationLeavesBranchDeletable(t *testing.T) {
 	}
 }
 
+func TestCleanupDisposableIterationFilesPreservesAuditFiles(t *testing.T) {
+	iterDir := t.TempDir()
+	active := []string{
+		"runtime.json",
+		"plan.md",
+		"todo.md",
+		"worklog.md",
+		"validation.md",
+		"validation-output-test.log",
+		"pr-title.txt",
+		"pr-body.md",
+		"agent-prompt-audit.md",
+	}
+	for _, name := range active {
+		mustWrite(t, filepath.Join(iterDir, name), "active\n")
+	}
+	preserved := []string{
+		"prompt.md",
+		"effective-config.yaml",
+		"agent-events.jsonl",
+		"errors.log",
+		"pr-state.json",
+		"pr-checks.json",
+		"pr-check-log.txt",
+		"github-updates.md",
+	}
+	for _, name := range preserved {
+		mustWrite(t, filepath.Join(iterDir, name), "audit\n")
+	}
+
+	if issues := cleanupDisposableIterationFiles(iterDir, filepath.Join(iterDir, "agent-events.jsonl")); len(issues) != 0 {
+		t.Fatalf("cleanup issues: %v", issues)
+	}
+	for _, name := range active {
+		if _, err := os.Stat(filepath.Join(iterDir, name)); !os.IsNotExist(err) {
+			t.Fatalf("%s should be removed, err=%v", name, err)
+		}
+	}
+	for _, name := range preserved {
+		if _, err := os.Stat(filepath.Join(iterDir, name)); err != nil {
+			t.Fatalf("%s should be preserved: %v", name, err)
+		}
+	}
+	events, err := os.ReadFile(filepath.Join(iterDir, "agent-events.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(events), "iteration.active_files.cleanup.completed") || !strings.Contains(string(events), "plan.md") {
+		t.Fatalf("cleanup event missing:\n%s", events)
+	}
+}
+
 func TestRemoveWorktreeBeforePRIntegrationToleratesAlreadyRemovedPath(t *testing.T) {
 	ctx := context.Background()
 	repo := newCleanupRepo(t)

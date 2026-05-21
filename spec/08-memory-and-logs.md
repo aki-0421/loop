@@ -65,6 +65,8 @@ Every iteration writes structured runtime artifacts as files in `.loop/runs/<run
 
 Agents should read and write these artifacts through `loop iteration` commands so path resolution and artifact boundaries stay in the CLI. `plan` and `todo` have dedicated `loop iteration plan` and `loop iteration todo` commands; other writable artifacts use `loop iteration write` or `loop iteration append`. The iteration result is a master-DB handoff row written by `loop iteration result --write`.
 
+After a completed or no-change iteration reaches its terminal action, disposable active files are removed. `prompt.md`, `effective-config.yaml`, `agent-events.jsonl`, `errors.log`, PR lifecycle diagnostics, GitHub update diffs, and run state remain for audit and replay.
+
 ## GitHub context memory
 
 Long-term memory comes from GitHub pull requests, Issues, and Issue/PR comments. The local `.loop/loop.db` file is only a rebuildable cache of GitHub titles, bodies, and comments. GitHub is authoritative; local iteration summaries are not indexed as memory.

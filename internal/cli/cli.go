@@ -508,6 +508,9 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 				}
 				cleanup.Integrated = true
 			}
+			if issues := cleanupDisposableIterationFiles(iterDir, paths.Events); len(issues) > 0 {
+				appendErrorLog(paths.Errors, "iteration file cleanup failed: "+strings.Join(issues, "; "))
+			}
 			if result.ShouldFullyStop {
 				state.Stage = runstate.StageCompleted
 				_ = runstate.Write(statePath, state)
@@ -601,6 +604,9 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 			if cfg.Git.Integration.LocalMerge.DeleteBranch {
 				_ = runner.DeleteBranch(ctx, finalBranch, true)
 			}
+		}
+		if issues := cleanupDisposableIterationFiles(iterDir, paths.Events); len(issues) > 0 {
+			appendErrorLog(paths.Errors, "iteration file cleanup failed: "+strings.Join(issues, "; "))
 		}
 		if result.ShouldFullyStop {
 			state.Stage = runstate.StageCompleted
@@ -794,6 +800,52 @@ func removeEmptyDir(path string) {
 		return
 	}
 	_ = os.Remove(path)
+}
+
+func cleanupDisposableIterationFiles(iterDir, eventLogPath string) []string {
+	if strings.TrimSpace(iterDir) == "" {
+		return nil
+	}
+	names := []string{
+		"runtime.json",
+		"plan.md",
+		"todo.md",
+		"worklog.md",
+		"validation.md",
+		"pr-title.txt",
+		"pr-body.md",
+		"agent-prompt-audit.md",
+	}
+	var removed []string
+	var issues []string
+	remove := func(path string) {
+		if err := os.Remove(path); err != nil {
+			if !errors.Is(err, os.ErrNotExist) {
+				issues = append(issues, filepath.Base(path)+": "+err.Error())
+			}
+			return
+		}
+		removed = append(removed, filepath.Base(path))
+	}
+	for _, name := range names {
+		remove(filepath.Join(iterDir, name))
+	}
+	outputs, err := filepath.Glob(filepath.Join(iterDir, "validation-output-*.log"))
+	if err == nil {
+		for _, path := range outputs {
+			remove(path)
+		}
+	} else {
+		issues = append(issues, "validation output glob: "+err.Error())
+	}
+	if eventLogPath != "" {
+		event := runstate.Event{"type": "iteration.active_files.cleanup.completed", "removed": removed}
+		if len(issues) > 0 {
+			event["issues"] = issues
+		}
+		_ = runstate.AppendEvent(eventLogPath, event)
+	}
+	return issues
 }
 
 func runGitCleanPreservingLoopRuntime(ctx context.Context, runner gitx.Runner) (string, error) {

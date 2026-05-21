@@ -108,14 +108,14 @@ Required agent outputs:
 - `plan` artifact before repository edits.
 - `todo` artifact before repository edits.
 - Commits for complete logical units when changes are made, created through `loop commit`.
-- `summary` artifact with a concise iteration summary.
-- `result` artifact matching the schema.
+- `pr-title` and `pr-body` when pull request mode is enabled.
+- Master-DB result handoff through `loop iteration result --write`.
 
 The agent first uses the plan to select the review slice, then manages TODOs one item at a time to decompose that slice into commit-sized tasks. Each TODO uses the same `--type` and message shape as `loop commit`, and one completed TODO equals one `loop commit` invocation except no-change confirmations. Before the iteration ends, the agent confirms that commits are complete and `git status --short` shows no changed files.
 
 ## Result handling
 
-The CLI validates the `result` artifact and decides the next action.
+The CLI validates the master-DB result handoff and decides the next action. After a completed or no-change iteration reaches its terminal action, the CLI deletes disposable active-work files such as `plan.md`, `todo.md`, `worklog.md`, validation output, PR text, and temporary runtime files. It preserves `prompt.md`, `effective-config.yaml`, `agent-events.jsonl`, `errors.log`, PR lifecycle diagnostics, GitHub update diffs, and run state.
 
 | Result status | Meaning | CLI action |
 | --- | --- | --- |
