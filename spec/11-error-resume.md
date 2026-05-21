@@ -32,6 +32,7 @@ Sleep mode is entered only when the agent explicitly closes with `loop iteration
 
 - The CLI closes any unmerged PR, deletes local and remote iteration branches, removes the worktree, and refreshes the target branch before sleeping.
 - While sleeping, the CLI polls GitHub Issue/PR/comment diffs every five minutes.
+- In interactive terminals, any keypress skips the remaining wait and fetches GitHub updates immediately.
 - When a diff appears, the CLI writes `github-updates` into the next iteration and launches the next agent.
 - The next agent decides whether to implement, comment or reopen an Issue, merge, skip merge again, or return to sleep.
 - The CLI does not ask the user.

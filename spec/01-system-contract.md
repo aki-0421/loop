@@ -22,7 +22,7 @@ Runs are fully automated:
 - Concrete repository or harness improvement proposals are reported through `loop issue report`. Unsupported agent capability findings are rediscovered each iteration and are not persisted as Issues.
 - Missing information is handled by making a local, explicit assumption and continuing.
 - After creating a clarification Issue, the agent continues unrelated work. If no safe mergeable work remains and GitHub updates are needed before continuing, the agent closes with `loop iteration close --skip-merge --sleep --should-stop false` and references the relevant Issue URL in the reason.
-- GitHub sleep mode polls GitHub Issue/PR updates and starts the next iteration when new context appears. Sleep mode is an explicit skip-merge choice and does not reuse the goal-completion stop decision.
+- GitHub sleep mode polls GitHub Issue/PR updates and starts the next iteration when new context appears. In an interactive terminal, any keypress triggers an immediate fetch. Sleep mode is an explicit skip-merge choice and does not reuse the goal-completion stop decision.
 - Local merge, pull, cleanup, and resume operations are performed by the CLI according to configuration. In pull request mode, the agent performs PR creation, check waiting, check failure fixes, and PR merge through `loop pr` commands.
 
 ## Language default

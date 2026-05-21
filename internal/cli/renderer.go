@@ -409,6 +409,31 @@ func (r *runRenderer) SleepWaitingForGitHub() {
 	r.setTitle()
 }
 
+func (r *runRenderer) SleepFetchRequested() {
+	if !r.enabled {
+		return
+	}
+	detail := "fetching GitHub updates after keypress"
+	r.mu.Lock()
+	r.sleepDetail = detail
+	r.stageDetail = detail
+	r.current = detail
+	r.latestMsg = detail
+	r.addEventLocked(rendererEvent{
+		At:     time.Now(),
+		Status: "active",
+		Title:  "Sleep Fetch",
+		Detail: detail,
+	})
+	r.mu.Unlock()
+	if r.interactive {
+		r.render()
+	} else {
+		r.line("sleep", detail)
+	}
+	r.setTitle()
+}
+
 func (r *runRenderer) clearSleepLocked() {
 	r.sleeping = false
 	r.sleepSince = time.Time{}

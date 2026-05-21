@@ -152,7 +152,7 @@ The one-sentence `summary_sentence` from the close handoff becomes the squash co
 
 `should_fully_stop=true` means the run goal is fully satisfied. In pull request mode, the agent must make this decision after `loop pr merge` succeeds when using `--merge`. The CLI stops after the current terminal action completes.
 
-`loop iteration close --skip-merge --sleep --should-stop false` enters GitHub sleep mode after skip-merge cleanup. Sleep mode polls Issue, PR, and comment updates every five minutes. When updates appear, the CLI writes the `github-updates` artifact into the next iteration and lets the next agent decide whether to implement, comment or reopen an Issue, merge, skip merge again, or return to sleep.
+`loop iteration close --skip-merge --sleep --should-stop false` enters GitHub sleep mode after skip-merge cleanup. Sleep mode polls Issue, PR, and comment updates every five minutes; in an interactive terminal, any keypress triggers the next fetch immediately. When updates appear, the CLI writes the `github-updates` artifact into the next iteration and lets the next agent decide whether to implement, comment or reopen an Issue, merge, skip merge again, or return to sleep.
 
 If `should_fully_stop=false`, the CLI starts the next iteration until the iteration limit or terminal state is reached.
 

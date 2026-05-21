@@ -153,12 +153,30 @@ func TestRunRendererShowsGitHubSleepMode(t *testing.T) {
 	}
 	frameLines := renderer.frame(100, 20)
 	frame := stripANSISequences(strings.Join(frameLines, "\n"))
-	for _, want := range []string{"GitHub Sleep Mode", "Waiting for GitHub Issue/PR updates", "Polling every 5m"} {
+	for _, want := range []string{"GitHub Sleep Mode", "Waiting for GitHub Issue/PR updates", "Press any key to fetch now"} {
 		if !strings.Contains(frame, want) {
 			t.Fatalf("sleep frame missing %q:\n%s", want, frame)
 		}
 	}
 	assertFrameBounds(t, frameLines, 100, 20)
+}
+
+func TestRunRendererShowsSleepFetchRequested(t *testing.T) {
+	var out bytes.Buffer
+	renderer := &runRenderer{
+		enabled:     true,
+		interactive: false,
+		writer:      &out,
+		started:     time.Now(),
+		done:        make(chan struct{}),
+		stage:       "sleeping",
+	}
+
+	renderer.SleepFetchRequested()
+
+	if !strings.Contains(out.String(), "fetching GitHub updates after keypress") {
+		t.Fatalf("line renderer should print sleep fetch status: %q", out.String())
+	}
 }
 
 func TestParseTodoItemsNormalizesCommitTypeColon(t *testing.T) {

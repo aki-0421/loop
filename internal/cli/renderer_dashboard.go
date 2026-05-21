@@ -218,7 +218,7 @@ func renderSleepDashboard(s rendererSnapshot, symbols dashboardSymbols, width, h
 		centerLine(spinnerSymbol(s)+" Waiting for GitHub Issue/PR updates", width),
 		centerLine(colorize(s, ansiDim, ellipsize(detail, contentWidth)), width),
 		"",
-		centerLine(colorize(s, ansiDim, "Polling every 5m. Asleep for "+asleepFor+". Press Ctrl+C to cancel."), width),
+		centerLine(colorize(s, ansiDim, "Polling every 5m. Press any key to fetch now. Ctrl+C to cancel. Asleep for "+asleepFor+"."), width),
 	)
 	return fitCanvasLines(lines, colorize(s, ansiDim, footerText(s, symbols)), width, height)
 }

@@ -1025,7 +1025,7 @@ func waitForGitHubUpdates(ctx context.Context, root string, cfg config.Config, p
 			renderer.SleepWaitingForGitHub()
 		}
 		_ = runstate.AppendEvent(paths.Events, runstate.Event{"type": "github_sleep.waiting"})
-		if err := githubSleepPoll(ctx, githubSleepPollInterval); err != nil {
+		if err := waitForGitHubSleepPoll(ctx, githubSleepPollInterval, renderer); err != nil {
 			return nil, err
 		}
 		updates, err := memory.SyncGitHubUpdates(ctx, memory.SyncOptions{WorkDir: root, RunsDir: filepath.Join(root, cfg.Logs.Dir)})
