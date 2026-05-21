@@ -38,8 +38,10 @@ type codedError struct {
 
 var prChecksSleep = sleepContext
 var githubSleepPoll = sleepContext
+var targetBranchConfirmationSleep = sleepContext
 
 var githubSleepPollInterval = 5 * time.Minute
+var targetBranchConfirmationDuration = 5 * time.Second
 
 var errPRChecksTimedOut = errors.New("pull request checks timed out")
 
@@ -199,17 +201,12 @@ func commandInit(ctx context.Context, g globals, args []string) error {
 	if err != nil {
 		return codedError{1, fmt.Errorf("not inside a git repository: %w", err)}
 	}
-	runner := gitx.Runner{Dir: root}
 	baseBranch := *base
-	if baseBranch == "" {
-		baseBranch, err = runner.DefaultBaseBranch(ctx)
-		if err != nil {
-			return codedError{1, err}
-		}
-	}
 	cfg := config.Defaults()
 	cfg.Agent.Default = *agentName
-	cfg.Git.BaseBranch = baseBranch
+	if baseBranch != "" {
+		cfg.Git.BaseBranch = baseBranch
+	}
 	skillDir := skills.PreferredInstallDir(root, cfg)
 	cfg.Skills.SourceDir = filepath.ToSlash(rel(root, skillDir))
 	if target, ok := cfg.Skills.Targets["codex"]; ok && target.Mode == "off" {
@@ -238,8 +235,13 @@ func commandInit(ctx context.Context, g globals, args []string) error {
 			return codedError{1, err}
 		}
 	}
-	out := map[string]any{"config": rel(root, configPath), "base": baseBranch, "agent": *agentName, "skills": rel(root, skillDir)}
-	return printResult(g, out, fmt.Sprintf("Initialized loop in %s\nConfig: %s\nSkills: %s\nBase: %s\n", root, rel(root, configPath), rel(root, skillDir), baseBranch))
+	out := map[string]any{"config": rel(root, configPath), "agent": *agentName, "skills": rel(root, skillDir)}
+	baseLine := "Base: current branch at run start\n"
+	if baseBranch != "" {
+		out["base"] = baseBranch
+		baseLine = fmt.Sprintf("Base: %s\n", baseBranch)
+	}
+	return printResult(g, out, fmt.Sprintf("Initialized loop in %s\nConfig: %s\nSkills: %s\n%s", root, rel(root, configPath), rel(root, skillDir), baseLine))
 }
 
 func commandRun(ctx context.Context, g globals, args []string) error {
@@ -301,6 +303,14 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 		return codedError{3, err}
 	}
 	runner := gitx.Runner{Dir: root}
+	startBranch, err := runner.CurrentBranch(ctx)
+	if err != nil {
+		return codedError{1, err}
+	}
+	if strings.TrimSpace(cfg.Git.BaseBranch) == "" {
+		cfg.Git.BaseBranch = startBranch
+	}
+	mainBranch, _ := runner.MainBranch(ctx)
 	if !*dryRun && cfg.Git.CleanPolicy == "require_clean_before_start" {
 		clean, err := runner.CheckClean(ctx, gitx.CleanOptions{IgnoreRuntime: true})
 		if err != nil {
@@ -329,6 +339,13 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 	}()
 	if err := runstate.Write(statePath, state); err != nil {
 		return codedError{1, err}
+	}
+	if shouldConfirmTargetBranch(cfg.Git.BaseBranch, mainBranch) {
+		if err := renderer.ConfirmTargetBranch(ctx, cfg.Git.BaseBranch, mainBranch, targetBranchConfirmationDuration); err != nil {
+			state.Stage = runstate.StageCancelled
+			_ = runstate.Write(statePath, state)
+			return codedError{1, err}
+		}
 	}
 	if err := syncMemoryBeforeRun(ctx, root, cfg, renderer); err != nil {
 		state.Stage = runstate.StageFailed
@@ -617,7 +634,9 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 func minimalInitConfig(agentName, baseBranch, skillSourceDir string) ([]byte, error) {
 	cfg := minimalInitConfigFile{
 		Version: 1,
-		Git:     minimalGitConfig{BaseBranch: baseBranch},
+	}
+	if baseBranch != "" {
+		cfg.Git = &minimalGitConfig{BaseBranch: baseBranch}
 	}
 	if agentName != "" && agentName != "codex" {
 		agent := &minimalAgentConfig{Default: agentName}
@@ -644,11 +663,17 @@ func minimalInitConfig(agentName, baseBranch, skillSourceDir string) ([]byte, er
 	return out.Bytes(), nil
 }
 
+func shouldConfirmTargetBranch(targetBranch, mainBranch string) bool {
+	targetBranch = strings.TrimSpace(targetBranch)
+	mainBranch = strings.TrimSpace(mainBranch)
+	return targetBranch != "" && mainBranch != "" && targetBranch != mainBranch
+}
+
 type minimalInitConfigFile struct {
 	Version int                  `yaml:"version"`
 	Agent   *minimalAgentConfig  `yaml:"agent,omitempty"`
 	Skills  *minimalSkillsConfig `yaml:"skills,omitempty"`
-	Git     minimalGitConfig     `yaml:"git"`
+	Git     *minimalGitConfig    `yaml:"git,omitempty"`
 }
 
 type minimalAgentConfig struct {
@@ -665,7 +690,7 @@ type minimalSkillsConfig struct {
 }
 
 type minimalGitConfig struct {
-	BaseBranch string `yaml:"baseBranch"`
+	BaseBranch string `yaml:"baseBranch,omitempty"`
 }
 
 type iterationCleanup struct {
@@ -1527,7 +1552,11 @@ func commandDoctor(ctx context.Context, g globals, args []string) error {
 	if !gitx.IsRepository(ctx, root) {
 		problems = append(problems, "git repository not found")
 	}
-	if ok, err := (gitx.Runner{Dir: root}).BranchExists(ctx, cfg.Git.BaseBranch); err != nil || !ok {
+	runner := gitx.Runner{Dir: root}
+	if cfg.Git.BaseBranch == "" {
+		cfg.Git.BaseBranch, _ = runner.CurrentBranch(ctx)
+	}
+	if ok, err := runner.BranchExists(ctx, cfg.Git.BaseBranch); err != nil || !ok {
 		problems = append(problems, "base branch not found: "+cfg.Git.BaseBranch)
 	}
 	adapter, ok := cfg.Adapter(cfg.Agent.Default)

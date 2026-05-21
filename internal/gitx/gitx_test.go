@@ -130,6 +130,32 @@ func TestListCommitsAndSquashMerge(t *testing.T) {
 	}
 }
 
+func TestMainBranchReadsRemoteHead(t *testing.T) {
+	ctx := context.Background()
+	repo := newRepo(t)
+	r := Runner{Dir: repo}
+	git(t, repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+	git(t, repo, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+
+	got, err := r.MainBranch(ctx)
+	if err != nil {
+		t.Fatalf("MainBranch: %v", err)
+	}
+	if got != "main" {
+		t.Fatalf("main branch = %q, want main", got)
+	}
+}
+
+func TestMainBranchDoesNotFallBackToLocalMain(t *testing.T) {
+	ctx := context.Background()
+	repo := newRepo(t)
+	r := Runner{Dir: repo}
+
+	if got, err := r.MainBranch(ctx); err == nil {
+		t.Fatalf("MainBranch = %q, want inference error without remote HEAD", got)
+	}
+}
+
 func newRepo(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()

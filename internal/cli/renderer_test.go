@@ -108,6 +108,30 @@ func TestRunRendererDashboardKeepsEssentialStateWithinBounds(t *testing.T) {
 	assertFrameFits(t, shortLines, 70, 8)
 }
 
+func TestRunRendererShowsTargetBranchConfirmation(t *testing.T) {
+	t.Setenv("LOOP_ASCII", "1")
+	now := time.Now()
+	lines := renderDashboard(rendererSnapshot{
+		Started: now.Add(-time.Minute),
+		Now:     now,
+		Color:   false,
+		Confirmation: &rendererConfirmation{
+			Title:        "Confirm Target Branch",
+			TargetBranch: "feat/preview",
+			MainBranch:   "main",
+			Until:        now.Add(5 * time.Second),
+		},
+	}, 100, 20)
+	frame := stripANSISequences(strings.Join(lines, "\n"))
+
+	for _, want := range []string{"Confirm Target Branch", "Target branch: feat/preview", "Main branch: main", "Continuing in 00:05"} {
+		if !strings.Contains(frame, want) {
+			t.Fatalf("confirmation frame missing %q:\n%s", want, frame)
+		}
+	}
+	assertFrameBounds(t, lines, 100, 20)
+}
+
 func TestParseTodoItemsNormalizesCommitTypeColon(t *testing.T) {
 	todos := parseTodoItems(strings.NewReader("- [ ] C scaffold Next.js app tooling\n- [>] F: add dashboard shell\n- [x] D update docs\n- [ ] Check setup\n"))
 

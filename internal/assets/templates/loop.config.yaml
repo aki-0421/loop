@@ -26,7 +26,6 @@ skills:
       path: .agents/skills
 
 git:
-  baseBranch: develop
   worktree: true
   cleanPolicy: require_clean_before_start
   branch:

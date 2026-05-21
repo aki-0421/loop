@@ -100,6 +100,9 @@ func TestCodexAdapterUsesNonInteractiveExec(t *testing.T) {
 	if cfg.Run.MaxIterations != 0 {
 		t.Fatalf("default max iterations = %d, want unlimited 0", cfg.Run.MaxIterations)
 	}
+	if cfg.Git.BaseBranch != "" {
+		t.Fatalf("default base branch = %q, want empty", cfg.Git.BaseBranch)
+	}
 	codex := cfg.Agent.Adapters["codex"]
 	if len(codex.Args) < 2 || codex.Args[0] != "exec" || codex.Args[1] != "--json" {
 		t.Fatalf("default codex args = %#v, want exec --json first", codex.Args)

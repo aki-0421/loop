@@ -52,10 +52,18 @@ type runRenderer struct {
 	usageBaseInputTokens  int
 	usageBaseOutputTokens int
 	latestMsg             string
+	confirmation          *rendererConfirmation
 	done                  chan struct{}
 	ticker                *time.Ticker
 	titleEnabled          bool
 	drawMu                sync.Mutex
+}
+
+type rendererConfirmation struct {
+	Title        string
+	TargetBranch string
+	MainBranch   string
+	Until        time.Time
 }
 
 type todoItem struct {
@@ -256,6 +264,43 @@ func (r *runRenderer) Branch(branch string) {
 	r.branch = branch
 	r.mu.Unlock()
 	r.render()
+}
+
+func (r *runRenderer) ConfirmTargetBranch(ctx context.Context, targetBranch, mainBranch string, delay time.Duration) error {
+	if !r.enabled {
+		return nil
+	}
+	targetBranch = strings.TrimSpace(targetBranch)
+	mainBranch = strings.TrimSpace(mainBranch)
+	until := time.Now().Add(delay)
+	r.mu.Lock()
+	r.current = "confirming target branch"
+	r.latestMsg = "target branch is not the main branch"
+	r.confirmation = &rendererConfirmation{
+		Title:        "Confirm Target Branch",
+		TargetBranch: targetBranch,
+		MainBranch:   mainBranch,
+		Until:        until,
+	}
+	r.addEventLocked(rendererEvent{
+		At:     time.Now(),
+		Status: "blocked",
+		Title:  "Confirm Target Branch",
+		Detail: fmt.Sprintf("%s is not %s", targetBranch, mainBranch),
+	})
+	r.mu.Unlock()
+	if r.interactive {
+		r.render()
+	} else {
+		r.line("confirm", fmt.Sprintf("target branch %s is not main branch %s; continuing in %s", targetBranch, mainBranch, formatDuration(delay)))
+	}
+	err := targetBranchConfirmationSleep(ctx, delay)
+	r.mu.Lock()
+	r.confirmation = nil
+	r.current = ""
+	r.mu.Unlock()
+	r.render()
+	return err
 }
 
 func (r *runRenderer) Commits(count int) {
@@ -522,6 +567,7 @@ func (r *runRenderer) frame(width, height int) []string {
 		OutputTokens:    r.outputTokens,
 		TokensEstimated: r.tokensEstimated,
 		LatestMsg:       r.latestMsg,
+		Confirmation:    cloneRendererConfirmation(r.confirmation),
 		Now:             time.Now(),
 	}
 	r.mu.Unlock()
@@ -532,6 +578,14 @@ func (r *runRenderer) frame(width, height int) []string {
 	}
 	snapshot.Todos = todos
 	return renderDashboard(snapshot, width, height)
+}
+
+func cloneRendererConfirmation(in *rendererConfirmation) *rendererConfirmation {
+	if in == nil {
+		return nil
+	}
+	out := *in
+	return &out
 }
 
 func todoLines(todos []todoItem, limit int) []string {

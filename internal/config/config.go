@@ -297,9 +297,6 @@ func Validate(cfg Config) error {
 			errs = append(errs, "skills.targets."+agent+".mode must be copy, symlink, or off")
 		}
 	}
-	if cfg.Git.BaseBranch == "" {
-		errs = append(errs, "git.baseBranch is required")
-	}
 	if cfg.Git.Branch.InitialPattern == "" || cfg.Git.Branch.FinalPattern == "" {
 		errs = append(errs, "git.branch patterns are required")
 	}

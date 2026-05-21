@@ -2,11 +2,7 @@
 
 ## Base branch
 
-The base branch comes from config or `--base`. `loop init` detects a default in this order:
-
-1. `develop`.
-2. `main`.
-3. Current branch.
+The base branch comes from config or `--base`. When neither is set, `loop run` uses the branch that was checked out when the command started. If the target differs from the remote default branch advertised by `origin/HEAD` or `upstream/HEAD`, the renderer shows a five-second confirmation screen before the run proceeds.
 
 Before each iteration, the CLI updates the base branch when configured to pull automatically.
 

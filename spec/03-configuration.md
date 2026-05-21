@@ -18,9 +18,6 @@ The effective configuration is written to each iteration directory as `effective
 
 ```yaml
 version: 1
-
-git:
-  baseBranch: main
 ```
 
 Only keep values that differ from the built-in defaults. For example:
@@ -41,7 +38,7 @@ skills:
   sourceDir: .codex/skills
 
 git:
-  baseBranch: main
+  baseBranch: main # omit to use the branch at run start
 ```
 
 ## `language`
@@ -82,6 +79,12 @@ Sync modes:
 | `copy` | Copy skills when `loop skills sync` or explicit sync-on-run is enabled. |
 | `symlink` | Symlink skills when the platform supports it. |
 | `off` | Do not sync; reference discovered skill paths in prompts. |
+
+## `git`
+
+| Key | Type | Behavior |
+| --- | --- | --- |
+| `baseBranch` | string | Optional pinned integration target. When omitted, `loop run` uses the branch that was checked out when the command started. |
 
 ## `git.branch`
 

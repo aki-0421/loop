@@ -443,7 +443,7 @@ func allHelpCommands() []helpCommand {
 				{Name: "--agent <name>", Description: "set the default agent", Default: "codex"},
 				{Name: "--skills", Description: "install the default skill", Default: "true"},
 				{Name: "--sync-agent-skills", Description: "sync skills into configured agent targets", Default: "false"},
-				{Name: "--base <branch>", Description: "set the base branch", Default: "auto"},
+				{Name: "--base <branch>", Description: "pin the base branch instead of using the branch at run start"},
 			},
 		},
 		{
@@ -455,7 +455,7 @@ func allHelpCommands() []helpCommand {
 				{Name: "--goal <text>", Description: "natural-language stop condition"},
 				{Name: "--max-iterations <n>", Description: "maximum iterations; 0 means unlimited", Default: "config value"},
 				{Name: "--pr", Description: "use pull request integration", Default: "config value"},
-				{Name: "--base <branch>", Description: "base branch for integration", Default: "config value"},
+				{Name: "--base <branch>", Description: "base branch for integration", Default: "current branch at run start"},
 				{Name: "--worktree", Description: "run each iteration in a Git worktree", Default: "config value"},
 				{Name: "--resume <run-id>", Description: "resume an existing run"},
 				{Name: "--from-iteration <n>", Description: "resume from a specific iteration"},

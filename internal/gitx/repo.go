@@ -138,7 +138,7 @@ func (r Runner) Head(ctx context.Context) (string, error) {
 	return head, nil
 }
 
-// DefaultBaseBranch follows loop init's branch preference: develop, main, current.
+// DefaultBaseBranch follows the legacy branch preference: develop, main, current.
 func (r Runner) DefaultBaseBranch(ctx context.Context) (string, error) {
 	if ok, err := r.BranchExists(ctx, "develop"); err == nil && ok {
 		return "develop", nil
@@ -147,4 +147,22 @@ func (r Runner) DefaultBaseBranch(ctx context.Context) (string, error) {
 		return "main", nil
 	}
 	return r.CurrentBranch(ctx)
+}
+
+// MainBranch returns the repository's primary branch from configured remote HEADs.
+func (r Runner) MainBranch(ctx context.Context) (string, error) {
+	for _, ref := range []string{"refs/remotes/origin/HEAD", "refs/remotes/upstream/HEAD"} {
+		out, err := r.Run(ctx, "symbolic-ref", "--quiet", "--short", ref)
+		if err != nil {
+			continue
+		}
+		branch := strings.TrimSpace(out)
+		if remote, name, ok := strings.Cut(branch, "/"); ok && remote != "" && name != "" {
+			return name, nil
+		}
+		if branch != "" {
+			return branch, nil
+		}
+	}
+	return "", errors.New("main branch could not be inferred")
 }

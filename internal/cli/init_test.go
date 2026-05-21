@@ -13,21 +13,37 @@ func TestInitWritesMinimalConfigForDefaults(t *testing.T) {
 	withWorkingDir(t, repo)
 
 	if _, err := captureStdout(t, func() error {
+		return commandInit(context.Background(), globals{}, []string{"--force", "--skills=false", "--agent", "codex"})
+	}); err != nil {
+		t.Fatalf("loop init: %v", err)
+	}
+
+	text := readText(t, filepath.Join(repo, ".loop", "config.yaml"))
+	for _, want := range []string{"version: 1"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("config missing %q:\n%s", want, text)
+		}
+	}
+	for _, notWant := range []string{"baseBranch", "maxIterations", "adapters", "validation", "memory", "logs", "worktree"} {
+		if strings.Contains(text, notWant) {
+			t.Fatalf("config should omit %q:\n%s", notWant, text)
+		}
+	}
+}
+
+func TestInitWritesPinnedBaseWhenRequested(t *testing.T) {
+	repo := newCleanupRepo(t)
+	withWorkingDir(t, repo)
+
+	if _, err := captureStdout(t, func() error {
 		return commandInit(context.Background(), globals{}, []string{"--force", "--skills=false", "--agent", "codex", "--base", "main"})
 	}); err != nil {
 		t.Fatalf("loop init: %v", err)
 	}
 
 	text := readText(t, filepath.Join(repo, ".loop", "config.yaml"))
-	for _, want := range []string{"version: 1", "baseBranch: main"} {
-		if !strings.Contains(text, want) {
-			t.Fatalf("config missing %q:\n%s", want, text)
-		}
-	}
-	for _, notWant := range []string{"maxIterations", "adapters", "validation", "memory", "logs", "worktree"} {
-		if strings.Contains(text, notWant) {
-			t.Fatalf("config should omit %q:\n%s", notWant, text)
-		}
+	if !strings.Contains(text, "baseBranch: main") {
+		t.Fatalf("config missing pinned base:\n%s", text)
 	}
 }
 

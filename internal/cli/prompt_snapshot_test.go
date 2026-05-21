@@ -77,6 +77,9 @@ func TestRunSnapshotsInstructionPromptWithoutPersistingSourcePath(t *testing.T) 
 	if err := json.Unmarshal([]byte(runtimeText), &runtime); err != nil {
 		t.Fatal(err)
 	}
+	if got := runtime["base_branch"]; got != "develop" {
+		t.Fatalf("runtime base_branch = %#v, want develop from command start branch", got)
+	}
 	for _, key := range []string{"instruction_file", "instruction_path", "instruction_rel"} {
 		if _, ok := runtime[key]; ok {
 			t.Fatalf("runtime leaked %s: %#v", key, runtime)

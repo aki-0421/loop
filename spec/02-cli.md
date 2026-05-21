@@ -51,7 +51,7 @@ Flags:
 | `--agent <name>` | `codex` | Set the default agent in generated config |
 | `--skills` | `true` | Install the default skill into a discovered project skill directory |
 | `--sync-agent-skills` | `false` | Explicitly sync skills into configured agent targets |
-| `--base <branch>` | auto | Set base branch; if omitted, detect `develop`, then `main`, then current branch |
+| `--base <branch>` | unset | Pin the base branch instead of using the branch at run start |
 
 Generated tree:
 
@@ -82,7 +82,7 @@ Flags:
 | `--goal <text>` | empty | Natural-language stop condition stored in runtime context |
 | `--max-iterations <n>` | config value | Stop after `n` iterations; `0` means unlimited |
 | `--pr` | config value | Use pull request integration instead of local squash merge |
-| `--base <branch>` | config value | Base branch for integration |
+| `--base <branch>` | current branch at run start | Base branch for integration |
 | `--worktree` | config value | Run each iteration in a Git worktree |
 | `--resume <run-id>` | empty | Resume an existing run |
 | `--from-iteration <n>` | latest | Resume from a specific iteration |
