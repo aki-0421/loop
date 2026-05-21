@@ -94,6 +94,9 @@ git:
 	if got := strings.Count(gh, "pr merge 1 --squash"); got != 1 {
 		t.Fatalf("pr merge count = %d, log:\n%s", got, gh)
 	}
+	if strings.Contains(gh, "--delete-branch") {
+		t.Fatalf("loop pr merge should not ask gh to delete branches from an iteration worktree:\n%s", gh)
+	}
 
 	runID, err := latestRun(filepath.Join(repo, ".loop", "runs"))
 	if err != nil {
@@ -808,6 +811,71 @@ git:
 	}
 }
 
+func TestPRMergeRecoversAlreadyMergedRemoteState(t *testing.T) {
+	ctx := context.Background()
+	repo := newCleanupRepo(t)
+	git(t, repo, "remote", "add", "origin", "https://github.com/acme/app.git")
+	mustWrite(t, filepath.Join(repo, ".loop", "config.yaml"), `version: 1
+
+git:
+  baseBranch: develop
+  integration:
+    mode: pr
+    pr:
+      push: false
+      waitChecks: false
+      deleteBranch: false
+`)
+	git(t, repo, "add", ".loop/config.yaml")
+	git(t, repo, "commit", "-m", "T: add already merged pr fixture config")
+	git(t, repo, "checkout", "-b", "test/fake-agent", "develop")
+	mustWrite(t, filepath.Join(repo, "change.txt"), "change\n")
+	git(t, repo, "add", "change.txt")
+	git(t, repo, "commit", "-m", "F: add fake change")
+
+	runDir := filepath.Join(repo, ".loop", "runs", "run", "iterations", "0001")
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mustWriteRuntimeArtifact(t, runDir, map[string]any{
+		"run_id":            "run",
+		"iteration_id":      "0001",
+		"base_branch":       "develop",
+		"initial_branch":    "wip/0001",
+		"current_branch":    "test/fake-agent",
+		"branch_renamed":    true,
+		"integration_mode":  "pr",
+		"pull_request_mode": true,
+		"workdir":           repo,
+	})
+	if err := writePRState(runDir, prState{SchemaVersion: 1, Status: "created", PR: "9", Branch: "test/fake-agent", Base: "develop", Title: "Add fake change"}); err != nil {
+		t.Fatal(err)
+	}
+
+	ghDir := t.TempDir()
+	ghLog := filepath.Join(ghDir, "gh.log")
+	writeAlreadyMergedFetchFakeGH(t, ghDir, ghLog)
+	t.Setenv("PATH", ghDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	withWorkingDir(t, repo)
+
+	if _, err := captureStdout(t, func() error {
+		return commandPR(ctx, globals{JSON: true, NoColor: true}, []string{"merge", "--iteration-dir", runDir})
+	}); err != nil {
+		t.Fatalf("loop pr merge should recover already-merged remote state: %v", err)
+	}
+	prState, err := artifactdb.Read(runDir, "pr-state")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(prState, `"status": "merged"`) || !strings.Contains(prState, `"merged_at": "2026-05-20T01:00:00Z"`) {
+		t.Fatalf("pr-state should record recovered merged PR:\n%s", prState)
+	}
+	log := readText(t, ghLog)
+	if !strings.Contains(log, "pr merge 9 --squash") || !strings.Contains(log, "api graphql") {
+		t.Fatalf("expected merge attempt and GraphQL recovery:\n%s", log)
+	}
+}
+
 func TestHelperProcessFakeAgent(t *testing.T) {
 	if os.Getenv("LOOP_TEST_FAKE_AGENT") != "1" {
 		return
@@ -1220,6 +1288,31 @@ echo "$@" >> ` + shellQuote(logPath) + `
 
 if [ "$1" = "pr" ] && [ "$2" = "merge" ]; then
   exit 0
+fi
+
+if [ "$1" = "api" ] && [ "$2" = "graphql" ]; then
+cat <<'JSON'
+{"data":{"repository":{"pullRequest":{"number":9,"url":"https://github.com/acme/app/pull/9","state":"MERGED","title":"Add merge fetch memory","body":"Merge fetch memory body.","updatedAt":"2026-05-20T00:00:00Z","mergedAt":"2026-05-20T01:00:00Z","repository":{"nameWithOwner":"acme/app"}}},"rateLimit":{"remaining":10,"resetAt":"2026-05-20T02:00:00Z","cost":1}}}
+JSON
+  exit 0
+fi
+
+exit 0
+`
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeAlreadyMergedFetchFakeGH(t *testing.T, dir, logPath string) {
+	t.Helper()
+	path := filepath.Join(dir, "gh")
+	script := `#!/bin/sh
+echo "$@" >> ` + shellQuote(logPath) + `
+
+if [ "$1" = "pr" ] && [ "$2" = "merge" ]; then
+  echo "Pull request acme/app#9 was already merged" >&2
+  exit 1
 fi
 
 if [ "$1" = "api" ] && [ "$2" = "graphql" ]; then

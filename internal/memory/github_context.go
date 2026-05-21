@@ -326,11 +326,6 @@ mutation($repositoryId: ID!, $name: String!, $color: String!, $description: Stri
       name
     }
   }
-  rateLimit {
-    remaining
-    resetAt
-    cost
-  }
 }`
 
 type contextSearchRequest struct {
@@ -407,7 +402,6 @@ type graphQLCreateLabelResponse struct {
 		CreateLabel struct {
 			Label graphQLContextLabel `json:"label"`
 		} `json:"createLabel"`
-		RateLimit graphQLRateLimit `json:"rateLimit"`
 	} `json:"data"`
 	Errors []graphQLError `json:"errors"`
 }
@@ -417,7 +411,6 @@ type graphQLCreateIssueResponse struct {
 		CreateIssue struct {
 			Issue graphQLContextNode `json:"issue"`
 		} `json:"createIssue"`
-		RateLimit graphQLRateLimit `json:"rateLimit"`
 	} `json:"data"`
 	Errors []graphQLError `json:"errors"`
 }
@@ -533,9 +526,6 @@ func createLoopLabel(ctx context.Context, runner pr.Runner, repositoryID, name s
 	if err := graphQLErrors(response.Errors); err != nil {
 		return graphQLContextLabel{}, err
 	}
-	if err := checkRateLimit(response.Data.RateLimit, false); err != nil {
-		return graphQLContextLabel{}, err
-	}
 	if response.Data.CreateLabel.Label.ID == "" {
 		return graphQLContextLabel{}, fmt.Errorf("GitHub label %q was not created", name)
 	}
@@ -570,9 +560,6 @@ func createQuestionIssue(ctx context.Context, runner pr.Runner, repositoryID, ti
 		return artifactdb.GitHubContextRecord{}, fmt.Errorf("parse GitHub create issue response: %w", err)
 	}
 	if err := graphQLErrors(response.Errors); err != nil {
-		return artifactdb.GitHubContextRecord{}, err
-	}
-	if err := checkRateLimit(response.Data.RateLimit, false); err != nil {
 		return artifactdb.GitHubContextRecord{}, err
 	}
 	record := issueContextRecordFromGraphQL(response.Data.CreateIssue.Issue, time.Now().UTC().Format(time.RFC3339))
@@ -611,11 +598,6 @@ mutation($repositoryId: ID!, $title: String!, $body: String!) {
       labels(first: 20) { nodes { name } }
       repository { nameWithOwner }
     }
-  }
-  rateLimit {
-    remaining
-    resetAt
-    cost
   }
 }`
 }

@@ -111,9 +111,9 @@ Pull request mode is driven by the agent through `loop pr` commands:
 2. Run `loop pr create` to push the tracked branch and create or reuse the PR.
 3. Run `loop pr checks` to push current commits and wait for checks when configured.
 4. If checks fail, inspect `pr-checks`, fetch logs with `loop pr logs <job-url-or-id>`, repair in the same agent context, commit through `loop commit`, and rerun `loop pr checks`.
-5. Run `loop pr merge` after checks pass. The command runs configured validation, performs a final check wait, and merges through squash merge. The squash commit subject is the generated PR title with the PR number suffix when available, such as `(#123)`.
+5. Run `loop pr merge` after checks pass. The command runs configured validation, performs a final check wait, and merges through squash merge without asking `gh` to perform local branch cleanup. If the host reports failure after the remote PR has already merged, the command verifies the remote PR state and records the merged state locally. The squash commit subject is the generated PR title with the PR number suffix when available, such as `(#123)`.
 6. Write the final result only after `loop pr merge` records `pr-state.status=merged`.
-7. The run loop pulls the base branch and deletes runtime resources after accepting the merged result. When PR branch deletion is enabled, the CLI also attempts to delete the origin head branch and prunes remote-tracking refs so stale `origin/<branch>` refs do not linger locally.
+7. The run loop pulls the base branch and deletes runtime resources after accepting the merged result. When PR branch deletion is enabled, the CLI deletes the origin head branch through Git and prunes remote-tracking refs so stale `origin/<branch>` refs do not linger locally.
 
 Command shape:
 

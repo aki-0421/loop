@@ -86,7 +86,7 @@ loop issue report --title "Improve ..." --body "..." [--kind tool|docs|guardrail
 - After creating an Issue, record the URL in `worklog` and continue TODOs unrelated to that clarification.
 - Do not use Issues for minor local uncertainties that can be resolved from code, tests, docs, or a safe explicit assumption.
 - Use `loop issue report` when you could not inspect, validate, repair, or decide well because the repository is missing a tool, documentation, guardrail, observability signal, environment setup, or workflow affordance.
-- Report capability gaps as concrete improvement proposals with evidence from the current run, the impact on agent work, and a suggested harness or repository change.
+- Write Issue bodies as GitHub-flavored Markdown. For capability reports, use clear sections for evidence from the current run, impact on agent work, and a suggested harness or repository change.
 - Return `blocked` only when no safe independent work remains; include the blocking Issue URL in `--blocked-reason`.
 - If `loop iteration read github-updates` contains Issue or PR updates after a sleep wake cycle, read and apply them before deciding whether to continue or remain blocked.
 

@@ -284,22 +284,49 @@ func commandPRMerge(ctx context.Context, g globals, args []string) error {
 		}
 		defer cleanupBody()
 	}
-	if _, err := runner.Merge(ctx, pr.MergeOptions{PR: state.PR, Subject: state.Title, BodyFile: bodyFile, DeleteBranch: prCtx.cfg.Git.Integration.PR.DeleteBranch}); err != nil {
-		return codedError{6, err}
+	var fetchedPR memory.Record
+	if _, err := runner.Merge(ctx, pr.MergeOptions{PR: state.PR, Subject: state.Title, BodyFile: bodyFile}); err != nil {
+		recovered, recoveryErr := fetchMergedPullRequest(ctx, prCtx, state.PR)
+		if recoveryErr != nil {
+			return codedError{6, fmt.Errorf("%w; also failed to verify whether the pull request was already merged: %v", err, recoveryErr)}
+		}
+		fetchedPR = recovered
+		_ = runstate.AppendEvent(prCtx.paths.Events, runstate.Event{"type": "pr.merge.recovered", "pr": state.PR})
+	} else if record, err := fetchPullRequestAfterMerge(ctx, prCtx, state.PR); err != nil {
+		_ = runstate.AppendEvent(prCtx.paths.Events, runstate.Event{"type": "memory.pr_fetch.failed", "pr": state.PR, "error": err.Error()})
+	} else {
+		fetchedPR = record
 	}
 	state.Status = "merged"
-	state.MergedAt = time.Now().UTC().Format(time.RFC3339)
+	state.MergedAt = firstNonEmpty(fetchedPR.MergedAt, time.Now().UTC().Format(time.RFC3339))
 	if err := writePRState(prCtx.iterDir, state); err != nil {
 		return codedError{1, err}
 	}
-	if _, err := memory.FetchPullRequest(ctx, memory.FetchOptions{
-		WorkDir: prCtx.workDir,
-		RunsDir: filepath.Join(prCtx.root, prCtx.cfg.Logs.Dir),
-		Ref:     state.PR,
-	}); err != nil {
-		_ = runstate.AppendEvent(prCtx.paths.Events, runstate.Event{"type": "memory.pr_fetch.failed", "pr": state.PR, "error": err.Error()})
+	if prCtx.cfg.Git.Integration.PR.DeleteBranch && state.Branch != "" && state.Branch != state.Base {
+		if err := deleteRemoteBranchAfterPRMerge(ctx, gitx.Runner{Dir: prCtx.workDir}, state.Branch); err != nil {
+			_ = runstate.AppendEvent(prCtx.paths.Events, runstate.Event{"type": "pr.remote_branch_cleanup.failed", "branch": state.Branch, "error": err.Error()})
+		}
 	}
 	return printResult(g, map[string]any{"pr": state.PR, "status": state.Status}, fmt.Sprintf("PR merged: %s\n", state.PR))
+}
+
+func fetchPullRequestAfterMerge(ctx context.Context, prCtx prCommandContext, ref string) (memory.Record, error) {
+	return memory.FetchPullRequest(ctx, memory.FetchOptions{
+		WorkDir: prCtx.workDir,
+		RunsDir: filepath.Join(prCtx.root, prCtx.cfg.Logs.Dir),
+		Ref:     ref,
+	})
+}
+
+func fetchMergedPullRequest(ctx context.Context, prCtx prCommandContext, ref string) (memory.Record, error) {
+	record, err := fetchPullRequestAfterMerge(ctx, prCtx, ref)
+	if err != nil {
+		return memory.Record{}, err
+	}
+	if strings.ToLower(strings.TrimSpace(record.State)) != "merged" {
+		return memory.Record{}, fmt.Errorf("pull request %s state is %q, not merged", ref, record.State)
+	}
+	return record, nil
 }
 
 func loadPRCommandContext(ctx context.Context, g globals, subcommand string, args []string, positional int) (prCommandContext, error) {

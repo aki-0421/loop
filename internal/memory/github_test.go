@@ -162,6 +162,17 @@ func TestCreateIssueReportEnsuresLabelsAndStoresProposal(t *testing.T) {
 	}
 }
 
+func TestIssueMutationsDoNotRequestRateLimit(t *testing.T) {
+	for name, query := range map[string]string{
+		"create label": createLabelGraphQL,
+		"create issue": createIssueGraphQL(nil),
+	} {
+		if strings.Contains(query, "rateLimit") {
+			t.Fatalf("%s mutation should not request rateLimit on Mutation:\n%s", name, query)
+		}
+	}
+}
+
 func TestSyncIssuesAndGitHubUpdatesStoreIssueAndPRComments(t *testing.T) {
 	ctx := context.Background()
 	repo := newGitHubMemoryRepo(t)
