@@ -48,11 +48,6 @@ validation:
   agentMayAddCommands: true
   requireRequiredCommandsToPass: true
 
-memory:
-  recentLimit: 30
-  searchLimit: 12
-  compactEvery: 10
-
 logs:
   dir: .loop/runs
   retainRawAgentOutput: true

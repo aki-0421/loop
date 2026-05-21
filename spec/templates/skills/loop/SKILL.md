@@ -62,12 +62,12 @@ pwd
 git status --short --branch
 loop iteration read runtime
 loop iteration read instruction
-loop memory recent --limit 30
 ```
 
 Then:
 
-- If GitHub context memory points to relevant older context, run `loop memory search <query>`.
+- Choose a task-appropriate positive limit and run `loop memory recent --limit <n>`.
+- If GitHub context memory points to relevant older context, run `loop memory search <query> --limit <n>`.
 - If commit history exists, inspect recent commits, usually with `git log --oneline -20`.
 - Inspect only the broad landmarks needed to plan: root files, package directories, README, nearest `AGENTS.md`, docs indexes, package scripts, tests, CI, and validation entry points.
 - Carry forward the goal, branch/mode, validation settings, recent changes, unfinished work, constraints, and assumptions.

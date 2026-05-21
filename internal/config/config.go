@@ -26,7 +26,6 @@ type Config struct {
 	Skills     SkillsConfig     `yaml:"skills" json:"skills"`
 	Git        GitConfig        `yaml:"git" json:"git"`
 	Validation ValidationConfig `yaml:"validation" json:"validation"`
-	Memory     MemoryConfig     `yaml:"memory" json:"memory"`
 	Logs       LogsConfig       `yaml:"logs" json:"logs"`
 	NoColor    bool             `yaml:"-" json:"-"`
 }
@@ -103,12 +102,6 @@ type ValidationCommand struct {
 	Name     string `yaml:"name" json:"name"`
 	Run      string `yaml:"run" json:"run"`
 	Required bool   `yaml:"required" json:"required"`
-}
-
-type MemoryConfig struct {
-	RecentLimit  int `yaml:"recentLimit" json:"recentLimit"`
-	SearchLimit  int `yaml:"searchLimit" json:"searchLimit"`
-	CompactEvery int `yaml:"compactEvery" json:"compactEvery"`
 }
 
 type LogsConfig struct {
@@ -293,9 +286,6 @@ func Validate(cfg Config) error {
 	}
 	if cfg.Git.Integration.PR.ChecksWatchTimeoutSeconds <= 0 {
 		errs = append(errs, "git.integration.pr.checksWatchTimeoutSeconds must be positive")
-	}
-	if cfg.Memory.RecentLimit < 0 || cfg.Memory.SearchLimit < 0 {
-		errs = append(errs, "memory limits must be non-negative")
 	}
 	if cfg.Logs.Dir == "" {
 		errs = append(errs, "logs.dir is required")

@@ -150,10 +150,6 @@
       "type": "object",
       "additionalProperties": true
     },
-    "memory": {
-      "type": "object",
-      "additionalProperties": true
-    },
     "logs": {
       "type": "object",
       "additionalProperties": true

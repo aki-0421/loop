@@ -1035,15 +1035,22 @@ func commandMemory(ctx context.Context, g globals, args []string) error {
 	if err != nil {
 		return codedError{1, err}
 	}
-	cfg, _ := config.Load(config.LoadOptions{CWD: root, ConfigPath: g.ConfigPath, Overrides: config.Overrides{Agent: g.Agent}})
+	cfg, err := config.Load(config.LoadOptions{CWD: root, ConfigPath: g.ConfigPath, Overrides: config.Overrides{Agent: g.Agent}})
+	if err != nil {
+		return codedError{3, err}
+	}
 	runsDir := filepath.Join(root, cfg.Logs.Dir)
 	switch args[0] {
 	case "recent":
+		recentArgs := flagsFirst(args[1:], map[string]bool{"run": true, "repo": true, "limit": true})
 		fs := flag.NewFlagSet("memory recent", flag.ContinueOnError)
 		run := fs.String("run", "", "deprecated; ignored")
 		repo := fs.String("repo", "", "GitHub owner/name")
-		limit := fs.Int("limit", cfg.Memory.RecentLimit, "limit")
-		if err := fs.Parse(args[1:]); err != nil {
+		limit := fs.Int("limit", 0, "limit")
+		if err := fs.Parse(recentArgs); err != nil {
+			return codedError{2, err}
+		}
+		if err := requireLimitFlag(fs, limit); err != nil {
 			return codedError{2, err}
 		}
 		_ = run
@@ -1055,13 +1062,19 @@ func commandMemory(ctx context.Context, g globals, args []string) error {
 			fmt.Println(formatMemoryRecord(item))
 		}
 	case "search":
+		searchArgs := flagsFirst(args[1:], map[string]bool{
+			"run": true, "iteration": true, "artifact": true, "repo": true, "limit": true,
+		})
 		fs := flag.NewFlagSet("memory search", flag.ContinueOnError)
 		run := fs.String("run", "", "deprecated; ignored")
 		iteration := fs.String("iteration", "", "deprecated; ignored")
 		artifact := fs.String("artifact", "", "deprecated; ignored")
 		repo := fs.String("repo", "", "GitHub owner/name")
-		limit := fs.Int("limit", cfg.Memory.SearchLimit, "limit")
-		if err := fs.Parse(args[1:]); err != nil {
+		limit := fs.Int("limit", 0, "limit")
+		if err := fs.Parse(searchArgs); err != nil {
+			return codedError{2, err}
+		}
+		if err := requireLimitFlag(fs, limit); err != nil {
 			return codedError{2, err}
 		}
 		if fs.NArg() != 1 {
@@ -1081,6 +1094,22 @@ func commandMemory(ctx context.Context, g globals, args []string) error {
 		}
 	default:
 		return codedError{2, fmt.Errorf("unknown memory subcommand %q", args[0])}
+	}
+	return nil
+}
+
+func requireLimitFlag(fs *flag.FlagSet, limit *int) error {
+	seen := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "limit" {
+			seen = true
+		}
+	})
+	if !seen {
+		return errors.New("--limit is required")
+	}
+	if limit == nil || *limit <= 0 {
+		return errors.New("--limit must be positive")
 	}
 	return nil
 }

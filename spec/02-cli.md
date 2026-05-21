@@ -268,11 +268,11 @@ Rules:
 Inspect cached GitHub PR, Issue, and comment context.
 
 ```bash
-loop memory recent [--repo <owner/name>] [--limit 30]
-loop memory search <query> [--repo <owner/name>] [--limit <n>]
+loop memory recent --limit <n> [--repo <owner/name>]
+loop memory search <query> --limit <n> [--repo <owner/name>]
 ```
 
-`recent` returns recent cached GitHub context records. `search` returns matching PR title/body, Issue title/body, and comment excerpts from the local `.loop/loop.db` cache without performing network access. Output includes kind (`pr`, `issue`, `issue-comment`, or `pr-comment`), number, state, repository, title, URL, and excerpt. Memory refresh is automatic during `loop run` and after successful `loop pr merge`; there is no manual memory refresh command.
+`recent` returns recent cached GitHub context records. `search` returns matching PR title/body, Issue title/body, and comment excerpts from the local `.loop/loop.db` cache without performing network access. Agents choose an explicit positive `--limit` for the current task; omitting it is an error. Output includes kind (`pr`, `issue`, `issue-comment`, or `pr-comment`), number, state, repository, title, URL, and excerpt. Memory refresh is automatic during `loop run` and after successful `loop pr merge`; there is no manual memory refresh command.
 
 ## `loop doctor`
 
