@@ -51,16 +51,27 @@ errors.log        # only on non-successful phases
 
 ```json
 {"type":"agent.started","ts":"2026-05-17T00:00:00Z","command":"codex"}
+{"type":"agent.usage","ts":"2026-05-17T00:00:00Z","input_tokens":1200,"output_tokens":45,"cache_read_tokens":300,"cache_creation_tokens":0,"delta":true}
 {"type":"agent.command","ts":"2026-05-17T00:00:01Z","command":"make test"}
 {"type":"agent.file_read","ts":"2026-05-17T00:00:02Z","path":"internal/cli/renderer.go"}
 {"type":"agent.exited","exit_code":0}
 ```
+
+`agent.usage` is the canonical usage accounting event. Adapters should emit it whenever they can normalize model-reported token usage. `input_tokens` and `output_tokens` are required when known. `cache_read_tokens`, `cache_creation_tokens`, `reasoning_output_tokens`, and `total_tokens` are optional metadata. `delta=true` means the event is an increment to add to the current iteration total. When `delta` is absent or false, the event is a snapshot relative to the current agent process; renderers and summaries must combine it with the usage baseline captured at `agent.started`. `estimated=true` marks heuristic usage.
+
+The built-in process adapter recognizes these provider streams without reading provider-owned session files:
+
+- Codex `exec --json` `turn.completed.usage` events as usage deltas.
+- Codex `token_count.info.total_token_usage` events as usage snapshots.
+- Claude Code `--output-format stream-json` `result.usage` events as final usage snapshots.
 
 Raw agent transcripts are not persisted. File contents, diffs, and thinking text may be shown transiently by the renderer after filtering, but must not be written to disk. `agent.stdout.log`, `agent.stderr.log`, and `agent-exit.json` are not created.
 
 ## Result handoff contract
 
 The agent writes the master-DB terminal handoff with `loop iteration close --merge` or `loop iteration close --skip-merge`. The CLI validates it against the iteration close contract in `09-json-contracts.md`.
+
+After a valid terminal handoff is observed, the CLI records the handoff but does not signal or cancel the agent. It waits for the agent process to finish by itself and continues draining stdout/stderr until that natural exit, so final provider events, especially usage events, can be recorded. External cancellations such as Ctrl+C still terminate the process through the normal cancellation path.
 
 If the terminal handoff is missing or invalid, the run fails the iteration contract. The CLI does not relaunch the agent for correction.
 

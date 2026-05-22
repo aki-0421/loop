@@ -12,6 +12,11 @@ agent:
       args: [exec, --json]
       prompt: stdin
       env: {}
+    claude:
+      command: claude
+      args: [-p, "{prompt}", --verbose, --output-format, stream-json, --dangerously-skip-permissions]
+      prompt: arg
+      env: {}
 
 run:
   maxIterations: 0

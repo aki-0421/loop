@@ -2,13 +2,10 @@ package agent
 
 import (
 	"context"
-	"errors"
 	"time"
 
 	"github.com/aki-0421/loop/internal/runstate"
 )
-
-var ErrResultReceived = errors.New("agent stopped after result handoff")
 
 type AgentAdapter interface {
 	Name() string

@@ -2,8 +2,17 @@
 
 package agent
 
-import "os/exec"
+import (
+	"os"
+	"os/exec"
+)
 
 func configureCommandCancel(cmd *exec.Cmd) {
-	_ = cmd
+	cmd.WaitDelay = processCancelWaitDelay
+	cmd.Cancel = func() error {
+		if cmd.Process == nil {
+			return os.ErrProcessDone
+		}
+		return cmd.Process.Kill()
+	}
 }

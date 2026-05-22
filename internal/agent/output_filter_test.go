@@ -23,6 +23,27 @@ func TestSummarizeAgentOutputExtractsCodexUsage(t *testing.T) {
 	}
 }
 
+func TestSummarizeAgentOutputExtractsCodexTokenCount(t *testing.T) {
+	summary := summarizeAgentOutput("stdout", `{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1200,"cached_input_tokens":300,"output_tokens":45,"reasoning_output_tokens":10,"total_tokens":1245},"last_token_usage":{"input_tokens":100,"cached_input_tokens":20,"output_tokens":5,"reasoning_output_tokens":1,"total_tokens":105},"model_context_window":258400}}}`)
+
+	if len(summary.AuditEvents) != 1 {
+		t.Fatalf("events = %#v, want one usage event", summary.AuditEvents)
+	}
+	event := summary.AuditEvents[0]
+	if event["type"] != "agent.usage" {
+		t.Fatalf("event type = %v, want agent.usage", event["type"])
+	}
+	if event["input_tokens"] != 1200 || event["output_tokens"] != 45 || event["cache_read_tokens"] != 300 {
+		t.Fatalf("unexpected token usage event: %#v", event)
+	}
+	if event["total_tokens"] != 1245 || event["reasoning_output_tokens"] != 10 {
+		t.Fatalf("unexpected token usage metadata: %#v", event)
+	}
+	if event["delta"] == true {
+		t.Fatalf("codex token_count usage should be emitted as a snapshot: %#v", event)
+	}
+}
+
 func TestSummarizeAgentOutputExtractsClaudeResultUsage(t *testing.T) {
 	summary := summarizeAgentOutput("stdout", `{"type":"result","usage":{"input_tokens":7,"cache_read_input_tokens":3,"cache_creation_input_tokens":2,"output_tokens":5}}`)
 

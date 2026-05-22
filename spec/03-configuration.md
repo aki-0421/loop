@@ -54,7 +54,14 @@ JSON keys and contract values are always English identifiers.
 
 ## `agent`
 
-`agent.default` is `codex`. Each adapter defines a command, arguments, prompt passing mode, and environment. The built-in Codex adapter uses `codex exec --json` because `loop` invokes agents non-interactively and consumes structured audit events.
+`agent.default` is `codex`. Each adapter defines a command, arguments, prompt passing mode, and environment. The built-in Codex adapter uses `codex exec --json` because `loop` invokes agents non-interactively and consumes structured audit events. The built-in Claude Code adapter uses `claude -p {prompt} --verbose --output-format stream-json --dangerously-skip-permissions` so Claude Code result usage can be normalized into `agent.usage`.
+
+Built-in known adapters:
+
+| Adapter | Command shape | Usage source |
+| --- | --- | --- |
+| `codex` | `codex exec --json` | `turn.completed.usage` deltas and `token_count.info.total_token_usage` snapshots |
+| `claude` | `claude -p {prompt} --verbose --output-format stream-json --dangerously-skip-permissions` | `result.usage` snapshots |
 
 Prompt passing modes:
 

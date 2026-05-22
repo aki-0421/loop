@@ -876,6 +876,11 @@ func runTestFakeAgent() int {
 	case "skip_merge":
 		writeTestFakeResult(iterDir, "skip_merge", nil)
 		return 0
+	case "usage_after_result":
+		writeTestFakeResult(iterDir, "skip_merge", nil)
+		time.Sleep(100 * time.Millisecond)
+		fmt.Println(`{"type":"turn.completed","usage":{"input_tokens":26985,"cached_input_tokens":3456,"output_tokens":26,"reasoning_output_tokens":19}}`)
+		return 0
 	case "validation_fix":
 		workDir := getenvForTestAgent("LOOP_WORKDIR", ".")
 		_ = commandBranch(context.Background(), globals{}, []string{"rename", "test/fake-agent"})

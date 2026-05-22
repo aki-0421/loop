@@ -143,6 +143,38 @@ func TestProcessAdapterBuildsCommandEventFromLifecycleWithDuration(t *testing.T)
 	}
 }
 
+func TestProcessAdapterPersistsUsageEvents(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell command uses sh")
+	}
+	dir := t.TempDir()
+	adapter := ProcessAdapter{
+		AdapterName: "test",
+		Command:     "sh",
+		Args: []string{"-c", strings.Join([]string{
+			"cat >/dev/null",
+			"printf '%s\\n' '{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":1200,\"cached_input_tokens\":300,\"output_tokens\":45}}'",
+		}, "; ")},
+		PromptMode: PromptStdin,
+	}
+	_, err := adapter.Run(context.Background(), RunRequest{
+		WorkDir:      dir,
+		PromptText:   "prompt",
+		IterationDir: dir,
+		EventLogPath: filepath.Join(dir, "agent-events.jsonl"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "agent-events.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"type":"agent.usage"`) || !strings.Contains(string(data), `"input_tokens":1200`) {
+		t.Fatalf("usage event was not persisted:\n%s", data)
+	}
+}
+
 func TestProcessAdapterCancelsProcessGroup(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell command uses sh")

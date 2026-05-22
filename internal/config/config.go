@@ -431,6 +431,7 @@ func normalize(c *Config) {
 	}
 	for name, a := range c.Agent.Adapters {
 		a = normalizeCodexAdapter(a)
+		a = normalizeClaudeAdapter(a)
 		if a.Prompt == "" {
 			a.Prompt = "stdin"
 		}
@@ -461,6 +462,16 @@ func normalizeCodexAdapter(a AdapterConfig) AdapterConfig {
 	if codexExecSubcommand(a.Args) && !hasArg(a.Args, "--json") {
 		a.Args = append([]string{a.Args[0], "--json"}, a.Args[1:]...)
 	}
+	return a
+}
+
+func normalizeClaudeAdapter(a AdapterConfig) AdapterConfig {
+	command := strings.TrimSuffix(strings.ToLower(filepath.Base(a.Command)), ".exe")
+	if command != "claude" || len(a.Args) > 0 {
+		return a
+	}
+	a.Args = []string{"-p", "{prompt}", "--verbose", "--output-format", "stream-json", "--dangerously-skip-permissions"}
+	a.Prompt = "arg"
 	return a
 }
 
