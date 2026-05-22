@@ -15,6 +15,8 @@ All repository content must be written in English. This includes documentation, 
 
 Agents working in this repository should follow the existing Go implementation, specifications, and Makefile structure. Keep changes scoped to the requested work and avoid unrelated refactors or generated-file churn.
 
+Use [README.md](README.md) and the [specification index](spec/00-index.md) as the starting points for repository documentation navigation.
+
 ## Development Commands
 
 Use `make` as the entry point for development commands. Do not run `go test` or `go build` directly by default; prefer these Make targets:

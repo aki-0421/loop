@@ -26,6 +26,7 @@ type Config struct {
 	Skills     SkillsConfig     `yaml:"skills" json:"skills"`
 	Git        GitConfig        `yaml:"git" json:"git"`
 	Validation ValidationConfig `yaml:"validation" json:"validation"`
+	Linter     LinterConfig     `yaml:"linter" json:"linter"`
 	Logs       LogsConfig       `yaml:"logs" json:"logs"`
 	NoColor    bool             `yaml:"-" json:"-"`
 }
@@ -101,6 +102,16 @@ type ValidationCommand struct {
 	Name     string `yaml:"name" json:"name"`
 	Run      string `yaml:"run" json:"run"`
 	Required bool   `yaml:"required" json:"required"`
+}
+
+type LinterConfig struct {
+	Document DocumentLinterConfig `yaml:"document" json:"document"`
+}
+
+type DocumentLinterConfig struct {
+	Entry             string   `yaml:"entry" json:"entry"`
+	RequiredReachable []string `yaml:"requiredReachable" json:"requiredReachable"`
+	Excludes          []string `yaml:"excludes" json:"excludes"`
 }
 
 type LogsConfig struct {
@@ -448,6 +459,12 @@ func normalize(c *Config) {
 	}
 	if c.Validation.Commands == nil {
 		c.Validation.Commands = []ValidationCommand{}
+	}
+	if c.Linter.Document.RequiredReachable == nil {
+		c.Linter.Document.RequiredReachable = []string{}
+	}
+	if c.Linter.Document.Excludes == nil {
+		c.Linter.Document.Excludes = []string{}
 	}
 }
 

@@ -137,6 +137,18 @@ Each command has:
 
 Validation commands use the user's default shell instead of hard-coded `sh` where possible. On Unix, the CLI reads `SHELL`; zsh, bash, fish, ksh, and csh-family shells run as login command shells, `nu` runs with `-l -c`, PowerShell-compatible shells run with `-Command`, and other shells run with `-c`. If `SHELL` is empty, the CLI falls back to `sh -c`. On Windows, the CLI uses `COMSPEC /C`, falling back to `cmd /C`.
 
+## `linter.document`
+
+Document linter settings control `loop linter document`.
+
+| Field | Built-in value | Behavior |
+| --- | --- | --- |
+| `entry` | `AGENTS.md` | Root-level Markdown file used as the graph traversal start. |
+| `requiredReachable` | `["docs"]` | Markdown files that must be reachable from `entry`; items may be files, path prefixes, or globs. |
+| `excludes` | `["README.md"]` | Files removed from scan, required-reachable, and invalid-reference checks; items may be files, path prefixes, or globs. |
+
+Any path segment named `skills` is always excluded by the document linter.
+
 ## Environment variables
 
 | Variable | Behavior |

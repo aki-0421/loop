@@ -751,6 +751,24 @@ func allHelpCommands() []helpCommand {
 			AgentOnly: true,
 		},
 		{
+			Path:        []string{"linter"},
+			Usage:       "loop linter <document>",
+			Summary:     "Run repository linters",
+			Description: "Repository linter commands.",
+			Agent:       true,
+		},
+		{
+			Path:        []string{"linter", "document"},
+			Usage:       "loop linter document [--strict] [--config <path>]",
+			Summary:     "Find unreachable required markdown documents and invalid markdown path references",
+			Description: "Reads linter.document config, follows local markdown path references from its entry file, and reports required markdown documents that cannot be reached. By default findings are warnings; --strict exits non-zero when findings are present.",
+			Flags: []helpFlag{
+				{Name: "--strict", Description: "exit non-zero when document findings are found", Default: "false"},
+				{Name: "--config <path>", Description: "load linter settings from a loop config file", Default: ".loop/config.yaml"},
+			},
+			Agent: true,
+		},
+		{
 			Path:    []string{"skills"},
 			Usage:   "loop skills <list|install|sync|doctor>",
 			Summary: "Manage repository skills",

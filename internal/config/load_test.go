@@ -71,6 +71,15 @@ run:
 	if cfg.Git.Integration.PR.ChecksWatchTimeoutSeconds != 3600 {
 		t.Fatalf("default checks watch timeout = %d, want 3600", cfg.Git.Integration.PR.ChecksWatchTimeoutSeconds)
 	}
+	if cfg.Linter.Document.Entry != "AGENTS.md" {
+		t.Fatalf("default document linter entry = %q, want AGENTS.md", cfg.Linter.Document.Entry)
+	}
+	if strings.Join(cfg.Linter.Document.RequiredReachable, ",") != "docs" {
+		t.Fatalf("default required reachable = %#v", cfg.Linter.Document.RequiredReachable)
+	}
+	if strings.Join(cfg.Linter.Document.Excludes, ",") != "README.md" {
+		t.Fatalf("default document excludes = %#v", cfg.Linter.Document.Excludes)
+	}
 }
 
 func TestLoopConfigEnvOverridesUserPath(t *testing.T) {
