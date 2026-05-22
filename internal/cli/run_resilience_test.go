@@ -239,6 +239,28 @@ func TestRunFailsWhenResultHandoffIsInvalid(t *testing.T) {
 	}
 }
 
+func TestRunRecordsUsageEmittedAfterResultHandoff(t *testing.T) {
+	ctx := context.Background()
+	repo := newCleanupRepo(t)
+	writeResilienceFixture(t, repo, resilienceOptions{
+		Sequence:      "usage_after_result",
+		MaxIterations: 1,
+	})
+	withWorkingDir(t, repo)
+
+	if _, err := captureStdout(t, func() error {
+		return commandRun(ctx, globals{Agent: "resilience", JSON: true, NoColor: true}, []string{"task.md"})
+	}); err != nil {
+		t.Fatalf("loop run: %v", err)
+	}
+
+	iterDir := latestIterationDir(t, repo, "0001")
+	events := readText(t, filepath.Join(iterDir, "agent-events.jsonl"))
+	if !strings.Contains(events, `"type":"agent.usage"`) || !strings.Contains(events, `"input_tokens":26985`) {
+		t.Fatalf("agent usage emitted after result handoff was not captured:\n%s", events)
+	}
+}
+
 func TestRunSkipsMergeOnConfiguredValidationFailure(t *testing.T) {
 	ctx := context.Background()
 	repo := newCleanupRepo(t)

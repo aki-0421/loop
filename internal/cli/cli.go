@@ -1847,17 +1847,22 @@ func runAgentUntilResult(ctx context.Context, cfg config.Config, workDir string,
 
 	ticker := time.NewTicker(resultHandoffPollInterval)
 	defer ticker.Stop()
+	tickerC := ticker.C
+	var handoffResult *validation.IterationResult
 	for {
 		select {
 		case agentErr := <-done:
+			if handoffResult != nil {
+				return handoffResult, agentErr, nil
+			}
 			result, resultErr := validateResultHandoff(ctx, workDir, paths, globalPath)
 			return result, agentErr, resultErr
-		case <-ticker.C:
+		case <-tickerC:
 			result, resultErr := validateResultHandoff(ctx, workDir, paths, globalPath)
 			if resultErr == nil {
-				cancel(agent.ErrResultReceived)
-				agentErr := <-done
-				return result, agentErr, nil
+				handoffResult = result
+				ticker.Stop()
+				tickerC = nil
 			}
 		case <-ctx.Done():
 			cancel(ctx.Err())

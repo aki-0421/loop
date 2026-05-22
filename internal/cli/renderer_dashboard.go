@@ -498,6 +498,9 @@ func renderPlainStatusSnapshot(s rendererSnapshot, width, height int) []string {
 		truncateDisplay(current, width),
 	}
 	if height > 2 {
+		lines = append(lines, fmt.Sprintf("tokens: %s in, %s out", formatTokenCount(s.InputTokens, s.TokensEstimated), formatTokenCount(s.OutputTokens, s.TokensEstimated)))
+	}
+	if height > 3 {
 		done, total := todoProgress(s.Todos)
 		if total > 0 {
 			lines = append(lines, fmt.Sprintf("todo: %d/%d done", done, total))

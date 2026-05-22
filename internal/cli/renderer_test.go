@@ -26,6 +26,25 @@ func TestRunRendererLineModePrintsAuditCommand(t *testing.T) {
 	}
 }
 
+func TestRunRendererLineModePrintsTokenUsage(t *testing.T) {
+	var out bytes.Buffer
+	renderer := &runRenderer{
+		enabled:     true,
+		interactive: false,
+		writer:      &out,
+		started:     time.Now(),
+		done:        make(chan struct{}),
+	}
+
+	renderer.AgentEvent(runstate.Event{"type": "agent.started", "command": "codex"})
+	renderer.AgentEvent(runstate.Event{"type": "agent.usage", "input_tokens": 26985, "output_tokens": 26, "delta": true})
+
+	got := out.String()
+	if !strings.Contains(got, "usage") || !strings.Contains(got, "27K in, 26 out") {
+		t.Fatalf("line renderer should print token usage: %q", got)
+	}
+}
+
 func TestRunRendererShowsInitialMemoryFetch(t *testing.T) {
 	t.Setenv("LOOP_ASCII", "1")
 	var out bytes.Buffer

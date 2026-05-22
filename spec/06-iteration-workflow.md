@@ -43,13 +43,14 @@ During `loop run`, the CLI renders live progress to stderr unless JSON output is
 
 - run id, agent, base branch, and log path;
 - current stage, elapsed time, and iteration count;
+- normalized token usage when the selected agent reports it;
 - the current open TODO from the `todo` artifact;
 - recent safe agent activity such as command execution, file reads, and short thinking/status messages;
 - terminal title updates when the terminal supports them.
 
 The renderer adapts to terminal dimensions. Compact screens show status and the current task only; larger screens include logs path, command, TODO details, and recent activity.
 
-Persistent logs are audit logs only. `agent-events.jsonl` must not store raw file contents, raw diffs, or agent thinking text. It stores command executions and file-read paths as each audit event is observed and flushed. `errors.log` is created only when a non-successful agent, process, or validation phase needs diagnostics.
+Persistent logs are audit logs only. `agent-events.jsonl` must not store raw file contents, raw diffs, or agent thinking text. It stores command executions, file-read paths, and normalized usage metadata as each audit event is observed and flushed. `errors.log` is created only when a non-successful agent, process, or validation phase needs diagnostics.
 
 ## Branch creation
 
@@ -117,6 +118,8 @@ The agent first uses the plan to select the review slice, then manages TODOs one
 ## Close handling
 
 The CLI validates the master-DB terminal handoff and decides the next action. After either terminal action, the CLI deletes the Go temp directory that contains disposable active-work files such as `runtime.json`, `plan.md`, `todo.md`, validation output, PR text, and prompt-audit files. It preserves `prompt.md`, `effective-config.yaml`, `agent-events.jsonl`, `errors.log`, PR lifecycle diagnostics, GitHub update diffs, and run state in the durable iteration directory.
+
+When a valid terminal handoff appears while the agent process is still running, the CLI waits for the agent to finish by itself and drains the process streams before cleanup. This drain is part of the audit contract: Codex and Claude Code often emit final usage only after the terminal action has completed. The drain must not read provider-owned session files or other external logs.
 
 | Close action | Meaning | CLI action |
 | --- | --- | --- |

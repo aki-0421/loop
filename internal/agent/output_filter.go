@@ -275,8 +275,14 @@ func fileReadEvent(path string) runstate.Event {
 }
 
 func usageEventFromJSONObject(obj map[string]any, parentKey, ownerType string) (runstate.Event, bool) {
+	if event, ok := codexTokenCountUsageEvent(obj); ok {
+		return event, true
+	}
 	lowerOwner := strings.ToLower(ownerType)
-	isUsageObject := oneOfString(parentKey, "usage", "token_usage", "tokens") ||
+	if lowerOwner == "token_count" {
+		return nil, false
+	}
+	isUsageObject := oneOfString(parentKey, "usage", "token_usage", "tokens", "tokenUsage", "total_token_usage", "totalTokenUsage") ||
 		strings.Contains(lowerOwner, "usage") ||
 		lowerOwner == "turn.completed" ||
 		lowerOwner == "assistant" ||
@@ -286,6 +292,39 @@ func usageEventFromJSONObject(obj map[string]any, parentKey, ownerType string) (
 		return nil, false
 	}
 
+	event, ok := tokenUsageEventFromFields(obj)
+	if !ok {
+		return nil, false
+	}
+	if strings.Contains(lowerOwner, "turn.completed") || strings.Contains(lowerOwner, "request-usage") {
+		event["delta"] = true
+	}
+	if estimated, ok := boolField(obj, "estimated"); ok {
+		event["estimated"] = estimated
+	}
+	return event, true
+}
+
+func codexTokenCountUsageEvent(obj map[string]any) (runstate.Event, bool) {
+	typ, ok := stringField(obj, "type")
+	if !ok || strings.ToLower(typ) != "token_count" {
+		return nil, false
+	}
+	info, ok := obj["info"].(map[string]any)
+	if !ok {
+		return nil, false
+	}
+	for _, key := range []string{"total_token_usage", "totalTokenUsage", "token_usage", "tokenUsage"} {
+		fields, ok := info[key].(map[string]any)
+		if !ok {
+			continue
+		}
+		return tokenUsageEventFromFields(fields)
+	}
+	return nil, false
+}
+
+func tokenUsageEventFromFields(obj map[string]any) (runstate.Event, bool) {
 	input, hasInput, inputName := numberFieldAny(obj, []string{
 		"inputTokens", "input_tokens", "promptTokens", "prompt_tokens", "input",
 	})
@@ -317,11 +356,11 @@ func usageEventFromJSONObject(obj map[string]any, parentKey, ownerType string) (
 		"cache_read_tokens":     cacheRead,
 		"cache_creation_tokens": cacheCreation,
 	}
-	if strings.Contains(lowerOwner, "turn.completed") || strings.Contains(lowerOwner, "request-usage") {
-		event["delta"] = true
+	if total, ok, _ := numberFieldAny(obj, []string{"totalTokens", "total_tokens"}); ok {
+		event["total_tokens"] = total
 	}
-	if estimated, ok := boolField(obj, "estimated"); ok {
-		event["estimated"] = estimated
+	if reasoning, ok, _ := numberFieldAny(obj, []string{"reasoningOutputTokens", "reasoning_output_tokens"}); ok {
+		event["reasoning_output_tokens"] = reasoning
 	}
 	return event, true
 }
@@ -393,7 +432,9 @@ func dedupeAuditEvents(events []runstate.Event) []runstate.Event {
 		key := fmt.Sprint(event["type"]) + "\x00" + fmt.Sprint(event["command"]) + "\x00" + fmt.Sprint(event["path"]) +
 			"\x00" + fmt.Sprint(event["phase"]) + "\x00" + fmt.Sprint(event["item_id"]) + "\x00" + fmt.Sprint(event["status"]) +
 			"\x00" + fmt.Sprint(event["exit_code"]) + "\x00" + fmt.Sprint(event["input_tokens"]) + "\x00" + fmt.Sprint(event["output_tokens"]) +
-			"\x00" + fmt.Sprint(event["delta"])
+			"\x00" + fmt.Sprint(event["cache_read_tokens"]) + "\x00" + fmt.Sprint(event["cache_creation_tokens"]) +
+			"\x00" + fmt.Sprint(event["reasoning_output_tokens"]) + "\x00" + fmt.Sprint(event["total_tokens"]) +
+			"\x00" + fmt.Sprint(event["delta"]) + "\x00" + fmt.Sprint(event["estimated"])
 		if seen[key] {
 			continue
 		}

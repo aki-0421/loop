@@ -171,6 +171,41 @@ agent:
 	}
 }
 
+func TestClaudeAdapterUsesNonInteractiveStreamJSON(t *testing.T) {
+	cfg, err := Default()
+	if err != nil {
+		t.Fatal(err)
+	}
+	claude := cfg.Agent.Adapters["claude"]
+	want := []string{"-p", "{prompt}", "--verbose", "--output-format", "stream-json", "--dangerously-skip-permissions"}
+	if claude.Prompt != "arg" {
+		t.Fatalf("default claude prompt = %q, want arg", claude.Prompt)
+	}
+	if strings.Join(claude.Args, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("default claude args = %#v, want %#v", claude.Args, want)
+	}
+
+	repo := t.TempDir()
+	mustWrite(t, filepath.Join(repo, ".loop", "config.yaml"), `version: 1
+agent:
+  default: claude
+  adapters:
+    claude:
+      command: claude
+`)
+	cfg, err = Load(LoadOptions{CWD: repo, Env: []string{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claude = cfg.Agent.Adapters["claude"]
+	if claude.Prompt != "arg" {
+		t.Fatalf("normalized claude prompt = %q, want arg", claude.Prompt)
+	}
+	if strings.Join(claude.Args, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("normalized claude args = %#v, want %#v", claude.Args, want)
+	}
+}
+
 func TestLoadRejectsUnknownAndInvalidValues(t *testing.T) {
 	repo := t.TempDir()
 	t.Setenv("HOME", repo)

@@ -218,7 +218,12 @@ func (r *runRenderer) AgentEvent(event runstate.Event) {
 		r.setAgentCommand(strings.TrimSpace(cmd + " " + args))
 		r.addEvent("active", "Agent Started", "adapter process launched")
 	case "agent.usage":
-		r.applyTokenUsage(event)
+		if r.applyTokenUsage(event) {
+			r.addEvent("active", "Usage", r.tokenUsageLine())
+			if !r.interactive {
+				r.line("usage", r.tokenUsageLine())
+			}
+		}
 	case "agent.stream":
 		text, _ := event["text"].(string)
 		if text != "" {
@@ -447,15 +452,18 @@ func (r *runRenderer) startAgentUsageWindow() {
 	r.mu.Unlock()
 }
 
-func (r *runRenderer) applyTokenUsage(event runstate.Event) {
+func (r *runRenderer) applyTokenUsage(event runstate.Event) bool {
 	input, hasInput := intEventField(event, "input_tokens")
 	output, hasOutput := intEventField(event, "output_tokens")
 	if !hasInput && !hasOutput {
-		return
+		return false
 	}
 	delta, _ := event["delta"].(bool)
 	estimated, _ := event["estimated"].(bool)
 	r.mu.Lock()
+	beforeInput := r.inputTokens
+	beforeOutput := r.outputTokens
+	beforeEstimated := r.tokensEstimated
 	if delta {
 		r.inputTokens += maxInt(0, input)
 		r.outputTokens += maxInt(0, output)
@@ -476,7 +484,15 @@ func (r *runRenderer) applyTokenUsage(event runstate.Event) {
 	if estimated {
 		r.tokensEstimated = true
 	}
+	changed := r.inputTokens != beforeInput || r.outputTokens != beforeOutput || r.tokensEstimated != beforeEstimated
 	r.mu.Unlock()
+	return changed
+}
+
+func (r *runRenderer) tokenUsageLine() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return fmt.Sprintf("%s in, %s out", formatTokenCount(r.inputTokens, r.tokensEstimated), formatTokenCount(r.outputTokens, r.tokensEstimated))
 }
 
 func (r *runRenderer) setAgentCommand(command string) {

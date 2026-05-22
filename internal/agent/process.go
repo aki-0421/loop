@@ -21,6 +21,8 @@ const (
 	PromptArg   PromptMode = "arg"
 )
 
+const processCancelWaitDelay = 10 * time.Second
+
 type ProcessAdapter struct {
 	AdapterName string
 	Command     string
@@ -102,10 +104,6 @@ func (a ProcessAdapter) Run(ctx context.Context, req RunRequest) (*RunResult, er
 		}
 		if ctx.Err() == context.DeadlineExceeded {
 			waitErr = ctx.Err()
-		}
-		if errors.Is(context.Cause(ctx), ErrResultReceived) {
-			waitErr = nil
-			exitCode = 0
 		}
 	}
 	finished := time.Now().UTC()
