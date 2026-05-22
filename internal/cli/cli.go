@@ -117,6 +117,8 @@ func Run(args []string) error {
 		return commandSkills(ctx, g, rest[1:])
 	case "memory":
 		return commandMemory(ctx, g, rest[1:])
+	case "linter":
+		return commandLinter(ctx, g, rest[1:])
 	case "doctor":
 		return commandDoctor(ctx, g, rest[1:])
 	default:

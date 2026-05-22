@@ -121,6 +121,7 @@ Human-facing commands:
 | --- | --- |
 | `loop init` | Create repository-local config and install the default skill. |
 | `loop run <instruction.md>` | Run one or more automated coding iterations. |
+| `loop linter document` | Warn about unreachable required Markdown docs and invalid Markdown path references. |
 | `loop version` | Print build version, commit, and date. |
 
 Agent-facing commands are included in the compact agent help:
@@ -220,3 +221,4 @@ make release-snapshot
 - [Git and PR workflow](spec/07-git-and-pr.md)
 - [Memory and logs](spec/08-memory-and-logs.md)
 - [Go implementation notes](spec/13-go-implementation.md)
+- [Pull request template](.github/PULL_REQUEST_TEMPLATE.md)
