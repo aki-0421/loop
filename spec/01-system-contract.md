@@ -6,24 +6,28 @@
 
 1. Read a persistent Markdown instruction file.
 2. Load recent GitHub PR, Issue, and comment context from the local `.loop/loop.db` cache.
-3. Run the configured agent with a compact code-generated skill bootstrap.
-4. Let the agent plan, edit, validate, and request commits for complete work.
-5. Read the agent terminal close JSON.
-6. Integrate a merge close or clean up a skip-merge close.
-7. Repeat until the agent reports `should_fully_stop=true` for a CLI-provided goal, the iteration limit is reached, or a terminal error is recorded. A skip-merge close may explicitly pause in GitHub sleep mode before the next iteration.
+3. Run the configured adapter as planner, coding, and review agents with compact role prompts.
+4. Validate the planner task tree, schedule coding tasks by dependency and conflict metadata, and run coding agents in CLI-created worktrees.
+5. Commit completed task work from task metadata, squash-merge task branches into the iteration branch, run validation, and request review.
+6. Open, check, and merge the pull request, or perform local merge mode when configured.
+7. Repeat until role output reports `goal_complete=true` for a CLI-provided goal, the iteration limit is reached, or a terminal error is recorded.
 
 ## Fully automated default
 
 Runs are fully automated:
 
 - `loop` never asks the user for confirmation during `run`.
-- The agent must not ask the user questions directly.
+- Agents must not ask the user questions directly.
 - Important product, policy, or large blocking specification clarifications are asked through `loop issue ask`, which creates GitHub Issues in the repository.
 - Concrete repository or harness improvement proposals are reported through `loop issue report`. Unsupported agent capability findings are rediscovered each iteration and are not persisted as Issues.
 - Missing information is handled by making a local, explicit assumption and continuing.
-- After creating a clarification Issue, the agent continues unrelated work. If no safe mergeable work remains and GitHub updates are needed before continuing, the agent closes with `loop iteration close --skip-merge --sleep --should-stop false` and references the relevant Issue URL in the reason.
+- After creating a clarification Issue, agents continue unrelated work when possible. The review or planner handoff reports when external context prevents useful progress.
 - GitHub sleep mode polls GitHub Issue/PR updates and starts the next iteration when new context appears. In an interactive terminal, any keypress triggers an immediate fetch. Sleep mode is an explicit skip-merge choice and does not reuse the goal-completion stop decision.
-- Local merge, pull, cleanup, and run-state inspection are performed by the CLI according to configuration. In pull request mode, the agent performs PR creation, check waiting, check failure fixes, and PR merge through `loop pr` commands.
+- Local merge, pull, cleanup, and run-state inspection are performed by the CLI according to configuration. In pull request mode, the CLI performs PR creation, check waiting, check failure handling, and PR merge. `--human-review` pauses after PR creation for external post-hoc review or merge updates.
+
+## Iteration Scope
+
+One iteration produces one AI sprint-sized pull request. The planner should choose a coherent development goal that autonomous agents can complete in hours, comparable to a traditional agile sprint compressed into an autonomous run. It should not split work only to fit a review session. Post-hoc review happens after the autonomous work and is not a scope constraint.
 
 ## Language default
 
@@ -51,21 +55,18 @@ The CLI owns:
 - Iteration directories.
 - JSON validation.
 - Git, commit, and pull request commands.
-- Branch creation, branch rename command validation/tracking, PR command validation/tracking, and cleanup.
+- Branch creation, task worktree creation, commit creation, PR command validation/tracking, and cleanup.
 - Run state.
 - Exit codes.
 - GitHub PR, Issue, and comment context synchronization.
 
 The agent owns:
 
-- Code edits.
-- Plan content.
-- TODO execution.
-- Deciding when a TODO-sized unit is ready to commit.
-- Validation command selection when not configured.
-- Terminal close creation through `loop iteration close`.
-- Branch rename requests through `loop branch rename`.
-- Pull request text generation.
+- Planner task-tree content.
+- Code edits for assigned coding tasks.
+- Task-result and review-result handoffs.
+- Review findings that can become repair tasks.
+- Validation command selection when not configured by the repository.
 
 ## Skill-based customization
 
@@ -80,7 +81,7 @@ The skill bootstrap is implemented in Go under the prompt assembly package. It i
 The CLI assembles each agent request in this order:
 
 1. Non-user-editable instruction to use the `loop` skill.
-2. Instruction to use `loop iteration`, `loop memory`, `loop issue`, and `loop commit` commands for runtime context, artifact reads or writes, GitHub Issues, and commits.
+2. Instruction to use `loop iteration`, `loop memory`, `loop issue`, and `loop handoff` commands for runtime context, GitHub Issues, and role handoffs.
 
 When an agent adapter supports a system or developer message channel, the bootstrap can be sent through that channel. When an adapter only supports a single prompt stream, the bootstrap is passed as the prompt. The implementation must avoid duplicating the full skill contract in the prompt.
 
@@ -93,8 +94,8 @@ When an agent adapter supports a system or developer message channel, the bootst
 - Agent command line.
 - Agent event stream.
 - Git branch names.
-- Commits produced by the agent.
+- Commits produced by the CLI from task metadata.
 - Validation commands and outputs.
-- Result JSON.
+- Role handoff JSON.
 - Integration action.
 - Cleanup action.

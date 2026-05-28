@@ -4,9 +4,68 @@
 
 This Markdown file is the source of truth for JSON and YAML contracts. Do not maintain duplicate `schemas/*.schema.json` files. Runtime validation is implemented with Go struct decoding, known-field YAML decoding, and contract-specific validators.
 
+## Role Handoffs
+
+Role-orchestrated runs use DB-backed handoffs written with `loop handoff`.
+
+### Task Tree
+
+Required fields:
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `schema_version` | integer | Current value is `1`. |
+| `summary` | string | One-sentence AI sprint-sized PR summary. |
+| `goal_evaluation` | string | Current view of the CLI goal. |
+| `goal_complete` | boolean | Optional. True only when a CLI goal exists and the planner believes no more work remains after integration. |
+| `tasks` | array | Coding tasks with dependencies and conflicts. |
+
+Task fields:
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `id` | string | Lowercase letters, digits, and hyphens, starting with a letter. |
+| `title` | string | Short task title. |
+| `description` | string | Instructions for the coding agent. |
+| `depends_on` | array | Task IDs that must complete first. |
+| `conflicts_with` | array | Task IDs that must not run concurrently. |
+| `acceptance` | array | Concrete acceptance checks. |
+| `commit_type` | enum | `F`, `T`, `R`, `D`, `S`, `V`, or `C`. |
+| `commit_message` | string | Lowercase imperative message body; the CLI adds `<TYPE>:`. |
+
+The CLI rejects duplicate IDs, unknown dependencies or conflicts, self-dependencies, self-conflicts, dependency cycles, invalid IDs, and invalid commit metadata.
+
+### Task Result
+
+Required fields:
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `schema_version` | integer | Current value is `1`. |
+| `task_id` | string | Completed task ID. |
+| `status` | enum | `completed`, `failed`, or `skipped`. |
+| `summary` | string | Outcome summary. |
+| `validation` | array | Optional validation notes. |
+| `notes` | array | Optional additional notes. |
+
+### Review Result
+
+Required fields:
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `schema_version` | integer | Current value is `1`. |
+| `status` | enum | `approved`, `changes_requested`, or `failed`. |
+| `summary` | string | Review summary. |
+| `goal_complete` | boolean | Optional goal completion decision. |
+| `goal_evaluation` | string | Explanation of the goal decision. |
+| `findings` | array | Repair-task findings when changes are requested. |
+
+Each finding has `id`, optional `task_id`, `title`, `description`, `acceptance`, `commit_type`, and `commit_message`. Findings must be specific enough for the CLI to create repair tasks.
+
 ## Iteration Close
 
-The agent writes the master-DB terminal handoff through `loop iteration close`. There is no local `result` artifact and there is no public non-merge status enum.
+The iteration close contract is retained for compatibility with older single-agent workflows. Role-orchestrated runs use role handoffs instead.
 
 Required fields:
 
@@ -159,7 +218,7 @@ The agent must provide semantic fields:
 loop iteration close --merge \
   --summary "Add password reset validation tests" \
   --should-stop false \
-  --goal-evaluation "The selected slice is complete; token refresh coverage remains." \
+  --goal-evaluation "The selected implementation scope is complete; token refresh coverage remains." \
   --validation-status passed
 
 loop iteration close --skip-merge \

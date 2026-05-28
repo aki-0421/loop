@@ -41,6 +41,15 @@ type SearchHit struct {
 	Rank        float64
 }
 
+type RoleHandoff struct {
+	RunID       string
+	IterationID string
+	Kind        string
+	TaskID      string
+	Payload     string
+	UpdatedAt   string
+}
+
 type PRMemoryRecord struct {
 	Repo      string
 	Number    int
@@ -131,6 +140,8 @@ var artifactFileNames = map[string]string{
 	"runtime":            "runtime.json",
 	"plan":               "plan.md",
 	"todo":               "todo.md",
+	"task-tree":          "task-tree.json",
+	"review-result":      "review-result.json",
 	"validation":         "validation.md",
 	"pr-title":           "pr-title.txt",
 	"pr-body":            "pr-body.md",
@@ -371,6 +382,7 @@ func RebuildGlobalFromRuns(runsDir string) (int, error) {
 		`DELETE FROM iterations`,
 		`DELETE FROM runs`,
 		`DELETE FROM iteration_results`,
+		`DELETE FROM role_handoffs`,
 	} {
 		if _, err := db.Exec(stmt); err != nil {
 			return 0, err
@@ -433,6 +445,102 @@ func ClearResultHandoff(globalDBPath, runID, iterationID string) error {
 		return err
 	}
 	_, err = db.Exec(`DELETE FROM iteration_results WHERE run_id = ? AND iteration_id = ?`, runID, iterationID)
+	return err
+}
+
+func WriteRoleHandoff(globalDBPath, runID, iterationID, kind, taskID, payload string) error {
+	if runID == "" || iterationID == "" || kind == "" {
+		return errors.New("run id, iteration id, and handoff kind are required")
+	}
+	db, err := openGlobal(globalDBPath)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	if err := ensureGlobal(db); err != nil {
+		return err
+	}
+	_, err = db.Exec(`INSERT INTO role_handoffs(run_id, iteration_id, kind, task_id, payload, updated_at) VALUES(?, ?, ?, ?, ?, ?)
+ON CONFLICT(run_id, iteration_id, kind, task_id) DO UPDATE SET payload = excluded.payload, updated_at = excluded.updated_at`,
+		runID, iterationID, kind, taskID, payload, now())
+	return err
+}
+
+func ReadRoleHandoff(globalDBPath, runID, iterationID, kind, taskID string) (RoleHandoff, error) {
+	var handoff RoleHandoff
+	if runID == "" || iterationID == "" || kind == "" {
+		return handoff, fmt.Errorf("%w: role handoff", ErrNotFound)
+	}
+	db, err := openGlobal(globalDBPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return handoff, fmt.Errorf("%w: role handoff", ErrNotFound)
+		}
+		return handoff, err
+	}
+	defer db.Close()
+	if err := ensureGlobal(db); err != nil {
+		return handoff, err
+	}
+	err = db.QueryRow(`SELECT run_id, iteration_id, kind, task_id, payload, updated_at FROM role_handoffs WHERE run_id = ? AND iteration_id = ? AND kind = ? AND task_id = ?`,
+		runID, iterationID, kind, taskID).Scan(&handoff.RunID, &handoff.IterationID, &handoff.Kind, &handoff.TaskID, &handoff.Payload, &handoff.UpdatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return handoff, fmt.Errorf("%w: role handoff", ErrNotFound)
+	}
+	return handoff, err
+}
+
+func ListRoleHandoffs(globalDBPath, runID, iterationID, kind string) ([]RoleHandoff, error) {
+	if runID == "" || iterationID == "" {
+		return nil, nil
+	}
+	db, err := openGlobal(globalDBPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	defer db.Close()
+	if err := ensureGlobal(db); err != nil {
+		return nil, err
+	}
+	query := `SELECT run_id, iteration_id, kind, task_id, payload, updated_at FROM role_handoffs WHERE run_id = ? AND iteration_id = ?`
+	args := []any{runID, iterationID}
+	if kind != "" {
+		query += ` AND kind = ?`
+		args = append(args, kind)
+	}
+	query += ` ORDER BY kind, task_id`
+	rows, err := db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []RoleHandoff
+	for rows.Next() {
+		var handoff RoleHandoff
+		if err := rows.Scan(&handoff.RunID, &handoff.IterationID, &handoff.Kind, &handoff.TaskID, &handoff.Payload, &handoff.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, handoff)
+	}
+	return out, rows.Err()
+}
+
+func ClearRoleHandoffs(globalDBPath, runID, iterationID string) error {
+	if runID == "" || iterationID == "" {
+		return nil
+	}
+	db, err := openGlobal(globalDBPath)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	if err := ensureGlobal(db); err != nil {
+		return err
+	}
+	_, err = db.Exec(`DELETE FROM role_handoffs WHERE run_id = ? AND iteration_id = ?`, runID, iterationID)
 	return err
 }
 
@@ -1108,6 +1216,7 @@ func ensureGlobal(db *sql.DB) error {
 		`CREATE TABLE IF NOT EXISTS artifact_index(run_id TEXT NOT NULL, iteration_id TEXT NOT NULL, artifact TEXT NOT NULL, content TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY(run_id, iteration_id, artifact))`,
 		`CREATE VIRTUAL TABLE IF NOT EXISTS artifact_index_fts USING fts5(run_id UNINDEXED, iteration_id UNINDEXED, artifact UNINDEXED, content, tokenize = 'unicode61')`,
 		`CREATE TABLE IF NOT EXISTS iteration_results(run_id TEXT NOT NULL, iteration_id TEXT NOT NULL, result_json TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY(run_id, iteration_id))`,
+		`CREATE TABLE IF NOT EXISTS role_handoffs(run_id TEXT NOT NULL, iteration_id TEXT NOT NULL, kind TEXT NOT NULL, task_id TEXT NOT NULL DEFAULT '', payload TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY(run_id, iteration_id, kind, task_id))`,
 		`CREATE TABLE IF NOT EXISTS global_metadata(key TEXT PRIMARY KEY, value TEXT NOT NULL)`,
 		`CREATE TABLE IF NOT EXISTS github_records(repo TEXT NOT NULL, kind TEXT NOT NULL, number INTEGER NOT NULL, comment_id TEXT NOT NULL DEFAULT '', url TEXT NOT NULL, state TEXT NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL, author TEXT NOT NULL, labels TEXT NOT NULL, updated_at TEXT NOT NULL, closed_at TEXT NOT NULL, merged_at TEXT NOT NULL, fetched_at TEXT NOT NULL, PRIMARY KEY(repo, kind, number, comment_id))`,
 		`CREATE VIRTUAL TABLE IF NOT EXISTS github_records_fts USING fts5(repo UNINDEXED, kind UNINDEXED, number UNINDEXED, comment_id UNINDEXED, url UNINDEXED, state UNINDEXED, title, body, author UNINDEXED, labels UNINDEXED, updated_at UNINDEXED, closed_at UNINDEXED, merged_at UNINDEXED, fetched_at UNINDEXED, tokenize = 'unicode61')`,

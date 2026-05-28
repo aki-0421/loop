@@ -56,8 +56,9 @@ loop.db
 Every active iteration writes disposable runtime artifacts as files in a Go temp directory. These artifacts explain the current run and are not long-term memory.
 
 - `runtime`: JSON runtime context.
-- `plan`: intended work.
-- `todo`: execution checklist.
+- `task-tree`: planner task graph.
+- `task-result`: coding task result handoffs.
+- `review-result`: review decision and repair findings.
 - `validation`: validation commands and results.
 - `pr-title` and `pr-body`: pull request text.
 
@@ -67,10 +68,11 @@ The durable iteration directory stores audit and replay files plus PR lifecycle 
 - `effective-config`: effective configuration snapshot.
 - `agent-events`: structured audit events.
 - `errors`: process, result, validation, or sync warnings.
-- `pr-state`, `pr-checks`, and `pr-check-log`: pull request lifecycle state and check diagnostics written by `loop pr`.
+- `task-tree`, `task-results/`, and `review-result`: durable role handoff audit copies.
+- `pr-state`, `pr-checks`, and `pr-check-log`: pull request lifecycle state and check diagnostics written by the CLI.
 - `github-updates`: newly observed GitHub Issue, PR, or comment diffs for an iteration boundary or sleep wake cycle.
 
-Agents should read and write these artifacts through `loop iteration` commands so path resolution and artifact boundaries stay in the CLI. `plan` and `todo` have dedicated `loop iteration plan` and `loop iteration todo` commands; other writable artifacts use `loop iteration write` or `loop iteration append`. The terminal close is a master-DB handoff row written by `loop iteration close`.
+Agents should read runtime artifacts through `loop iteration` commands and write role outputs through `loop handoff`. Legacy `plan`, `todo`, and terminal close artifacts remain for compatibility with older single-agent workflows.
 
 After a merge or skip-merge terminal action, the active temp directory is removed. `prompt.md`, `effective-config.yaml`, `agent-events.jsonl`, `errors.log`, PR lifecycle diagnostics, GitHub update diffs, and run state remain for audit and replay.
 

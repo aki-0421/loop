@@ -49,6 +49,8 @@ internal/memory/
 internal/validation/
   result.go
   runner.go
+internal/workflow/
+  tasktree.go
 internal/artifactdb/
   artifactdb.go
 internal/assets/
@@ -85,11 +87,19 @@ Responsibilities:
 - Build the compact code-generated skill bootstrap.
 - Avoid duplicating the full skill contract in the prompt.
 - Keep runtime metadata, goal text, instruction paths, and iteration paths out of the prompt.
-- Direct agents to `loop iteration`, `loop memory`, `loop issue`, `loop commit`, and PR-mode `loop pr` commands.
+- Direct agents to `loop iteration`, `loop memory`, `loop issue`, and `loop handoff` commands.
 
 ### Iteration artifact commands
 
-The CLI exposes `loop iteration path/read/write/append` for fixed artifact names, plus dedicated `loop iteration plan` and `loop iteration todo` namespaces for planning artifacts. Agent-writable artifacts are limited to `plan`, `todo`, `pr-title`, and `pr-body`; CLI-owned logs, prompt, runtime context, effective config, and validation output are read-only. `loop iteration close` builds valid terminal JSON from runtime data plus semantic flags and writes the master-DB result handoff. The CLI also exposes `loop commit --type <type> <message>` and `loop branch rename ...` so agents request validated commits and tracked branch renames without running raw Git lifecycle commands.
+The CLI exposes `loop iteration path/read/write/append` for fixed artifact names and `loop handoff` for role handoff JSON. Role-orchestrated runs use `task-tree`, `task-result`, and `review-result` handoffs. Legacy `loop iteration plan`, `loop iteration todo`, `loop iteration close`, `loop commit`, and `loop branch rename` commands remain available for compatibility and diagnostics.
+
+### `internal/workflow`
+
+Responsibilities:
+
+- Decode and validate task-tree, task-result, and review-result JSON.
+- Reject unknown fields, invalid task IDs, dependency cycles, unknown dependencies/conflicts, and invalid commit metadata.
+- Build dependency/conflict-respecting execution waves for coding task scheduling.
 
 ### `internal/gitx`
 
@@ -97,6 +107,7 @@ Responsibilities:
 
 - Check repository cleanliness.
 - Create initial branches.
+- Create and remove task worktrees through CLI callers.
 - Rename branches.
 - Remove worktrees during cleanup.
 - List commits.
@@ -151,7 +162,7 @@ run-state.json.tmp
 run-state.json
 ```
 
-Ordinary state files use atomic writes. The terminal close handoff is stored in `.loop/loop.db` through `loop iteration close` rather than as a local JSON file.
+Ordinary state files use atomic writes. Role handoffs are stored in `.loop/loop.db` through `loop handoff` and copied to durable iteration JSON files for audit. Legacy terminal close handoffs are also stored in `.loop/loop.db`.
 
 ## Locking
 

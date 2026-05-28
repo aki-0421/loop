@@ -10,9 +10,13 @@ import (
 	"time"
 
 	"github.com/aki-0421/loop/internal/artifactdb"
+	"github.com/aki-0421/loop/internal/workflow"
 )
 
 func RunFakeAgentFromEnv() int {
+	if strings.TrimSpace(os.Getenv("LOOP_ROLE")) != "" || os.Getenv("LOOP_RESULT_HANDOFF") == "role-db" {
+		return runFakeRoleAgent()
+	}
 	mode := fakeModeFromEnv()
 	iterationDir := os.Getenv("LOOP_ITERATION_DIR")
 	if iterationDir != "" {
@@ -60,6 +64,75 @@ func RunFakeAgentFromEnv() int {
 		writeFakeResult(iterationDir, "merge", fakeCommit(workDir))
 		return 0
 	}
+}
+
+func runFakeRoleAgent() int {
+	role := strings.TrimSpace(os.Getenv("LOOP_ROLE"))
+	switch role {
+	case "planner":
+		tree := workflow.TaskTree{
+			SchemaVersion:  workflow.SchemaVersion,
+			Summary:        "Run fake role workflow",
+			GoalEvaluation: "Fake planner selected one deterministic task.",
+			Tasks: []workflow.Task{{
+				ID:            "fake-task",
+				Title:         "Fake task",
+				Description:   "Create a deterministic fake workflow change.",
+				Acceptance:    []string{"The fake workflow marker file exists."},
+				CommitType:    "F",
+				CommitMessage: "run fake role workflow",
+			}},
+		}
+		return writeFakeRoleHandoff("task-tree", "", tree)
+	case "coding":
+		taskID := getenv("LOOP_TASK_ID", "fake-task")
+		workDir := getenv("LOOP_WORKDIR", ".")
+		_ = os.WriteFile(filepath.Join(workDir, "loop-fake-role-change.txt"), []byte("fake role change at "+time.Now().UTC().Format(time.RFC3339Nano)+"\n"), 0o644)
+		result := workflow.TaskResult{
+			SchemaVersion: workflow.SchemaVersion,
+			TaskID:        taskID,
+			Status:        "completed",
+			Summary:       "Fake coding agent completed " + taskID + ".",
+		}
+		return writeFakeRoleHandoff("task-result", taskID, result)
+	case "review":
+		result := workflow.ReviewResult{
+			SchemaVersion:  workflow.SchemaVersion,
+			Status:         "approved",
+			Summary:        "Fake review approved the iteration.",
+			GoalEvaluation: "Fake review did not evaluate a real goal.",
+		}
+		if strings.TrimSpace(os.Getenv("LOOP_RUN_GOAL")) != "" {
+			result.GoalComplete = true
+			result.GoalEvaluation = "The fake role workflow completed the supplied goal."
+		}
+		return writeFakeRoleHandoff("review-result", "", result)
+	default:
+		return 1
+	}
+}
+
+func writeFakeRoleHandoff(kind, taskID string, payload any) int {
+	data, err := workflow.MarshalIndent(payload)
+	if err != nil {
+		return 1
+	}
+	iterationDir := os.Getenv("LOOP_ITERATION_DIR")
+	globalPath := artifactdb.GlobalDBPathForIteration(iterationDir)
+	if globalPath == "" {
+		return 1
+	}
+	runID := getenv("LOOP_RUN_ID", "")
+	iterationID := getenv("LOOP_ITERATION_ID", "")
+	if runID == "" || iterationID == "" {
+		parsedRunID, parsedIterationID := artifactdb.ParseIterationDir(iterationDir)
+		runID = firstFakeNonEmpty(runID, parsedRunID)
+		iterationID = firstFakeNonEmpty(iterationID, parsedIterationID)
+	}
+	if err := artifactdb.WriteRoleHandoff(globalPath, runID, iterationID, kind, taskID, string(data)); err != nil {
+		return 1
+	}
+	return 0
 }
 
 func fakeModeFromEnv() string {
@@ -257,4 +330,13 @@ func getenv(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func firstFakeNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }

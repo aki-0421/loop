@@ -53,8 +53,8 @@ run:
 	if !cfg.NoColor {
 		t.Fatal("LOOP_NO_COLOR was not applied")
 	}
-	if cfg.Git.Integration.Mode != "local_merge" {
-		t.Fatalf("default integration mode = %q, want local_merge", cfg.Git.Integration.Mode)
+	if cfg.Git.Integration.Mode != "pr" {
+		t.Fatalf("default integration mode = %q, want pr", cfg.Git.Integration.Mode)
 	}
 	if cfg.Git.Integration.PR.ChecksStartupDelaySeconds != 5 {
 		t.Fatalf("default checks startup delay = %d, want 5", cfg.Git.Integration.PR.ChecksStartupDelaySeconds)

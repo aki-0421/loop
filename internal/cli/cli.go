@@ -116,6 +116,8 @@ func Run(args []string) error {
 		return commandIssue(ctx, g, rest[1:])
 	case "iteration":
 		return commandIteration(ctx, g, rest[1:])
+	case "handoff":
+		return commandHandoff(ctx, g, rest[1:])
 	case "skills":
 		return commandSkills(ctx, g, rest[1:])
 	case "memory":
@@ -256,7 +258,7 @@ func commandInit(ctx context.Context, g globals, args []string) error {
 	return printResult(g, out, fmt.Sprintf("Initialized loop in %s\nConfig: %s\nSkills: %s\n%s", root, rel(root, configPath), rel(root, skillDir), baseLine))
 }
 
-func commandRun(ctx context.Context, g globals, args []string) error {
+func commandRunLegacy(ctx context.Context, g globals, args []string) error {
 	args = flagsFirst(args, map[string]bool{
 		"agent": true, "goal": true, "max-iterations": true, "base": true,
 		"resume": true, "from-iteration": true, "keep-branches": true, "keep-worktrees": true,

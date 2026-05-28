@@ -24,19 +24,20 @@ An adapter receives:
 - Prompt text or prompt stream.
 - Iteration directory path.
 - Optional timeout.
+- Role metadata such as `LOOP_ROLE` and, for coding agents, `LOOP_TASK_ID`.
 
 ## Prompt assembly
 
 The assembled prompt is a compact, non-user-editable skill bootstrap:
 
 1. A short instruction to use the `loop` skill.
-2. A short instruction to use `loop iteration`, `loop memory`, `loop issue`, and `loop commit` commands.
+2. A short instruction to use `loop iteration`, `loop memory`, `loop issue`, and `loop handoff` commands.
 
 Detailed loop behavior and CLI usage live in repository skills, especially `loop`. The prompt intentionally does not inline skill instructions, effective config, JSON contract details, required file paths, runtime values, recent GitHub context memory, goal text, instruction Markdown content, or instruction file paths.
 
 ## Bootstrap requirements
 
-The code-generated bootstrap activates the `loop` skill. In pull request mode it tells the agent to read template text with `loop iteration read pr-template`. Skills use `loop iteration`, `loop memory`, `loop issue`, and `loop pr` commands for mechanical runtime artifact reads, writes, and GitHub Issues. The agent decides when a commit-ready unit is complete, but commit creation goes through `loop commit`; terminal close JSON, pull request text, check failure fixes, and PR merge are handled inside the agent context through CLI commands.
+The code-generated bootstrap activates the `loop` skill. Skills use `loop iteration`, `loop memory`, `loop issue`, and `loop handoff` commands for runtime context, GitHub Issues, and strict role handoffs. The CLI owns commit creation, pull request text, check waiting, check failure handling, PR merge, and cleanup.
 
 ## Process output capture
 
@@ -67,9 +68,13 @@ The built-in process adapter recognizes these provider streams without reading p
 
 Raw agent transcripts are not persisted. File contents, diffs, and thinking text may be shown transiently by the renderer after filtering, but must not be written to disk. `agent.stdout.log`, `agent.stderr.log`, and `agent-exit.json` are not created.
 
-## Result handoff contract
+## Role Handoff Contract
 
-The agent writes the master-DB terminal handoff with `loop iteration close --merge` or `loop iteration close --skip-merge`. The CLI validates it against the iteration close contract in `09-json-contracts.md`.
+Role-orchestrated agents write planner, task, and review handoffs with `loop handoff`. The CLI validates and stores those handoffs in `.loop/loop.db`, then copies audit JSON into the durable iteration directory. Agents do not commit, rename branches, create PRs, merge PRs, or close iterations in the role-orchestrated workflow.
+
+## Legacy Result Handoff Contract
+
+Older single-agent workflows can still write the master-DB terminal handoff with `loop iteration close --merge` or `loop iteration close --skip-merge`. The CLI validates it against the iteration close contract in `09-json-contracts.md`.
 
 After a valid terminal handoff is observed, the CLI records the handoff but does not signal or cancel the agent. It waits for the agent process to finish by itself and continues draining stdout/stderr until that natural exit, so final provider events, especially usage events, can be recorded. External cancellations such as Ctrl+C still terminate the process through the normal cancellation path.
 

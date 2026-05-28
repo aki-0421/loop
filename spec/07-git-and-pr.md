@@ -6,7 +6,13 @@ The base branch comes from config or `--base`. When neither is set, `loop run` u
 
 Before each iteration, the CLI updates the base branch when configured to pull automatically.
 
-## Branch names
+## Branch And Task Worktrees
+
+Role-orchestrated runs create the iteration branch before planning and one task branch/worktree for each coding task. Coding agents edit only their assigned task worktree. After a task handoff is accepted, the CLI stages changes, creates the task commit from task metadata, removes the task worktree, and squash-merges the task branch into the iteration branch.
+
+Task branches are implementation details and are deleted after merge. The iteration branch is integrated through pull request mode or local merge mode.
+
+## Legacy Branch Names
 
 The initial branch is numbered and temporary:
 
@@ -15,7 +21,7 @@ wip/0001
 wip/0002
 ```
 
-The agent renames the branch through the CLI before closing with `--merge`:
+Older single-agent workflows can rename the branch through the CLI before closing with `--merge`:
 
 ```bash
 loop branch rename feat/add-usage-report-command
@@ -52,9 +58,11 @@ Branch slugs:
 - Avoid `loop/` prefixes by default.
 - Append the iteration suffix only when needed to avoid collisions.
 
-## Commit creation through the CLI
+## Commit Creation Through The CLI
 
-The agent requests commits during the iteration by running:
+In role-orchestrated runs, the CLI creates commits after coding agents finish. The planner-provided task `commit_type` and `commit_message` produce the final subject.
+
+Older single-agent workflows can request commits during the iteration by running:
 
 ```bash
 loop commit --type <type> <short imperative message>
@@ -99,9 +107,18 @@ git commit -m "<summary_sentence>"
 
 After commit, the CLI deletes the iteration branch, removes the worktree, checks out the base branch, and pulls with `--ff-only` when an upstream is configured.
 
-## Pull request mode
+## Pull Request Mode
 
-Pull request mode is driven by the agent through `loop pr` commands:
+In role-orchestrated runs, pull request mode is driven by the CLI after validation and review pass:
+
+1. Generate PR title and body from task-tree and review context.
+2. Push the iteration branch.
+3. Create or reuse the pull request.
+4. Wait for checks when configured.
+5. If post-hoc review waiting is enabled, pause for external merge/review updates instead of auto-merging.
+6. Otherwise squash-merge through `gh`, refresh the base branch, and clean up local runtime resources.
+
+The older `loop pr` commands are retained for compatibility with single-agent workflows:
 
 1. Generate PR title and body through the agent.
 2. Run `loop pr create` to push the tracked branch and create or reuse the PR.

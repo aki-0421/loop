@@ -11,7 +11,7 @@ func TestAssembleIncludesOnlyBootstrap(t *testing.T) {
 	})
 	for _, want := range []string{
 		"Use the `loop` skill",
-		"Use `loop iteration`, `loop memory`, `loop issue`, and `loop commit` commands",
+		"Use `loop iteration`, `loop memory`, `loop issue`, and `loop handoff` commands",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("assembled prompt missing %q:\n%s", want, text)
@@ -49,7 +49,7 @@ func TestAssembleMentionsPRWriterOnlyInPullRequestMode(t *testing.T) {
 		PullRequestMode: true,
 	})
 	for _, want := range []string{
-		"loop iteration read pr-template",
+		"Pull request creation, check waiting, repairs, and merging are performed by the CLI",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("PR prompt missing %q:\n%s", want, text)

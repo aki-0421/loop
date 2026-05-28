@@ -34,7 +34,7 @@ func TestIterationCloseCommandBuildsAndWritesMergeResult(t *testing.T) {
 			"--merge",
 			"--summary", "Add result helper",
 			"--should-stop", "false",
-			"--goal-evaluation", "The selected slice is complete; follow-up work remains.",
+			"--goal-evaluation", "The selected implementation scope is complete; follow-up work remains.",
 			"--validation-command", "unit|go test ./...|0|true",
 			"--assumption", "Used the configured base branch from runtime.",
 		})
@@ -149,17 +149,17 @@ func TestIterationCloseCommandRejectsBranchOverrideFlags(t *testing.T) {
 
 func TestIterationCloseCommandRejectsMergeWithoutCommits(t *testing.T) {
 	repo := newCleanupRepo(t)
-	git(t, repo, "checkout", "-b", "feat/finish-empty-slice", "develop")
+	git(t, repo, "checkout", "-b", "feat/finish-empty-scope", "develop")
 	iterDir := filepath.Join(repo, ".loop", "runs", "run-1", "iterations", "0001")
-	writeRuntimeForResultTest(t, iterDir, repo, "wip/0001", "feat/finish-empty-slice")
+	writeRuntimeForResultTest(t, iterDir, repo, "wip/0001", "feat/finish-empty-scope")
 
 	err := commandIteration(context.Background(), globals{}, []string{
 		"close",
 		"--iteration-dir", iterDir,
 		"--merge",
-		"--summary", "Finish empty slice",
+		"--summary", "Finish empty scope",
 		"--should-stop", "true",
-		"--goal-evaluation", "The slice is complete.",
+		"--goal-evaluation", "The implementation scope is complete.",
 		"--validation-status", "skipped",
 	})
 	if err == nil {
@@ -185,7 +185,7 @@ func TestIterationCloseCommandRejectsMergeWithoutBranchRename(t *testing.T) {
 		"--merge",
 		"--summary", "Add result helper",
 		"--should-stop", "false",
-		"--goal-evaluation", "The selected slice is complete; follow-up work remains.",
+		"--goal-evaluation", "The selected implementation scope is complete; follow-up work remains.",
 		"--validation-status", "skipped",
 	})
 	if err == nil {

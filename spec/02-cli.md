@@ -91,6 +91,7 @@ Flags:
 | `--goal <text>` | empty | Natural-language stop condition stored in runtime context |
 | `--max-iterations <n>` | config value | Stop after `n` iterations; `0` means unlimited |
 | `--pr` | config value | Use pull request integration instead of local squash merge |
+| `--human-review` | config value | Open the PR and pause for external post-hoc review or merge updates instead of auto-merging |
 | `--base <branch>` | current branch at run start | Base branch for integration |
 | `--resume <run-id>` | empty | Accepted for older scripts; use `loop resume <run-id>` |
 | `--from-iteration <n>` | latest | Accepted for older scripts with `--resume`; currently ignored |
@@ -105,12 +106,13 @@ Runtime rules:
 - The instruction file is read at every iteration and copied to that iteration's `prompt.md`; edits to the source file affect later iterations only.
 - The instruction file is task input only. Mandatory harness behavior is injected by CLI code, not by user-authored prompt text.
 - If `--goal` is empty, `--should-stop true` is invalid regardless of instruction, Issue, PR, or comment text.
-- The agent must close each iteration with exactly one of `loop iteration close --merge` or `loop iteration close --skip-merge`.
-- A merge close is integrated before the next iteration starts.
-- A valid merge close with `should_fully_stop=true` stops after integration.
-- A skip-merge close never incorporates the iteration branch. It closes any unmerged PR, deletes iteration branches and worktrees, refreshes the target branch, and then continues or stops from `should_fully_stop`.
-- In PR mode, `--merge` is accepted only after `loop pr merge` records a merged PR.
-- A skip-merge close with `--sleep` and `--should-stop false` enters GitHub sleep mode after cleanup. Sleep mode waits for GitHub Issue, PR, or comment updates before launching the next iteration.
+- The planner agent writes an AI sprint-level `task-tree` handoff for one coherent PR-sized development goal.
+- The CLI schedules non-conflicting ready tasks and runs coding agents in task worktrees.
+- Coding agents write `task-result` handoffs; the CLI commits from task metadata and squash-merges task branches into the iteration branch.
+- The CLI runs validation, then the review agent writes a `review-result` handoff.
+- Validation failures and review findings become repair tasks until approval or the configured fix-cycle limit.
+- In PR mode, the CLI creates, checks, and merges the PR. With `--human-review`, the CLI creates the PR and pauses for external post-hoc review or merge updates.
+- `goal_complete=true` can stop the run only after successful integration and only when `--goal` is non-empty.
 
 Example:
 
@@ -204,14 +206,26 @@ loop iteration close (--merge|--skip-merge) [--iteration-dir <dir>|--run <run-id
 
 If `--iteration-dir` is omitted, commands resolve the current agent iteration automatically. If `--run` is supplied, the CLI resolves `.loop/runs/<run-id>/iterations/<n>` using the configured log directory; `--iteration latest` selects the newest iteration.
 
-Writable artifacts are `plan`, `todo`, `pr-title`, and `pr-body`. Read-only artifacts include `runtime`, `instruction`, `prompt`, `effective-config`, `validation`, `events`, `errors`, `github-updates`, `pr-state`, `pr-checks`, and `pr-check-log`. The terminal close is written through the master-DB result handoff, not a local artifact.
+Writable artifacts are `plan`, `todo`, `task-tree`, `review-result`, `pr-title`, and `pr-body`. Read-only artifacts include `runtime`, `instruction`, `prompt`, `effective-config`, `validation`, `events`, `errors`, `github-updates`, `pr-state`, `pr-checks`, and `pr-check-log`. The terminal close is retained only for compatibility with older single-agent workflows.
 PR command artifacts `pr-state`, `pr-checks`, and `pr-check-log` are read-only to the agent and written by `loop pr`. `github-updates` is written by the CLI when new GitHub Issue, PR, or comment diffs are observed at an iteration boundary or sleep wake cycle.
 
-`plan` and `todo` use dedicated namespaces instead of generic bulk writes. `loop iteration plan template` prints the CLI-owned plan template, `loop iteration plan write` stores the filled plan, and `loop iteration plan read` reads it. After the plan selects the review slice, `loop iteration todo list` prints numbered TODOs; `insert --type <type> <message>`, `edit <n> --type <type> <message>`, and `complete <n>` mutate one TODO item at a time by the 1-based index shown by `list`. TODO `type` and `message` use the same validation as `loop commit`. Generic `loop iteration write plan`, `append plan`, `write todo`, and `append todo` are rejected with guidance to these commands.
+`plan` and `todo` use dedicated namespaces instead of generic bulk writes. `loop iteration plan template` prints the CLI-owned plan template, `loop iteration plan write` stores the filled plan, and `loop iteration plan read` reads it. After the plan selects the implementation scope, `loop iteration todo list` prints numbered TODOs; `insert --type <type> <message>`, `edit <n> --type <type> <message>`, and `complete <n>` mutate one TODO item at a time by the 1-based index shown by `list`. TODO `type` and `message` use the same validation as `loop commit`. Generic `loop iteration write plan`, `append plan`, `write todo`, and `append todo` are rejected with guidance to these commands.
 
 `pr-template` is a read-only artifact. `loop iteration read pr-template` prints the selected repository pull request template when present, otherwise it prints the CLI-owned fallback template. `loop iteration path pr-template` prints a path only when a repository template file exists.
 
 `loop iteration close` builds and writes valid terminal JSON from CLI-owned runtime data and agent-supplied semantic fields. Exactly one of `--merge` or `--skip-merge` is required. `--merge` requires `--summary`, `--should-stop true|false`, and `--goal-evaluation`; `--skip-merge` requires `--reason`, `--should-stop true|false`, and `--goal-evaluation`. `--should-stop true` is valid only when the run was started with a non-empty CLI `--goal`. With `--skip-merge`, agents may add `--sleep` to wait for GitHub updates before the next iteration; `--sleep` requires `--should-stop false`. Agents may pass `--validation-status` or repeat `--validation-command name|command|exit_code|required`; branch metadata is always taken from loop runtime and the tracked Git branch. The command rejects malformed merge closes before handoff, including dirty worktrees, missing commits, unrenamed branches, failed or partial validation, and unmerged PRs in PR mode. Skip-merge closes do not require commits, branch rename, validation success, or success JSON.
+
+## `loop handoff`
+
+Write and inspect role handoff JSON for role-orchestrated runs.
+
+```bash
+loop handoff write <task-tree|task-result|review-result> [--task <id>] [--file <path>|--value <json>]
+loop handoff read <task-tree|task-result|review-result> [--task <id>]
+loop handoff list [--kind <task-tree|task-result|review-result>]
+```
+
+`task-tree` is written by the planner. `task-result` is written by coding agents and requires `--task`. `review-result` is written by the review agent. The CLI validates each JSON payload and rejects unknown fields before storing the handoff in `.loop/loop.db` and writing durable audit copies in the iteration directory.
 
 ## `loop branch`
 

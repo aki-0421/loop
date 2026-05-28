@@ -32,16 +32,16 @@ The Go implementation includes tests for:
 - Run-state reads and resume status reporting.
 - Fully automated run contract violations.
 - Value-critical run resilience:
-  - continuing from one merge iteration into the next until
-    `should_fully_stop=true` for a CLI-provided goal;
-  - failing missing or invalid close handoffs as hard contract errors;
-  - cleaning up skipped iteration branches before continuing or returning;
-  - not integrating branches when configured validation fails;
-  - entering GitHub sleep mode after explicit skip-merge sleep and waking on GitHub updates.
+  - validating task-tree dependencies, conflicts, and commit metadata;
+  - scheduling non-conflicting tasks in parallel while serializing dependencies;
+  - committing task work from CLI-owned metadata;
+  - rerunning repair tasks after validation or review failures;
+  - creating, checking, and merging PRs through fake `gh`;
+  - retaining compatibility tests for older single-agent close handoffs.
 
 ## Fake agent
 
-A fake agent executable is used for end-to-end tests. It reads the prompt, writes DB-backed artifacts, optionally edits the repository, and writes the terminal close handoff.
+A fake agent executable is used for end-to-end tests. In role-orchestrated mode it reads `LOOP_ROLE`, writes DB-backed role handoffs, and optionally edits the repository. Compatibility tests still exercise the older terminal close handoff.
 
 Environment controls:
 
@@ -55,6 +55,9 @@ Environment controls:
 | `LOOP_FAKE_AGENT_MODE=dirty` | Leave uncommitted changes. |
 | `LOOP_FAKE_AGENT_MODE=issue_skip_merge` | Create a clarification Issue and write a skip-merge sleep close. |
 | `LOOP_FAKE_AGENT_MODE=validation_fix` | Commit a validation marker for validation tests. |
+| `LOOP_ROLE=planner` | Write a deterministic `task-tree` handoff. |
+| `LOOP_ROLE=coding` | Edit a marker file and write a `task-result` handoff. |
+| `LOOP_ROLE=review` | Write an approved `review-result` handoff. |
 | `LOOP_FAKE_AGENT_SEQUENCE` | Comma-separated modes consumed by successive agent invocations. |
 | `LOOP_FAKE_AGENT_COUNT_FILE` | Counter file used with `LOOP_FAKE_AGENT_SEQUENCE` across process invocations. |
 

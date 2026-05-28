@@ -48,7 +48,10 @@ type AdapterConfig struct {
 }
 
 type RunConfig struct {
-	MaxIterations int `yaml:"maxIterations" json:"maxIterations"`
+	MaxIterations      int `yaml:"maxIterations" json:"maxIterations"`
+	MaxParallelTasks   int `yaml:"maxParallelTasks" json:"maxParallelTasks"`
+	MaxTaskAttempts    int `yaml:"maxTaskAttempts" json:"maxTaskAttempts"`
+	MaxReviewFixCycles int `yaml:"maxReviewFixCycles" json:"maxReviewFixCycles"`
 }
 
 type SkillsConfig struct {
@@ -89,6 +92,7 @@ type PRConfig struct {
 	ChecksWatchTimeoutSeconds     int  `yaml:"checksWatchTimeoutSeconds" json:"checksWatchTimeoutSeconds"`
 	MergeWhenChecksPass           bool `yaml:"mergeWhenChecksPass" json:"mergeWhenChecksPass"`
 	DeleteBranch                  bool `yaml:"deleteBranch" json:"deleteBranch"`
+	HumanReview                   bool `yaml:"humanReview" json:"humanReview"`
 }
 
 type ValidationConfig struct {
@@ -121,6 +125,7 @@ type Overrides struct {
 	MaxIterations *int
 	BaseBranch    string
 	PRMode        *bool
+	HumanReview   *bool
 	NoColor       bool
 }
 
@@ -259,6 +264,15 @@ func Validate(cfg Config) error {
 	}
 	if cfg.Run.MaxIterations < 0 {
 		errs = append(errs, "run.maxIterations must be at least 0")
+	}
+	if cfg.Run.MaxParallelTasks <= 0 {
+		errs = append(errs, "run.maxParallelTasks must be positive")
+	}
+	if cfg.Run.MaxTaskAttempts <= 0 {
+		errs = append(errs, "run.maxTaskAttempts must be positive")
+	}
+	if cfg.Run.MaxReviewFixCycles < 0 {
+		errs = append(errs, "run.maxReviewFixCycles must be at least 0")
 	}
 	if cfg.Skills.SourceDir == "" {
 		errs = append(errs, "skills.sourceDir is required")
@@ -406,6 +420,9 @@ func applyOverrides(m map[string]any, o Overrides) {
 			mode = "pr"
 		}
 		setPath(m, mode, "git", "integration", "mode")
+	}
+	if o.HumanReview != nil {
+		setPath(m, *o.HumanReview, "git", "integration", "pr", "humanReview")
 	}
 }
 

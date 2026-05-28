@@ -35,6 +35,9 @@ agent:
 
 run:
   maxIterations: 3 # 0 or omitted means unlimited
+  maxParallelTasks: 2
+  maxTaskAttempts: 2
+  maxReviewFixCycles: 3
 
 skills:
   sourceDir: .codex/skills
@@ -75,7 +78,16 @@ Adapter arguments may include placeholders:
 - `{prompt}`: prompt text for `arg` mode.
 - `{cwd}`: working directory.
 
-Path-bearing prompt placeholders such as `{prompt_file}`, `{result_file}`, and `{iteration_dir}` are rejected. Agents should access iteration content through `loop iteration ...` commands.
+Path-bearing prompt placeholders such as `{prompt_file}`, `{result_file}`, and `{iteration_dir}` are rejected. Agents should access iteration content through `loop iteration ...` and write role outputs through `loop handoff`.
+
+## `run`
+
+| Key | Type | Behavior |
+| --- | --- | --- |
+| `maxIterations` | integer | Maximum iterations; `0` means unlimited. |
+| `maxParallelTasks` | integer | Maximum non-conflicting coding tasks to run at once. Built-in value is `2`. |
+| `maxTaskAttempts` | integer | Attempts for a coding task before failing the iteration. Built-in value is `2`. |
+| `maxReviewFixCycles` | integer | Validation/review repair cycles before failing the iteration. Built-in value is `3`. |
 
 ## `skills`
 
@@ -103,10 +115,10 @@ Modes:
 
 | Mode | Behavior |
 | --- | --- |
-| `local_merge` | Squash merge the iteration branch into the base branch locally. |
-| `pr` | Require the agent to create, check, fix when needed, and merge the pull request through `loop pr`; then refresh the base branch and continue. |
+| `local_merge` | Squash merge the approved iteration branch into the base branch locally. |
+| `pr` | CLI creates, checks, optionally pauses for external post-hoc review, and merges the pull request. |
 
-Pull request mode uses `gh` commands. The CLI writes the generated title and body to files before invoking `gh`.
+Pull request mode is the built-in default and uses `gh` commands. The CLI writes the generated title and body to files before invoking `gh`.
 
 Pull request check timing:
 
@@ -118,10 +130,11 @@ Pull request check timing:
 | `git.integration.pr.checksDiscoveryTimeoutSeconds` | `60` | Keep polling when GitHub reports no checks for the PR branch. |
 | `git.integration.pr.checksPollIntervalSeconds` | `5` | Delay between no-checks discovery polls and the `gh pr checks --watch --interval` value. |
 | `git.integration.pr.checksWatchTimeoutSeconds` | `3600` | Maximum time for a reported pending check set to complete before the command fails. |
+| `git.integration.pr.humanReview` | `false` | Create the PR and pause for external post-hoc review or merge updates instead of auto-merging. |
 
 If no checks are reported after the discovery timeout, the check wait is treated as skipped.
 
-`git.integration.pr.mergeWhenChecksPass` is accepted for compatibility with older configs, but PR merges are initiated by `loop pr merge`.
+`git.integration.pr.mergeWhenChecksPass` is accepted for compatibility with older configs, but role-orchestrated PR merges are initiated by the CLI after review and checks pass.
 
 ## `validation`
 

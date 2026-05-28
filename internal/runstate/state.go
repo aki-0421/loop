@@ -17,8 +17,12 @@ type Stage string
 const (
 	StageCreated       Stage = "created"
 	StageBranchCreated Stage = "branch_created"
+	StagePlanning      Stage = "planning"
+	StageCoding        Stage = "coding"
+	StageReviewing     Stage = "reviewing"
 	StageAgentRunning  Stage = "agent_running"
 	StageValidating    Stage = "validating"
+	StagePullRequest   Stage = "pull_request"
 	StageIntegrating   Stage = "integrating"
 	StageCompleted     Stage = "completed"
 	StageFailed        Stage = "failed"
@@ -113,7 +117,7 @@ func ValidateState(state State) error {
 	if state.CurrentIteration == "" {
 		errs = append(errs, "current_iteration is required")
 	}
-	if !oneOf(string(state.Stage), "created", "branch_created", "agent_running", "validating", "integrating", "completed", "failed", "cancelled") {
+	if !oneOf(string(state.Stage), "created", "branch_created", "planning", "coding", "reviewing", "agent_running", "validating", "pull_request", "integrating", "completed", "failed", "cancelled") {
 		errs = append(errs, "stage is invalid")
 	}
 	if len(errs) > 0 {

@@ -14,11 +14,12 @@ type Request struct {
 
 func HarnessContract(pullRequestMode bool) string {
 	lines := []string{
-		"Use the `loop` skill for this single loop iteration.",
-		"Use `loop iteration`, `loop memory`, `loop issue`, and `loop commit` commands for runtime context, artifacts, GitHub Issues, and commits.",
+		"Use the `loop` skill for this CLI-orchestrated role run.",
+		"Use `loop iteration`, `loop memory`, `loop issue`, and `loop handoff` commands for runtime context, GitHub Issues, and role handoff JSON.",
+		"Do not create branches, commits, pull requests, or terminal iteration closes yourself; the CLI owns those mechanics.",
 	}
 	if pullRequestMode {
-		lines = append(lines, "Before writing pull request artifacts, read template text with `loop iteration read pr-template`; create, check, fix check failures when needed, and merge the PR with `loop pr` before closing with `loop iteration close --merge`.")
+		lines = append(lines, "Pull request creation, check waiting, repairs, and merging are performed by the CLI after review succeeds.")
 	}
 	return strings.TrimSpace(strings.Join(lines, "\n"))
 }

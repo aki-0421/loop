@@ -12,17 +12,18 @@
   <a href="https://pkg.go.dev/github.com/aki-0421/loop"><img alt="Go Reference" src="https://pkg.go.dev/badge/github.com/aki-0421/loop.svg"></a>
 </p>
 
-`loop` turns one Markdown instruction file into a controlled sequence of agent runs. Each iteration happens in its own Git worktree, asks the agent to plan and commit reviewable units of work, validates the result, then either integrates the branch or cleans it up.
+`loop` turns one Markdown instruction file into a controlled sequence of role-orchestrated agent runs. Each iteration is one AI sprint-sized pull request: the CLI creates the branch, asks a planner agent for a dependency-aware task tree, runs coding agents in isolated task worktrees, squash-merges completed tasks into the iteration branch, validates and reviews the result, then opens and manages the pull request.
 
 It is built for repositories where AI work should leave behind the same things good human work does: small commits, clear branches, validation evidence, pull request context, and enough logs to explain what happened later.
 
 ## Features
 
 - **Repeatable iterations**: run until a CLI-provided goal is satisfied, an iteration limit is reached, or a terminal error stops the run.
-- **Git-native isolation**: every iteration starts on a temporary branch in a separate worktree, then integrates by local squash merge or pull request.
-- **Validated commits**: agents create commits through `loop commit`, which stages changes and enforces the repository's commit contract.
-- **Agent-facing workflow commands**: agents use `loop iteration`, `loop branch`, `loop pr`, `loop issue`, and `loop memory` instead of guessing file paths or lifecycle details.
-- **Pull request mode**: agents can create PRs, wait for checks, fetch failed job logs, fix failures, and merge through `gh`.
+- **Git-native isolation**: every iteration and coding task runs in CLI-created branches and worktrees, then task branches are squash-merged into the iteration branch.
+- **Role orchestration**: one configured adapter is reused as planner, coding, and review agent with role-specific prompts and environment.
+- **Dependency-aware task scheduling**: planner task trees include dependencies and conflicts so independent coding tasks can run in parallel.
+- **CLI-owned commits and pull requests**: the CLI stages, commits, pushes, checks, repairs, and merges from validated role handoffs.
+- **AI sprint PRs**: planner output is scoped to a coherent autonomous development sprint, not a small review-sized batch.
 - **Auditable runtime state**: prompts, effective config, event logs, errors, PR state, check output, and run state are stored under `.loop/`.
 - **GitHub context memory**: recent PRs, Issues, and comments are cached in `.loop/loop.db` and searched on demand.
 - **Skills instead of giant prompts**: `loop init` delegates default skill installation to `npx skills` while the CLI injects only a compact bootstrap into each agent run.
@@ -85,7 +86,7 @@ Build the product according to the repository source of truth.
 
 - Use the specifications and documents under `docs/` as the primary source of truth.
 - Check the existing codebase, tests, examples, and nearby repository documents before assuming new behavior.
-- Read only the documents and code relevant to the selected iteration slice.
+- Read only the documents and code relevant to the selected AI sprint scope.
 - Do not restate repository documentation in this prompt; navigate to it when needed.
 
 ## Coding policy
@@ -106,13 +107,15 @@ loop run task.md \
 ## How It Works
 
 1. `loop run` loads config, validates the instruction file, creates a run id, and starts iteration `0001`.
-2. The CLI creates an isolated worktree on a temporary `wip/<iteration>` branch.
-3. The configured agent receives the instruction plus a compact loop skill bootstrap.
-4. The agent writes a plan and TODOs, edits the repository, renames the branch through `loop branch rename`, and creates commits through `loop commit`.
-5. The agent closes the iteration with `loop iteration close --merge` or `loop iteration close --skip-merge`.
-6. The CLI validates the close handoff, runs configured validation, integrates merge closes, cleans up worktrees and branches, and starts the next iteration when needed.
+2. The CLI creates the iteration branch and worktree before any agent starts.
+3. The planner agent explores the repository and writes a strict AI sprint-level `task-tree` handoff with dependencies and conflicts.
+4. The CLI schedules ready tasks, creates one worktree per coding task, and runs non-conflicting coding agents in parallel.
+5. Each coding agent edits files and writes a `task-result`; the CLI commits the work from task metadata and squash-merges it into the iteration branch.
+6. The CLI runs configured validation, then asks the review agent for a `review-result`.
+7. Validation failures or review findings become repair tasks until the review passes or the fix-cycle limit is reached.
+8. The CLI creates the PR, waits for checks, performs configured merge behavior, cleans up worktrees and branches, and starts the next iteration when needed.
 
-In PR mode, the agent creates and manages the pull request through `loop pr create`, `loop pr checks`, `loop pr logs`, and `loop pr merge` before closing with `--merge`.
+In automated PR mode, checks passing leads to a CLI-owned squash merge. Post-hoc review happens after or outside the autonomous development loop and is not a PR sizing constraint.
 
 ## Commands
 
@@ -149,14 +152,14 @@ validation:
       required: true
 ```
 
-Use pull request mode by config when every run should go through GitHub:
+Pull request mode is the built-in default. Use local merge mode only for fully local repositories or tests:
 
 ```yaml
 version: 1
 
 git:
   integration:
-    mode: pr
+    mode: local_merge
 ```
 
 Use another agent by adding an adapter:
@@ -195,7 +198,7 @@ Ignored runtime files:
 .loop/loop.db
 ```
 
-The durable iteration directory keeps audit files such as `prompt.md`, `effective-config.yaml`, `agent-events.jsonl`, `errors.log`, `pr-state.json`, `pr-checks.json`, and `github-updates.md`. Disposable active-work artifacts such as plans, TODOs, validation output, and PR draft text are accessed through `loop iteration` commands while the iteration is running.
+The durable iteration directory keeps audit files such as `prompt.md`, `effective-config.yaml`, `agent-events.jsonl`, `task-tree.json`, `task-results/`, `review-result.json`, `errors.log`, `pr-state.json`, `pr-checks.json`, and `github-updates.md`. Disposable active-work artifacts such as runtime context, validation output, and prompt audits are accessed through CLI commands while the iteration is running.
 
 ## Development
 
