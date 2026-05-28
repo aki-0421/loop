@@ -169,7 +169,7 @@ func lookupHelpCommand(path []string) (helpCommand, bool) {
 func lookupAgentOnlyHelpCommand(path []string) (helpCommand, bool) {
 	key := strings.Join(path, " ")
 	for _, cmd := range allHelpCommands() {
-		if cmd.AgentOnly && strings.Join(cmd.Path, " ") == key {
+		if cmd.AgentOnly && cmd.Agent && strings.Join(cmd.Path, " ") == key {
 			return cmd, true
 		}
 	}
@@ -246,13 +246,39 @@ func helpArtifacts() []helpArtifact {
 	return artifacts
 }
 
+func agentHelpArtifacts() []helpArtifact {
+	include := map[string]bool{
+		"effective-config": true,
+		"errors":           true,
+		"events":           true,
+		"github-updates":   true,
+		"instruction":      true,
+		"pr-check-log":     true,
+		"pr-checks":        true,
+		"pr-state":         true,
+		"prompt":           true,
+		"review-result":    true,
+		"runtime":          true,
+		"task-tree":        true,
+		"validation":       true,
+	}
+	var out []helpArtifact
+	for _, artifact := range helpArtifacts() {
+		if include[artifact.Name] {
+			artifact.Writable = false
+			out = append(out, artifact)
+		}
+	}
+	return out
+}
+
 func commandAgentHelp(g globals, args []string) error {
 	if len(args) == 0 {
 		commands := agentHelpCommands()
 		value := map[string]any{
 			"agent":     true,
 			"commands":  compactHelpSummaries(commands),
-			"artifacts": helpArtifacts(),
+			"artifacts": agentHelpArtifacts(),
 		}
 		return printResult(g, value, renderAgentHelp(commands))
 	}
@@ -264,7 +290,7 @@ func commandAgentHelp(g globals, args []string) error {
 	subcommands := agentChildHelpSummaries(cmd.Path)
 	artifacts := []helpArtifact(nil)
 	if hasIterationArtifactHelp(cmd.Path) {
-		artifacts = helpArtifacts()
+		artifacts = agentHelpArtifacts()
 	}
 	value := map[string]any{
 		"agent":       true,
@@ -341,7 +367,7 @@ func renderAgentHelp(commands []helpCommand) string {
 	for _, cmd := range commands {
 		fmt.Fprintf(&b, "cmd:%s;%s\n", compactUsage(cmd.Usage), compactText(cmd.Summary))
 	}
-	fmt.Fprintf(&b, "artifacts:%s\n", compactArtifacts(helpArtifacts()))
+	fmt.Fprintf(&b, "artifacts:%s\n", compactArtifacts(agentHelpArtifacts()))
 	b.WriteString("detail:loop help agent <command...>\n")
 	return b.String()
 }
@@ -472,7 +498,6 @@ func allHelpCommands() []helpCommand {
 			Flags: []helpFlag{
 				{Name: "--type <type>", Description: "commit type: F, T, R, D, S, V, or C"},
 			},
-			Agent:     true,
 			AgentOnly: true,
 		},
 		{
@@ -480,7 +505,6 @@ func allHelpCommands() []helpCommand {
 			Usage:       "loop branch <rename> ...",
 			Summary:     "Manage the current iteration branch",
 			Description: "Agent-facing branch lifecycle commands.",
-			Agent:       true,
 			AgentOnly:   true,
 		},
 		{
@@ -491,7 +515,6 @@ func allHelpCommands() []helpCommand {
 			Flags: append(iterationLocatorFlags(),
 				helpFlag{Name: "--kind <kind>", Description: "branch kind for slug-only names"},
 			),
-			Agent:     true,
 			AgentOnly: true,
 		},
 		{
@@ -499,7 +522,6 @@ func allHelpCommands() []helpCommand {
 			Usage:       "loop pr <create|checks|logs|merge> ...",
 			Summary:     "Create, check, inspect, and merge the current iteration pull request",
 			Description: "Compatibility commands for older single-agent workflows. Role-orchestrated runs perform PR creation, checks, and merging in the CLI.",
-			Agent:       true,
 			AgentOnly:   true,
 		},
 		{
@@ -508,7 +530,6 @@ func allHelpCommands() []helpCommand {
 			Summary:     "Push the tracked branch and create or reuse its pull request",
 			Description: "Reads pr-title and pr-body artifacts, pushes the tracked branch when configured, creates or reuses a PR, and writes pr-state.",
 			Flags:       iterationLocatorFlags(),
-			Agent:       true,
 			AgentOnly:   true,
 		},
 		{
@@ -517,7 +538,6 @@ func allHelpCommands() []helpCommand {
 			Summary:     "Push current commits and wait for pull request checks",
 			Description: "Writes pr-checks. Failed checks exit non-zero with concise errors; inspect pr-checks or fetch job logs before rerunning checks or choosing skip-merge.",
 			Flags:       iterationLocatorFlags(),
-			Agent:       true,
 			AgentOnly:   true,
 		},
 		{
@@ -526,7 +546,6 @@ func allHelpCommands() []helpCommand {
 			Summary:     "Fetch a failed pull request check log",
 			Description: "Fetches GitHub Actions job logs through gh and writes pr-check-log.",
 			Flags:       iterationLocatorFlags(),
-			Agent:       true,
 			AgentOnly:   true,
 		},
 		{
@@ -535,7 +554,6 @@ func allHelpCommands() []helpCommand {
 			Summary:     "Validate, recheck, and squash-merge the pull request",
 			Description: "Runs configured validation, performs a final check wait, merges through gh, and records pr-state.status=merged.",
 			Flags:       iterationLocatorFlags(),
-			Agent:       true,
 			AgentOnly:   true,
 		},
 		{
@@ -601,7 +619,6 @@ func allHelpCommands() []helpCommand {
 			Usage:       "loop iteration <path|read|write|append|plan|todo|close> ...",
 			Summary:     "Read, write, and close named iteration artifacts",
 			Description: "If `--iteration-dir` is omitted, commands resolve the current agent iteration automatically.",
-			Agent:       true,
 			AgentOnly:   true,
 		},
 		{
@@ -631,7 +648,6 @@ func allHelpCommands() []helpCommand {
 				helpFlag{Name: "--file <path>", Description: "source file, or - for stdin"},
 				helpFlag{Name: "--value <text>", Description: "literal content"},
 			),
-			Agent:     true,
 			AgentOnly: true,
 		},
 		{
@@ -643,7 +659,6 @@ func allHelpCommands() []helpCommand {
 				helpFlag{Name: "--file <path>", Description: "source file, or - for stdin"},
 				helpFlag{Name: "--value <text>", Description: "literal content"},
 			),
-			Agent:     true,
 			AgentOnly: true,
 		},
 		{
@@ -651,7 +666,6 @@ func allHelpCommands() []helpCommand {
 			Usage:       "loop iteration plan <template|read|write> ...",
 			Summary:     "Manage the iteration plan artifact",
 			Description: "Planning gate commands retained for older single-agent workflows. Print the CLI-owned template, fill one implementation scope, and write the plan before repository edits. Keep TODOs in `loop iteration todo`.",
-			Agent:       true,
 			AgentOnly:   true,
 		},
 		{
@@ -659,7 +673,6 @@ func allHelpCommands() []helpCommand {
 			Usage:       "loop iteration plan template",
 			Summary:     "Print the CLI-owned iteration plan template",
 			Description: "Use this template for the plan artifact. It intentionally excludes TODO checkboxes because TODOs are managed one item at a time.",
-			Agent:       true,
 			AgentOnly:   true,
 		},
 		{
@@ -667,7 +680,6 @@ func allHelpCommands() []helpCommand {
 			Usage:     "loop iteration plan read [--iteration-dir <dir>|--run <run-id> --iteration <n>]",
 			Summary:   "Print the iteration plan artifact",
 			Flags:     iterationLocatorFlags(),
-			Agent:     true,
 			AgentOnly: true,
 		},
 		{
@@ -679,7 +691,6 @@ func allHelpCommands() []helpCommand {
 				helpFlag{Name: "--file <path>", Description: "source file, or - for stdin"},
 				helpFlag{Name: "--value <text>", Description: "literal content"},
 			),
-			Agent:     true,
 			AgentOnly: true,
 		},
 		{
@@ -687,7 +698,6 @@ func allHelpCommands() []helpCommand {
 			Usage:       "loop iteration todo <list|insert|edit|complete> ...",
 			Summary:     "Manage the iteration TODO artifact",
 			Description: todoContractHelpText(),
-			Agent:       true,
 			AgentOnly:   true,
 		},
 		{
@@ -696,7 +706,6 @@ func allHelpCommands() []helpCommand {
 			Summary:     "Print numbered iteration TODOs",
 			Description: "Use the printed 1-based indexes with edit and complete.",
 			Flags:       iterationLocatorFlags(),
-			Agent:       true,
 			AgentOnly:   true,
 		},
 		{
@@ -708,7 +717,6 @@ func allHelpCommands() []helpCommand {
 				helpFlag{Name: "--after <n>", Description: "insert after 1-based todo index; 0 inserts at the top", Default: "append"},
 				helpFlag{Name: "--type <type>", Description: "commit type: F, T, R, D, S, V, or C"},
 			),
-			Agent:     true,
 			AgentOnly: true,
 		},
 		{
@@ -719,7 +727,6 @@ func allHelpCommands() []helpCommand {
 			Flags: append(iterationLocatorFlags(),
 				helpFlag{Name: "--type <type>", Description: "commit type: F, T, R, D, S, V, or C"},
 			),
-			Agent:     true,
 			AgentOnly: true,
 		},
 		{
@@ -728,7 +735,6 @@ func allHelpCommands() []helpCommand {
 			Summary:     "Mark one iteration TODO complete",
 			Description: "Marks the indexed TODO done after its matching commit exists, or after skip-merge is chosen because no repository change is appropriate.",
 			Flags:       iterationLocatorFlags(),
-			Agent:       true,
 			AgentOnly:   true,
 		},
 		{
@@ -748,7 +754,6 @@ func allHelpCommands() []helpCommand {
 				helpFlag{Name: "--validation-command <value>", Description: "repeatable command as JSON or name|command|exit_code|required"},
 				helpFlag{Name: "--assumption <text>", Description: "repeatable recorded assumption"},
 			),
-			Agent:     true,
 			AgentOnly: true,
 		},
 		{
@@ -763,7 +768,7 @@ func allHelpCommands() []helpCommand {
 			Path:        []string{"handoff", "write"},
 			Usage:       "loop handoff write <task-tree|task-result|review-result> [--task <id>] [--file <path>|--value <json>]",
 			Summary:     "Write and validate one role handoff",
-			Description: "Planner agents write task-tree, coding agents write task-result with --task, and review agents write review-result. JSON is validated with unknown fields rejected.",
+			Description: handoffWriteHelpText(),
 			Flags: append(iterationLocatorFlags(),
 				helpFlag{Name: "--task <id>", Description: "task id for task-result"},
 				helpFlag{Name: "--file <path>", Description: "source file, or - for stdin"},
@@ -886,6 +891,30 @@ func commitTypeHelpText() string {
 		"`<type>` is one of F, T, R, D, S, V, or C, with common lowercase aliases accepted.",
 		"Types: F=features, fixes, or user-visible behavior; T=tests or test utilities; R=refactors; D=documentation; S=style or presentation; V=versioning, dependencies, or licensing; C=config, build, lint, CI, or tooling.",
 	}, " ")
+}
+
+func handoffWriteHelpText() string {
+	return strings.Join([]string{
+		"Planner agents write `task-tree`, coding agents write `task-result` with `--task`, and review agents write `review-result`.",
+		"Use `--file <path>` for normal handoffs; `--value <json>` is only for short literal JSON.",
+		"JSON is strict and unknown fields are rejected.",
+		"Authoritative schemas:",
+		taskTreeSchemaHelpText(),
+		taskResultSchemaHelpText(),
+		reviewResultSchemaHelpText(),
+	}, " ")
+}
+
+func taskTreeSchemaHelpText() string {
+	return "task-tree={schema_version:1,summary:string,goal_evaluation:string,goal_complete?:bool,tasks:[{id,title,description,depends_on:[],conflicts_with:[],acceptance:[],commit_type:F|T|R|D|S|V|C,commit_message:lowercase-imperative}]}; ids start with a lowercase letter and contain lowercase letters, digits, or hyphens."
+}
+
+func taskResultSchemaHelpText() string {
+	return "task-result={schema_version:1,task_id:string,status:completed|failed|skipped,summary:string,validation?:[],notes?:[]}."
+}
+
+func reviewResultSchemaHelpText() string {
+	return "review-result={schema_version:1,status:approved|changes_requested|failed,summary:string,goal_evaluation:string,goal_complete?:bool,findings?:[{id,task_id?,title,description,acceptance:[],commit_type:F|T|R|D|S|V|C,commit_message:lowercase-imperative}]}."
 }
 
 func iterationLocatorFlags() []helpFlag {

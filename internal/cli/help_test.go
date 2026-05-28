@@ -31,11 +31,11 @@ func TestHelpCommandListsCommands(t *testing.T) {
 }
 
 func TestHelpCommandRejectsAgentOnlyDetail(t *testing.T) {
-	err := commandHelp(context.Background(), globals{}, []string{"iteration", "close"})
+	err := commandHelp(context.Background(), globals{}, []string{"handoff", "write"})
 	if err == nil {
 		t.Fatal("human help should reject agent-only topics")
 	}
-	if !strings.Contains(err.Error(), "loop help agent iteration close") {
+	if !strings.Contains(err.Error(), "loop help agent handoff write") {
 		t.Fatalf("error should point to agent help: %v", err)
 	}
 }
@@ -59,14 +59,12 @@ func TestAgentHelpCommandShowsCompactList(t *testing.T) {
 	}
 	for _, want := range []string{
 		"agent-help-v1\n",
-		"cmd:loop branch rename",
-		"cmd:loop commit --type type message;",
-		"cmd:loop iteration plan",
-		"cmd:loop iteration close",
-		"cmd:loop iteration todo",
+		"cmd:loop handoff write task-tree|task-result|review-result",
+		"cmd:loop iteration read artifact",
 		"cmd:loop issue report",
 		"artifacts:",
-		"plan:rw:file",
+		"runtime:r:file",
+		"task-tree:r:file",
 		"detail:loop help agent <command...>",
 	} {
 		if !strings.Contains(out, want) {
@@ -76,28 +74,30 @@ func TestAgentHelpCommandShowsCompactList(t *testing.T) {
 	if strings.Contains(out, "  ") || strings.Contains(out, "\n\n") {
 		t.Fatalf("agent help should avoid padding and blank lines:\n%s", out)
 	}
-	if strings.Contains(out, "loop memory") {
-		t.Fatalf("agent help should not expose memory commands:\n%s", out)
+	for _, notWant := range []string{"loop memory", "loop commit", "loop branch", "loop pr", "loop iteration todo", "loop iteration close", "todo:rw", "plan:rw"} {
+		if strings.Contains(out, notWant) {
+			t.Fatalf("agent help should not expose %q:\n%s", notWant, out)
+		}
 	}
 }
 
-func TestAgentHelpCommandShowsIterationCloseDetails(t *testing.T) {
+func TestAgentHelpCommandShowsHandoffWriteSchemas(t *testing.T) {
 	out, err := captureStdout(t, func() error {
-		return commandHelp(context.Background(), globals{}, []string{"agent", "iteration", "close"})
+		return commandHelp(context.Background(), globals{}, []string{"agent", "handoff", "write"})
 	})
 	if err != nil {
-		t.Fatalf("loop help agent iteration close: %v", err)
+		t.Fatalf("loop help agent handoff write: %v", err)
 	}
 	for _, want := range []string{
-		"cmd:loop iteration close",
-		"--merge",
-		"--skip-merge",
-		"--sleep",
-		"--summary text",
-		"--reason text",
-		"--should-stop bool",
-		"--goal-evaluation text",
-		"summary:Close the iteration with merge or skip-merge",
+		"cmd:loop handoff write task-tree|task-result|review-result",
+		"task-tree={schema_version:1,summary:string,goal_evaluation:string",
+		"depends_on:[]",
+		"conflicts_with:[]",
+		"commit_type:F|T|R|D|S|V|C",
+		"task-result={schema_version:1,task_id:string,status:completed|failed|skipped",
+		"review-result={schema_version:1,status:approved|changes_requested|failed",
+		"--file path",
+		"--value json",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("help output missing %q:\n%s", want, out)
@@ -105,103 +105,19 @@ func TestAgentHelpCommandShowsIterationCloseDetails(t *testing.T) {
 	}
 }
 
-func TestAgentHelpCommandShowsIterationPlanAndTodoDetails(t *testing.T) {
-	planOut, err := captureStdout(t, func() error {
-		return commandHelp(context.Background(), globals{}, []string{"agent", "iteration", "plan"})
-	})
-	if err != nil {
-		t.Fatalf("loop help agent iteration plan: %v", err)
-	}
-	for _, want := range []string{
-		"cmd:loop iteration plan",
-		"sub:loop iteration plan read",
-		"loop iteration plan template",
-		"Keep TODOs in `loop iteration todo`",
-	} {
-		if !strings.Contains(planOut, want) {
-			t.Fatalf("plan help output missing %q:\n%s", want, planOut)
-		}
-	}
-
-	todoOut, err := captureStdout(t, func() error {
-		return commandHelp(context.Background(), globals{}, []string{"agent", "iteration", "todo"})
-	})
-	if err != nil {
-		t.Fatalf("loop help agent iteration todo: %v", err)
-	}
-	for _, want := range []string{
-		"cmd:loop iteration todo",
-		"sub:loop iteration todo complete",
-		"After the plan selects the implementation scope",
-		"`<type>` is one of F, T, R, D, S, V, or C",
-		"F=features, fixes, or user-visible behavior",
-		"same `--type <type> <message>` shape as `loop commit`",
-		"Complete an item only after its matching commit exists",
-	} {
-		if !strings.Contains(todoOut, want) {
-			t.Fatalf("todo help output missing %q:\n%s", want, todoOut)
-		}
-	}
-}
-
-func TestAgentHelpCommandShowsTodoTypeDetailsForTypedCommands(t *testing.T) {
+func TestAgentHelpCommandHidesLegacyLifecycleDetails(t *testing.T) {
 	for _, topic := range [][]string{
+		{"agent", "branch", "rename"},
+		{"agent", "commit"},
+		{"agent", "iteration", "close"},
+		{"agent", "iteration", "plan"},
+		{"agent", "iteration", "todo"},
 		{"agent", "iteration", "todo", "insert"},
-		{"agent", "iteration", "todo", "edit"},
+		{"agent", "pr", "create"},
 	} {
-		out, err := captureStdout(t, func() error {
-			return commandHelp(context.Background(), globals{}, topic)
-		})
-		if err != nil {
-			t.Fatalf("loop help %v: %v", topic, err)
-		}
-		for _, want := range []string{
-			"`<type>` is one of F, T, R, D, S, V, or C",
-			"F=features, fixes, or user-visible behavior",
-			"--type type",
-		} {
-			if !strings.Contains(out, want) {
-				t.Fatalf("todo typed command help %v missing %q:\n%s", topic, want, out)
-			}
-		}
-	}
-}
-
-func TestAgentHelpCommandShowsBranchRenameKinds(t *testing.T) {
-	out, err := captureStdout(t, func() error {
-		return commandHelp(context.Background(), globals{}, []string{"agent", "branch", "rename"})
-	})
-	if err != nil {
-		t.Fatalf("loop help agent branch rename: %v", err)
-	}
-	for _, want := range []string{
-		"cmd:loop branch rename",
-		"desc:`<kind>` is one of feat, fix, refactor, docs, test, style, build, ci, or chore.",
-		"--kind kind",
-	} {
-		if !strings.Contains(out, want) {
-			t.Fatalf("help output missing %q:\n%s", want, out)
-		}
-	}
-}
-
-func TestAgentHelpCommandShowsCommitContract(t *testing.T) {
-	out, err := captureStdout(t, func() error {
-		return commandHelp(context.Background(), globals{}, []string{"agent", "commit"})
-	})
-	if err != nil {
-		t.Fatalf("loop help agent commit: %v", err)
-	}
-	for _, want := range []string{
-		"cmd:loop commit --type type message",
-		"desc:`<type>` is one of F, T, R, D, S, V, or C",
-		"F=features, fixes, or user-visible behavior",
-		"loop commit --type F add weather app shell",
-		"--type type",
-		"do not run `git add` or `git commit` directly",
-	} {
-		if !strings.Contains(out, want) {
-			t.Fatalf("help output missing %q:\n%s", want, out)
+		err := commandHelp(context.Background(), globals{}, topic)
+		if err == nil {
+			t.Fatalf("loop help %v should be hidden from role-agent help", topic)
 		}
 	}
 }
@@ -216,11 +132,51 @@ func TestAgentHelpCommandShowsIterationArtifactsFromRegistry(t *testing.T) {
 	for _, want := range []string{
 		"artifacts:",
 		"runtime:r:file",
-		"plan:rw:file",
-		"pr-template:r:repo",
+		"instruction:r:file",
+		"validation:r:file",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("help output missing %q:\n%s", want, out)
+		}
+	}
+	for _, notWant := range []string{"todo:rw", "plan:rw"} {
+		if strings.Contains(out, notWant) {
+			t.Fatalf("role-agent artifact help should not expose %q:\n%s", notWant, out)
+		}
+	}
+}
+
+func TestHelpCommandHidesLegacyLifecycleDetailsFromHumanHelp(t *testing.T) {
+	for _, topic := range [][]string{
+		{"branch", "rename"},
+		{"commit"},
+		{"iteration", "close"},
+		{"iteration", "todo"},
+		{"pr", "create"},
+	} {
+		err := commandHelp(context.Background(), globals{}, topic)
+		if err == nil {
+			t.Fatalf("loop help %v should be hidden from human help", topic)
+		}
+		if strings.Contains(err.Error(), "loop help agent") {
+			t.Fatalf("hidden compatibility topic should not point to role-agent help: %v", err)
+		}
+	}
+}
+
+func TestAgentHelpCommandShowsIssueDetails(t *testing.T) {
+	for _, topic := range [][]string{
+		{"agent", "issue", "ask"},
+		{"agent", "issue", "report"},
+	} {
+		out, err := captureStdout(t, func() error {
+			return commandHelp(context.Background(), globals{}, topic)
+		})
+		if err != nil {
+			t.Fatalf("loop help %v: %v", topic, err)
+		}
+		if !strings.Contains(out, "--title text") || !strings.Contains(out, "--body text") {
+			t.Fatalf("issue help %v missing title/body flags:\n%s", topic, out)
 		}
 	}
 }

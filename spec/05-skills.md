@@ -47,6 +47,8 @@ The built-in `loop` skill consolidates the planner, coding, and review role conv
 - Review role: inspect the iteration diff and write `review-result` with `loop handoff write review-result`.
 - Avoid direct Git lifecycle commands, `loop commit`, `loop branch`, `loop pr`, and `loop iteration close`; the CLI owns those mechanics in role-orchestrated runs.
 
+The skill includes compact JSON shapes for `task-tree`, `task-result`, and `review-result`, and points agents to `loop help agent handoff write` for current command flags and schema details.
+
 The planner role treats one iteration as one AI sprint-sized PR: a coherent development goal that autonomous agents can complete in hours. It splits that sprint into coding-agent work packets for dependency ordering, conflict avoidance, validation, and parallel execution, not for review convenience.
 
 The default skill keeps role behavior concise. It does not expose cached memory lookup commands to agents; GitHub context caching remains a CLI-owned internal capability. Commit intent comes from planner task metadata; pull request titles, bodies, checks, and merges are handled by the CLI.

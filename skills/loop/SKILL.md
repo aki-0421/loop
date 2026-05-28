@@ -15,6 +15,7 @@ You are running inside the `loop` harness. The CLI owns branches, worktrees, com
 - Use `loop issue ask` only for important blocking product or policy questions; continue independent work when possible.
 - Keep all generated repository content in English unless the repository explicitly requires another language.
 - Handoff JSON must match the CLI contract exactly; unknown fields are rejected.
+- Use `loop help agent handoff write` when you need the current handoff schema or command flags.
 
 ## Planner Role
 
@@ -27,6 +28,29 @@ loop handoff write task-tree --file task-tree.json
 ```
 
 The task tree contains `schema_version`, `summary`, `goal_evaluation`, optional `goal_complete`, and `tasks`. Each task must include `id`, `title`, `description`, `depends_on`, `conflicts_with`, `acceptance`, `commit_type`, and `commit_message`.
+
+Task-tree shape:
+
+```json
+{
+  "schema_version": 1,
+  "summary": "One-sentence AI sprint-sized PR summary.",
+  "goal_evaluation": "Current view of the CLI goal.",
+  "goal_complete": false,
+  "tasks": [
+    {
+      "id": "implement-core",
+      "title": "Implement core behavior",
+      "description": "Instructions for the coding agent.",
+      "depends_on": [],
+      "conflicts_with": [],
+      "acceptance": ["Concrete acceptance check."],
+      "commit_type": "F",
+      "commit_message": "implement core behavior"
+    }
+  ]
+}
+```
 
 Task rules:
 
@@ -47,6 +71,19 @@ Complete only the assigned task from the prompt. Edit repository files as needed
 loop handoff write task-result --task "$LOOP_TASK_ID" --file task-result.json
 ```
 
+Task-result shape:
+
+```json
+{
+  "schema_version": 1,
+  "task_id": "implement-core",
+  "status": "completed",
+  "summary": "What changed.",
+  "validation": ["Focused check that ran."],
+  "notes": []
+}
+```
+
 Use `status: "completed"` only when the task is ready for the CLI to commit. Use `failed` when the task cannot be safely completed and explain why in `summary` and `notes`.
 
 ## Review Role
@@ -55,6 +92,19 @@ Review the iteration branch after coding and validation. Inspect the diff, task 
 
 ```bash
 loop handoff write review-result --file review-result.json
+```
+
+Review-result shape:
+
+```json
+{
+  "schema_version": 1,
+  "status": "approved",
+  "summary": "Review conclusion.",
+  "goal_evaluation": "Whether the integrated PR satisfies the CLI goal.",
+  "goal_complete": false,
+  "findings": []
+}
 ```
 
 Use `status: "approved"` only when the iteration is ready for PR creation or merge. Use `changes_requested` with concrete `findings` that can be converted into repair tasks. Set `goal_complete` only when a CLI goal exists and the integrated PR would satisfy it.

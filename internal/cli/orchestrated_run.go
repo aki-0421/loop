@@ -712,16 +712,19 @@ func buildRolePrompt(role string, paths pathSet, task workflow.Task, tree any, t
 	fmt.Fprintf(&b, "\n## Role\n\nYou are the %s agent in a CLI-orchestrated loop iteration.\n", role)
 	b.WriteString("Read runtime context with `loop iteration read runtime` and the instruction with `loop iteration read instruction`.\n")
 	b.WriteString("Do not create branches, commits, pull requests, or iteration closes; write the required handoff JSON and exit.\n")
+	b.WriteString("Use `loop help agent handoff write` for the current handoff schema and command flags if needed.\n")
 	switch role {
 	case "planner":
 		b.WriteString("\nWrite one task-tree handoff:\n\n```bash\nloop handoff write task-tree --file task-tree.json\n```\n\n")
 		b.WriteString("Plan one AI sprint-sized PR: a coherent sprint goal that autonomous agents can complete in hours, not a small review-sized batch. Post-hoc review is outside planning and must not constrain scope.\n")
-		b.WriteString("The JSON must include schema_version, summary, goal_evaluation, optional goal_complete, and tasks with id, title, description, depends_on, conflicts_with, acceptance, commit_type, and commit_message.\n")
+		b.WriteString("The JSON must match this schema: " + taskTreeSchemaHelpText() + "\n")
+		b.WriteString("Minimal example:\n\n```json\n{\n  \"schema_version\": 1,\n  \"summary\": \"Implement the requested sprint goal.\",\n  \"goal_evaluation\": \"This iteration plans the work needed for the current goal.\",\n  \"tasks\": [\n    {\n      \"id\": \"implement-core\",\n      \"title\": \"Implement core behavior\",\n      \"description\": \"Update the relevant code paths for the requested behavior.\",\n      \"depends_on\": [],\n      \"conflicts_with\": [],\n      \"acceptance\": [\"Focused tests or validation cover the behavior.\"],\n      \"commit_type\": \"F\",\n      \"commit_message\": \"implement core behavior\"\n    }\n  ]\n}\n```\n")
 	case "coding":
 		data, _ := workflow.MarshalIndent(task)
 		b.WriteString("\nComplete only this task, then write a task-result handoff and exit.\n\n")
 		b.WriteString("```json\n" + string(data) + "```\n")
 		b.WriteString("\nUse:\n\n```bash\nloop handoff write task-result --task \"" + task.ID + "\" --file task-result.json\n```\n")
+		b.WriteString("\nThe JSON must match this schema: " + taskResultSchemaHelpText() + "\n")
 	case "review":
 		treeData, _ := workflow.MarshalIndent(tree)
 		resultsData, _ := workflow.MarshalIndent(taskResults)
@@ -730,6 +733,7 @@ func buildRolePrompt(role string, paths pathSet, task workflow.Task, tree any, t
 		b.WriteString("\nTask results:\n\n```json\n" + string(resultsData) + "```\n")
 		b.WriteString("\nValidation status: " + validation.StatusFromResults(validationResults) + "\n")
 		b.WriteString("\nWrite one review-result handoff:\n\n```bash\nloop handoff write review-result --file review-result.json\n```\n")
+		b.WriteString("\nThe JSON must match this schema: " + reviewResultSchemaHelpText() + "\n")
 	}
 	return strings.TrimRight(b.String(), "\n") + "\n"
 }
