@@ -72,9 +72,10 @@ The durable iteration directory stores audit and replay files plus PR lifecycle 
 - `effective-config`: effective configuration snapshot.
 - `agent-events`: structured audit events for iteration-level agents such as planner and reviewer.
 - `tasks/<sequence>/task.json`: durable copy of the task assigned to one coding agent.
+- `tasks/<sequence>/task-result.json`: durable copy of that coding agent's result handoff.
 - `tasks/<sequence>/agent-events.jsonl`: structured audit events for that coding agent only.
 - `errors`: process, result, validation, or sync warnings.
-- `task-tree`, `task-results/`, and `review-result`: durable role handoff audit copies.
+- `task-tree` and `review-result`: durable iteration-level role handoff audit copies.
 - `pr-state`, `pr-checks`, and `pr-check-log`: pull request lifecycle state and check diagnostics written by the CLI.
 - `github-updates`: newly observed GitHub Issue, PR, or comment diffs for an iteration boundary or sleep wake cycle.
 

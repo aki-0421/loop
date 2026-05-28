@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -224,7 +225,7 @@ func writeRoleHandoffAudit(iterDir, kind, taskID string, data []byte) error {
 	case "review-result":
 		path = filepath.Join(iterDir, "review-result.json")
 	case "task-result":
-		path = filepath.Join(iterDir, "task-results", taskID+".json")
+		return writeTaskResultAudit(iterDir, strings.TrimSpace(os.Getenv("LOOP_TASK_DIR")), taskID, data)
 	default:
 		return nil
 	}
@@ -232,6 +233,77 @@ func writeRoleHandoffAudit(iterDir, kind, taskID string, data []byte) error {
 		return err
 	}
 	return os.WriteFile(path, data, 0o644)
+}
+
+func writeTaskResultAudit(iterDir, taskDir, taskID string, data []byte) error {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return errors.New("task id is required for task-result audit")
+	}
+	dir := strings.TrimSpace(taskDir)
+	if dir != "" {
+		ok, err := taskDirBelongsToIteration(iterDir, dir)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return fmt.Errorf("task directory %q is not under %s/tasks", dir, iterDir)
+		}
+	} else {
+		found, err := findTaskAuditDir(iterDir, taskID)
+		if err != nil {
+			return err
+		}
+		dir = found
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(dir, "task-result.json"), data, 0o644)
+}
+
+func taskDirBelongsToIteration(iterDir, taskDir string) (bool, error) {
+	tasksDir, err := filepath.Abs(filepath.Join(iterDir, "tasks"))
+	if err != nil {
+		return false, err
+	}
+	absTaskDir, err := filepath.Abs(taskDir)
+	if err != nil {
+		return false, err
+	}
+	rel, err := filepath.Rel(tasksDir, absTaskDir)
+	if err != nil {
+		return false, err
+	}
+	return rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)), nil
+}
+
+func findTaskAuditDir(iterDir, taskID string) (string, error) {
+	tasksDir := filepath.Join(iterDir, "tasks")
+	entries, err := os.ReadDir(tasksDir)
+	if err != nil {
+		return "", fmt.Errorf("find task directory for %q: %w", taskID, err)
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		dir := filepath.Join(tasksDir, entry.Name())
+		data, err := os.ReadFile(filepath.Join(dir, "task.json"))
+		if err != nil {
+			continue
+		}
+		var task workflow.Task
+		dec := json.NewDecoder(strings.NewReader(string(data)))
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&task); err != nil {
+			continue
+		}
+		if task.ID == taskID {
+			return dir, nil
+		}
+	}
+	return "", fmt.Errorf("task directory for task-result %q was not found under %s", taskID, tasksDir)
 }
 
 func normalizeHandoffKind(kind string) string {

@@ -625,6 +625,10 @@ func runCodingRole(ctx context.Context, cfg config.Config, workDir string, paths
 	if err != nil {
 		return workflow.TaskResult{}, gitx.Commit{}, err
 	}
+	resultData, _ := workflow.MarshalIndent(result)
+	if err := writeTaskResultAudit(paths.IterationDir, paths.TaskDir, task.ID, resultData); err != nil {
+		return workflow.TaskResult{}, gitx.Commit{}, err
+	}
 	commit, err := commitTaskChanges(ctx, workDir, task)
 	if err != nil {
 		return result, gitx.Commit{}, err

@@ -81,6 +81,12 @@ git:
 	if data := readText(t, filepath.Join(taskDir, "task.json")); !strings.Contains(data, `"id": "fake-task"`) {
 		t.Fatalf("task audit missing fake task:\n%s", data)
 	}
+	if data := readText(t, filepath.Join(taskDir, "task-result.json")); !strings.Contains(data, `"task_id": "fake-task"`) {
+		t.Fatalf("task result audit missing fake task:\n%s", data)
+	}
+	if _, err := os.Stat(filepath.Join(iterDir, "task-results")); !os.IsNotExist(err) {
+		t.Fatalf("legacy task-results directory should not exist: %v", err)
+	}
 	if got := countEventType(t, taskDir, "agent.started"); got != 1 {
 		t.Fatalf("task agent.started count = %d, want coding agent", got)
 	}

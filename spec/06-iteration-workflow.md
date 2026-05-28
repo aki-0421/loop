@@ -39,15 +39,15 @@ Durable iteration files include:
   task-tree.json
   tasks/0001/
     task.json
+    task-result.json
     agent-events.jsonl
-  task-results/<task-id>.json
   review-result.json
   pr-state.json
   pr-checks.json
   errors.log
 ```
 
-Runtime context, validation output, prompt audits, and transient task active directories are disposable. After the planner handoff is validated, the CLI creates durable task directories under `tasks/<sequence>/`. Coding-agent event logs are written to the assigned task directory, not to the iteration-level `agent-events.jsonl`. Role handoffs are stored in `.loop/loop.db` and copied to durable JSON files for audit.
+Runtime context, validation output, prompt audits, and transient task active directories are disposable. After the planner handoff is validated, the CLI creates durable task directories under `tasks/<sequence>/`. Coding-agent result handoff copies and event logs are written to the assigned task directory, not to a separate `task-results/` directory or the iteration-level `agent-events.jsonl`. Role handoffs are stored in `.loop/loop.db` and copied to durable JSON files for audit.
 
 ## Role Handoffs
 
