@@ -2,13 +2,12 @@ package cli
 
 import (
 	"bytes"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/aki-0421/loop/internal/runstate"
+	"github.com/aki-0421/loop/internal/workflow"
 )
 
 func TestRunRendererLineModePrintsAuditCommand(t *testing.T) {
@@ -72,10 +71,6 @@ func TestRunRendererShowsInitialMemoryFetch(t *testing.T) {
 
 func TestRunRendererDashboardKeepsEssentialStateWithinBounds(t *testing.T) {
 	t.Setenv("LOOP_ASCII", "1")
-	todoPath := filepath.Join(t.TempDir(), "todo.txt")
-	if err := os.WriteFile(todoPath, []byte("- [x] Inspect startup path\n- [>] Add lazy loading\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
 	now := time.Now()
 	renderer := &runRenderer{
 		started:      now.Add(-5 * time.Minute),
@@ -89,7 +84,7 @@ func TestRunRendererDashboardKeepsEssentialStateWithinBounds(t *testing.T) {
 		stage:        string(runstate.StageAgentRunning),
 		stageDetail:  "agent running",
 		iteration:    "0001",
-		todoPath:     todoPath,
+		tasks:        []taskItem{{ID: "inspect", Done: true, Status: "done", Text: "Inspect startup path"}, {ID: "lazy-load", Status: "active", Text: "Add lazy loading"}},
 		activity:     []string{"command: go test ./..."},
 		activityLog:  []rendererLogLine{{At: now, Text: "command: go test ./..."}},
 		events:       []rendererEvent{{At: now, Status: "active", Title: "Implementing", Detail: "agent running"}},
@@ -103,7 +98,7 @@ func TestRunRendererDashboardKeepsEssentialStateWithinBounds(t *testing.T) {
 
 	frameLines := renderer.frame(130, 32)
 	frame := strings.Join(frameLines, "\n")
-	for _, want := range []string{"╦   ╔═╗", "prompt.md", "2K in", "512 out", "2 merged", "1/2 todo", "Add lazy loading", "Inspecting startup path", "Ctrl+C cancel"} {
+	for _, want := range []string{"╦   ╔═╗", "prompt.md", "2K in", "512 out", "2 merged", "1/2 tasks", "Add lazy loading", "Inspecting startup path", "Ctrl+C cancel"} {
 		if !strings.Contains(frame, want) {
 			t.Fatalf("frame missing %q:\n%s", want, frame)
 		}
@@ -113,13 +108,13 @@ func TestRunRendererDashboardKeepsEssentialStateWithinBounds(t *testing.T) {
 	shortLines := renderDashboard(rendererSnapshot{
 		Started:      now.Add(-time.Minute),
 		Now:          now,
-		Todos:        []todoItem{{Done: true, Text: "Done"}, {Text: "Open"}},
+		Tasks:        []taskItem{{Done: true, Text: "Done"}, {Text: "Open"}},
 		Current:      strings.Repeat("long message ", 20),
 		InputTokens:  100,
 		OutputTokens: 50,
 	}, 70, 8)
 	shortFrame := strings.Join(shortLines, "\n")
-	for _, want := range []string{"loop", "long message", "todo: 1/2 done"} {
+	for _, want := range []string{"loop", "long message", "tasks: 1/2 done"} {
 		if !strings.Contains(shortFrame, want) {
 			t.Fatalf("compact frame missing %q:\n%s", want, shortFrame)
 		}
@@ -198,37 +193,24 @@ func TestRunRendererShowsSleepFetchRequested(t *testing.T) {
 	}
 }
 
-func TestParseTodoItemsNormalizesCommitTypeColon(t *testing.T) {
-	todos := parseTodoItems(strings.NewReader("- [ ] C scaffold Next.js app tooling\n- [>] F: add dashboard shell\n- [x] D update docs\n- [ ] Check setup\n"))
-
-	if len(todos) != 4 {
-		t.Fatalf("todo count = %d, want 4", len(todos))
-	}
-	got := []string{todos[0].Text, todos[1].Text, todos[2].Text, todos[3].Text}
-	want := []string{"C: scaffold Next.js app tooling", "F: add dashboard shell", "D: update docs", "Check setup"}
-	if strings.Join(got, "\n") != strings.Join(want, "\n") {
-		t.Fatalf("todo text = %#v, want %#v", got, want)
-	}
-}
-
-func TestRunRendererDashboardListsMaximumTodosWithHiddenBelow(t *testing.T) {
+func TestRunRendererDashboardListsMaximumTasksWithHiddenBelow(t *testing.T) {
 	t.Setenv("LOOP_ASCII", "1")
 	now := time.Now()
-	todos := []todoItem{
-		{Done: true, Status: "done", Text: "Todo 1"},
-		{Done: true, Status: "done", Text: "Todo 2"},
-		{Text: "Todo 3"},
-		{Text: "Todo 4"},
-		{Status: "active", Text: "Todo 5"},
-		{Text: "Todo 6"},
-		{Text: "Todo 7"},
-		{Text: "Todo 8"},
+	tasks := []taskItem{
+		{Done: true, Status: "done", Text: "Task 1"},
+		{Done: true, Status: "done", Text: "Task 2"},
+		{Text: "Task 3"},
+		{Text: "Task 4"},
+		{Status: "active", Text: "Task 5"},
+		{Text: "Task 6"},
+		{Text: "Task 7"},
+		{Text: "Task 8"},
 	}
 	lines := renderDashboard(rendererSnapshot{
 		Started:      now.Add(-time.Minute),
 		Now:          now,
 		Instruction:  "",
-		Todos:        todos,
+		Tasks:        tasks,
 		InputTokens:  100,
 		OutputTokens: 50,
 		MergeCount:   1,
@@ -237,14 +219,98 @@ func TestRunRendererDashboardListsMaximumTodosWithHiddenBelow(t *testing.T) {
 	frame := strings.Join(lines, "\n")
 
 	assertFrameBounds(t, lines, 100, 18)
-	for _, want := range []string{"2/8 todo", "Todo 1", "Todo 2", "6 hidden below", "Ctrl+C cancel"} {
+	for _, want := range []string{"2/8 tasks", "Task 1", "Task 2", "6 hidden below", "Ctrl+C cancel"} {
 		if !strings.Contains(stripANSISequences(frame), want) {
 			t.Fatalf("frame missing %q:\n%s", want, frame)
 		}
 	}
-	if strings.Contains(frame, "Todo 3") || strings.Contains(frame, "Todo 8") {
-		t.Fatalf("hidden TODOs should not be rendered when hidden-below row is needed:\n%s", frame)
+	if strings.Contains(frame, "Task 3") || strings.Contains(frame, "Task 8") {
+		t.Fatalf("hidden tasks should not be rendered when hidden-below row is needed:\n%s", frame)
 	}
+}
+
+func TestRunRendererShowsRoleTasks(t *testing.T) {
+	t.Setenv("LOOP_ASCII", "1")
+	var out bytes.Buffer
+	now := time.Now()
+	renderer := &runRenderer{
+		enabled:     true,
+		interactive: false,
+		writer:      &out,
+		started:     now,
+		done:        make(chan struct{}),
+		stage:       string(runstate.StageCoding),
+		iteration:   "0001",
+	}
+
+	first := workflow.Task{ID: "api", Title: "Add API route"}
+	second := workflow.Task{ID: "tests", Title: "Add request tests"}
+	renderer.TasksPlanned([]workflow.Task{first, second})
+	renderer.TaskStarted(first)
+	renderer.TaskCompleted(first)
+	renderer.TaskStarted(second)
+
+	if got := out.String(); !strings.Contains(got, "2 planned") || !strings.Contains(got, "started Add request tests") {
+		t.Fatalf("line renderer missing task updates:\n%s", got)
+	}
+	frameLines := renderer.frame(100, 22)
+	frame := stripANSISequences(strings.Join(frameLines, "\n"))
+	for _, want := range []string{"1/2 tasks", "Add API route", "Add request tests"} {
+		if !strings.Contains(frame, want) {
+			t.Fatalf("task frame missing %q:\n%s", want, frame)
+		}
+	}
+	assertFrameBounds(t, frameLines, 100, 22)
+}
+
+func TestRunRendererPlannerShowsCompactStatusAndTruncatedCommand(t *testing.T) {
+	t.Setenv("LOOP_ASCII", "1")
+	var out bytes.Buffer
+	now := time.Now()
+	renderer := &runRenderer{
+		enabled:     true,
+		interactive: false,
+		writer:      &out,
+		started:     now,
+		done:        make(chan struct{}),
+		stage:       string(runstate.StagePlanning),
+		stageDetail: "planner agent running",
+		latestMsg:   "The loop CLI in this checkout does not expose loop memory recent, and loop issue access is unavailable. " + strings.Repeat("message ", 16),
+	}
+
+	renderer.AgentEvent(runstate.Event{
+		"type":    "agent.command",
+		"command": "/bin/zsh",
+		"args":    []string{"-lc", "sed -n '1,240p' apps/web/app/layout.tsx && sed -n '1,240p' apps/web/app/page.tsx && echo super-long-tail-marker " + strings.Repeat("command ", 16)},
+	})
+
+	frameLines := renderer.frame(90, 24)
+	frame := stripANSISequences(strings.Join(frameLines, "\n"))
+	var latestLine, commandLine string
+	for _, line := range frameLines {
+		line = strings.TrimSpace(stripANSISequences(line))
+		if strings.Contains(line, "The loop CLI") {
+			latestLine = line
+		}
+		if strings.Contains(line, "running command:") {
+			commandLine = line
+		}
+	}
+	for _, want := range []string{"- planning...", "running command: /bin/zsh -lc", "The loop CLI"} {
+		if !strings.Contains(frame, want) {
+			t.Fatalf("planner frame missing %q:\n%s", want, frame)
+		}
+	}
+	if commandLine == "" || latestLine == "" {
+		t.Fatalf("planner frame should include latest message and running command:\n%s", frame)
+	}
+	if displayWidth(commandLine) >= displayWidth(latestLine) {
+		t.Fatalf("running command should use a shorter ellipsis width than latest message:\nlatest=%q\ncommand=%q", latestLine, commandLine)
+	}
+	if strings.Contains(frame, "super-long-tail-marker") {
+		t.Fatalf("running command should be truncated to the content width:\n%s", frame)
+	}
+	assertFrameBounds(t, frameLines, 90, 24)
 }
 
 func TestRunRendererAppliesTokenUsageEvents(t *testing.T) {

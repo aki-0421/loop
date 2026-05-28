@@ -245,7 +245,7 @@ func runOrchestratedIteration(ctx context.Context, req orchestrationRequest) (it
 	paths.IntegrationMode = cfg.Git.Integration.Mode
 	paths.PullRequestMode = cfg.Git.Integration.Mode == "pr"
 	paths.WorkDir = iterationWorktree
-	req.Renderer.Iteration(iterationID, paths.Todo)
+	req.Renderer.Iteration(iterationID)
 	req.Renderer.Branch(initialBranch)
 	req.State.CurrentIteration = iterationID
 	req.State.Stage = runstate.StageBranchCreated
@@ -311,6 +311,7 @@ func runOrchestratedIteration(ctx context.Context, req orchestrationRequest) (it
 	if _, err := taskDirs.Ensure(tree.Tasks); err != nil {
 		return iterationWorkflowResult{}, codedError{1, err}
 	}
+	req.Renderer.TasksPlanned(tree.Tasks)
 	if len(tree.Tasks) == 0 {
 		goalComplete := tree.GoalComplete && strings.TrimSpace(req.Goal) != ""
 		req.State.Iterations[len(req.State.Iterations)-1].ShouldFullyStop = goalComplete
@@ -329,6 +330,7 @@ func runOrchestratedIteration(ctx context.Context, req orchestrationRequest) (it
 		if err != nil {
 			return iterationWorkflowResult{}, codedError{1, err}
 		}
+		req.Renderer.TasksPlanned(pendingTasks)
 		req.State.Stage = runstate.StageCoding
 		_ = runstate.Write(req.StatePath, *req.State)
 		req.Renderer.Stage(runstate.StageCoding, "coding tasks")
@@ -552,7 +554,13 @@ func executeTaskWave(ctx context.Context, req taskSetRequest, tasks []workflow.T
 		wg.Add(1)
 		go func(taskCtx taskContext) {
 			defer wg.Done()
+			req.Renderer.TaskStarted(taskCtx.task)
 			result := runCodingTaskWithAttempts(ctx, req.Config, taskCtx.worktree, taskCtx.taskPaths, taskCtx.task, taskCtx.branch, req.Renderer.AgentEvent)
+			if result.Err != nil || result.Result.Status != "completed" {
+				req.Renderer.TaskFailed(taskCtx.task, result.Err)
+			} else {
+				req.Renderer.TaskCompleted(taskCtx.task)
+			}
 			result.ActiveDir = taskCtx.taskPaths.ActiveDir
 			out <- result
 		}(taskCtx)

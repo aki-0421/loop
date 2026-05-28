@@ -32,7 +32,8 @@ type rendererSnapshot struct {
 	AgentCommand    string
 	AgentExit       string
 	Current         string
-	Todos           []todoItem
+	RunningCommand  string
+	Tasks           []taskItem
 	Activity        []string
 	ActivityLog     []rendererLogLine
 	Events          []rendererEvent
@@ -107,7 +108,8 @@ func renderFocusedDashboard(s rendererSnapshot, symbols dashboardSymbols, width,
 	if contentWidth < 48 {
 		contentWidth = width - 2
 	}
-	done, total := todoProgress(s.Todos)
+	items := s.Tasks
+	done, total := taskProgress(items)
 	logo := loopLogo(s)
 	filename := valueOr(s.Instruction, "prompt.md")
 	metrics := fmt.Sprintf("%s  ·  %s in  ·  %s out  ·  %d merged  ·  %s",
@@ -115,7 +117,7 @@ func renderFocusedDashboard(s rendererSnapshot, symbols dashboardSymbols, width,
 		formatTokenCount(s.InputTokens, s.TokensEstimated),
 		formatTokenCount(s.OutputTokens, s.TokensEstimated),
 		s.MergeCount,
-		formatTodoProgressMetric(done, total),
+		formatTaskProgressMetric(done, total),
 	)
 	latest := strings.TrimSpace(s.LatestMsg)
 	if latest == "" {
@@ -140,11 +142,11 @@ func renderFocusedDashboard(s rendererSnapshot, symbols dashboardSymbols, width,
 		"",
 	)
 
-	todoLimit := maxTodoRows(height, len(lines))
+	taskLimit := maxTaskRows(height, len(lines))
 	if total > 0 {
-		lines = append(lines, todoListBlock(s, symbols, width, contentWidth, todoLimit)...)
-	} else if todoLimit > 0 {
-		lines = append(lines, centerLine(colorize(s, ansiYellow, planningText(s)), width))
+		lines = append(lines, taskListBlock(s, symbols, width, contentWidth, taskLimit, items)...)
+	} else if taskLimit > 0 {
+		lines = append(lines, statusBlock(s, width, contentWidth, taskLimit)...)
 	}
 
 	return fitCanvasLines(lines, colorize(s, ansiDim, footerText(s, symbols)), width, height)
@@ -244,8 +246,49 @@ func loopLogo(s rendererSnapshot) []string {
 	}
 }
 
-func planningText(s rendererSnapshot) string {
-	return spinnerSymbol(s) + " planning"
+func statusText(s rendererSnapshot) string {
+	if strings.TrimSpace(s.Stage) == "planning" {
+		return spinnerSymbol(s) + " planning..."
+	}
+	text := strings.TrimSpace(s.Current)
+	if text == "" {
+		text = strings.TrimSpace(s.StageDetail)
+	}
+	if text == "" {
+		text = strings.ReplaceAll(strings.TrimSpace(s.Stage), "_", " ")
+	}
+	if text == "" {
+		text = "planning"
+	}
+	return spinnerSymbol(s) + " " + text
+}
+
+func statusBlock(s rendererSnapshot, width, contentWidth, limit int) []string {
+	if limit <= 0 {
+		return nil
+	}
+	lines := []string{centerLine(colorize(s, ansiYellow, statusText(s)), width)}
+	command := strings.TrimSpace(s.RunningCommand)
+	if command == "" || limit < 3 {
+		return lines
+	}
+	lines = append(lines, "")
+	lines = append(lines, centerLine(colorize(s, ansiDim, ellipsize(command, commandDisplayWidth(contentWidth))), width))
+	return lines
+}
+
+func commandDisplayWidth(contentWidth int) int {
+	if contentWidth <= 0 {
+		return 0
+	}
+	commandWidth := contentWidth * 3 / 4
+	if commandWidth < 32 {
+		commandWidth = minInt(contentWidth, 32)
+	}
+	if commandWidth >= contentWidth && contentWidth > 1 {
+		commandWidth = contentWidth - 1
+	}
+	return commandWidth
 }
 
 func spinnerSymbol(s rendererSnapshot) string {
@@ -283,11 +326,11 @@ func formatTokenCount(tokens int, estimated bool) string {
 	}
 }
 
-func formatTodoProgressMetric(done, total int) string {
+func formatTaskProgressMetric(done, total int) string {
 	if total <= 0 {
-		return "0 todo"
+		return "0 tasks"
 	}
-	return fmt.Sprintf("%d/%d todo", done, total)
+	return fmt.Sprintf("%d/%d tasks", done, total)
 }
 
 func ellipsize(text string, width int) string {
@@ -298,36 +341,36 @@ func ellipsize(text string, width int) string {
 	return truncateVisible(text, width, true)
 }
 
-func todoListBlock(s rendererSnapshot, symbols dashboardSymbols, screenWidth, blockWidth, limit int) []string {
+func taskListBlock(s rendererSnapshot, symbols dashboardSymbols, screenWidth, blockWidth, limit int, items []taskItem) []string {
 	if limit <= 0 {
 		return nil
 	}
-	_, total := todoProgress(s.Todos)
+	_, total := taskProgress(items)
 	if total == 0 {
-		return []string{centerLine(colorize(s, ansiDim, "waiting for todo artifact"), screenWidth)}
+		return []string{centerLine(colorize(s, ansiDim, "waiting for task tree"), screenWidth)}
 	}
 	maxBlockWidth := blockWidth
 	if maxBlockWidth > 68 {
 		maxBlockWidth = 68
 	}
 
-	type todoLine struct {
+	type taskLine struct {
 		line string
 	}
-	rows := []todoLine{}
+	rows := []taskLine{}
 	markerWidth := 0
-	visibleCount := len(s.Todos)
+	visibleCount := len(items)
 	hiddenBelow := 0
-	if len(s.Todos) > limit {
+	if len(items) > limit {
 		visibleCount = limit - 1
 		if visibleCount < 0 {
 			visibleCount = 0
 		}
-		hiddenBelow = len(s.Todos) - visibleCount
+		hiddenBelow = len(items) - visibleCount
 	}
-	active := activeTodoIndex(s.Todos)
+	active := activeTaskIndex(items)
 	for i := 0; i < visibleCount; i++ {
-		marker := styledTodoMarker(s, symbols, s.Todos[i], i == active)
+		marker := styledTaskMarker(s, symbols, items[i], i == active)
 		if w := displayWidth(marker); w > markerWidth {
 			markerWidth = w
 		}
@@ -337,18 +380,18 @@ func todoListBlock(s rendererSnapshot, symbols dashboardSymbols, screenWidth, bl
 	}
 
 	for i := 0; i < visibleCount; i++ {
-		item := s.Todos[i]
-		marker := styledTodoMarker(s, symbols, item, i == active)
+		item := items[i]
+		marker := styledTaskMarker(s, symbols, item, i == active)
 		gap := "  "
 		available := maxBlockWidth - markerWidth - displayWidth(gap)
 		if available < 10 {
 			available = 10
 		}
 		text := ellipsize(item.Text, available)
-		rows = append(rows, todoLine{line: padRightPreserve(marker, markerWidth) + gap + text})
+		rows = append(rows, taskLine{line: padRightPreserve(marker, markerWidth) + gap + text})
 	}
 	if hiddenBelow > 0 {
-		rows = append(rows, todoLine{line: colorize(s, ansiDim, fmt.Sprintf("%d hidden below", hiddenBelow))})
+		rows = append(rows, taskLine{line: colorize(s, ansiDim, fmt.Sprintf("%d hidden below", hiddenBelow))})
 	}
 
 	blockWidth = 1
@@ -368,8 +411,8 @@ func todoListBlock(s rendererSnapshot, symbols dashboardSymbols, screenWidth, bl
 	return lines
 }
 
-func styledTodoMarker(s rendererSnapshot, symbols dashboardSymbols, item todoItem, active bool) string {
-	marker := todoMarker(s, item, active, symbols)
+func styledTaskMarker(s rendererSnapshot, symbols dashboardSymbols, item taskItem, active bool) string {
+	marker := taskMarker(s, item, active, symbols)
 	switch {
 	case item.Done || item.Status == "done":
 		return colorize(s, ansiGreen, marker)
@@ -384,7 +427,7 @@ func styledTodoMarker(s rendererSnapshot, symbols dashboardSymbols, item todoIte
 	}
 }
 
-func maxTodoRows(height, used int) int {
+func maxTaskRows(height, used int) int {
 	limit := height - 2 - used
 	if limit < 0 {
 		return 0
@@ -501,9 +544,9 @@ func renderPlainStatusSnapshot(s rendererSnapshot, width, height int) []string {
 		lines = append(lines, fmt.Sprintf("tokens: %s in, %s out", formatTokenCount(s.InputTokens, s.TokensEstimated), formatTokenCount(s.OutputTokens, s.TokensEstimated)))
 	}
 	if height > 3 {
-		done, total := todoProgress(s.Todos)
+		done, total := taskProgress(s.Tasks)
 		if total > 0 {
-			lines = append(lines, fmt.Sprintf("todo: %d/%d done", done, total))
+			lines = append(lines, fmt.Sprintf("tasks: %d/%d done", done, total))
 		}
 	}
 	if len(lines) > height {
@@ -512,34 +555,34 @@ func renderPlainStatusSnapshot(s rendererSnapshot, width, height int) []string {
 	return lines
 }
 
-func todoProgress(todos []todoItem) (int, int) {
+func taskProgress(tasks []taskItem) (int, int) {
 	done := 0
-	for _, item := range todos {
+	for _, item := range tasks {
 		if item.Done || item.Status == "done" {
 			done++
 		}
 	}
-	return done, len(todos)
+	return done, len(tasks)
 }
 
-func activeTodoIndex(todos []todoItem) int {
-	for i, item := range todos {
+func activeTaskIndex(tasks []taskItem) int {
+	for i, item := range tasks {
 		if item.Status == "active" || item.Status == "blocked" || item.Status == "retrying" {
 			return i
 		}
 	}
-	for i, item := range todos {
+	for i, item := range tasks {
 		if !item.Done {
 			return i
 		}
 	}
-	if len(todos) == 0 {
+	if len(tasks) == 0 {
 		return -1
 	}
-	return len(todos) - 1
+	return len(tasks) - 1
 }
 
-func todoMarker(s rendererSnapshot, item todoItem, active bool, symbols dashboardSymbols) string {
+func taskMarker(s rendererSnapshot, item taskItem, active bool, symbols dashboardSymbols) string {
 	switch {
 	case item.Done || item.Status == "done":
 		return symbols.Done

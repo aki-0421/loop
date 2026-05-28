@@ -1,19 +1,17 @@
 package cli
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/aki-0421/loop/internal/artifactdb"
 	"github.com/aki-0421/loop/internal/runstate"
+	"github.com/aki-0421/loop/internal/workflow"
 )
 
 type runRenderer struct {
@@ -36,10 +34,11 @@ type runRenderer struct {
 	stage                 string
 	stageDetail           string
 	iteration             string
-	todoPath              string
 	agentCommand          string
 	agentExit             string
 	current               string
+	runningCommand        string
+	tasks                 []taskItem
 	activity              []string
 	activityLog           []rendererLogLine
 	events                []rendererEvent
@@ -69,7 +68,8 @@ type rendererConfirmation struct {
 	Until        time.Time
 }
 
-type todoItem struct {
+type taskItem struct {
+	ID     string
 	Done   bool
 	Status string
 	Text   string
@@ -160,18 +160,107 @@ func (r *runRenderer) Stop(status runstate.Stage, summary string) {
 	r.clearTitle()
 }
 
-func (r *runRenderer) Iteration(iterationID string, todoPath string) {
+func (r *runRenderer) Iteration(iterationID string) {
 	if !r.enabled {
 		return
 	}
 	r.mu.Lock()
 	r.iteration = iterationID
-	r.todoPath = todoPath
+	r.tasks = nil
 	r.clearSleepLocked()
 	if r.branch == "" || strings.HasPrefix(r.branch, "wip/") {
 		r.branch = "wip/" + iterationID
 	}
 	r.mu.Unlock()
+	r.render()
+}
+
+func (r *runRenderer) TasksPlanned(tasks []workflow.Task) {
+	if !r.enabled {
+		return
+	}
+	r.mu.Lock()
+	added := 0
+	for _, task := range tasks {
+		id := strings.TrimSpace(task.ID)
+		if id == "" {
+			continue
+		}
+		if r.taskIndexLocked(id) >= 0 {
+			continue
+		}
+		r.tasks = append(r.tasks, taskItem{ID: id, Status: "pending", Text: taskDisplayTitle(task)})
+		added++
+	}
+	total := len(r.tasks)
+	if added > 0 {
+		r.latestMsg = fmt.Sprintf("%d tasks planned", total)
+		r.addEventLocked(rendererEvent{At: time.Now(), Status: "active", Title: "Tasks Planned", Detail: fmt.Sprintf("%d total", total)})
+	}
+	r.mu.Unlock()
+	if added > 0 {
+		if !r.interactive {
+			r.line("tasks", fmt.Sprintf("%d planned", total))
+		}
+		r.render()
+	}
+}
+
+func (r *runRenderer) TaskStarted(task workflow.Task) {
+	if !r.enabled {
+		return
+	}
+	id := strings.TrimSpace(task.ID)
+	title := taskDisplayTitle(task)
+	r.mu.Lock()
+	r.upsertTaskLocked(id, title, "active", false)
+	r.current = "running task: " + title
+	r.latestMsg = title
+	r.addEventLocked(rendererEvent{At: time.Now(), Status: "active", Title: "Task Started", Detail: title})
+	r.mu.Unlock()
+	if !r.interactive {
+		r.line("task", "started "+title)
+	}
+	r.render()
+}
+
+func (r *runRenderer) TaskCompleted(task workflow.Task) {
+	if !r.enabled {
+		return
+	}
+	id := strings.TrimSpace(task.ID)
+	title := taskDisplayTitle(task)
+	r.mu.Lock()
+	r.upsertTaskLocked(id, title, "done", true)
+	r.current = "completed task: " + title
+	r.latestMsg = title
+	r.addEventLocked(rendererEvent{At: time.Now(), Status: "done", Title: "Task Completed", Detail: title})
+	r.mu.Unlock()
+	if !r.interactive {
+		r.line("task", "completed "+title)
+	}
+	r.render()
+}
+
+func (r *runRenderer) TaskFailed(task workflow.Task, err error) {
+	if !r.enabled {
+		return
+	}
+	id := strings.TrimSpace(task.ID)
+	title := taskDisplayTitle(task)
+	detail := title
+	if err != nil {
+		detail = title + ": " + err.Error()
+	}
+	r.mu.Lock()
+	r.upsertTaskLocked(id, title, "blocked", false)
+	r.current = "failed task: " + title
+	r.latestMsg = detail
+	r.addEventLocked(rendererEvent{At: time.Now(), Status: "blocked", Title: "Task Failed", Detail: detail})
+	r.mu.Unlock()
+	if !r.interactive {
+		r.line("task", "failed "+detail)
+	}
 	r.render()
 }
 
@@ -235,7 +324,7 @@ func (r *runRenderer) AgentEvent(event runstate.Event) {
 		args := stringifyEventValue(event["args"])
 		text := strings.TrimSpace(cmd + " " + args)
 		if text != "" {
-			r.setCurrent("running command: " + text)
+			r.setRunningCommand("running command: " + text)
 			r.addActivity("command: " + text)
 			r.addEvent("active", "Command", text)
 			if !r.interactive {
@@ -245,7 +334,7 @@ func (r *runRenderer) AgentEvent(event runstate.Event) {
 	case "agent.file_read":
 		path, _ := event["path"].(string)
 		if path != "" {
-			r.setCurrent("reading file: " + path)
+			r.setRunningCommand("reading file: " + path)
 			r.addActivity("read: " + path)
 			r.addEvent("active", "Read", path)
 			if !r.interactive {
@@ -521,6 +610,12 @@ func (r *runRenderer) setCurrent(text string) {
 	r.mu.Unlock()
 }
 
+func (r *runRenderer) setRunningCommand(text string) {
+	r.mu.Lock()
+	r.runningCommand = text
+	r.mu.Unlock()
+}
+
 func (r *runRenderer) setLatestMessage(text string) {
 	text = strings.TrimSpace(text)
 	if text == "" {
@@ -597,7 +692,6 @@ func (r *runRenderer) render() {
 
 func (r *runRenderer) frame(width, height int) []string {
 	r.mu.Lock()
-	todoPath := r.todoPath
 	snapshot := rendererSnapshot{
 		Started:         r.started,
 		RunID:           r.runID,
@@ -616,6 +710,7 @@ func (r *runRenderer) frame(width, height int) []string {
 		AgentCommand:    r.agentCommand,
 		AgentExit:       r.agentExit,
 		Current:         r.current,
+		RunningCommand:  r.runningCommand,
 		Activity:        append([]string(nil), r.activity...),
 		ActivityLog:     append([]rendererLogLine(nil), r.activityLog...),
 		Events:          append([]rendererEvent(nil), r.events...),
@@ -626,6 +721,7 @@ func (r *runRenderer) frame(width, height int) []string {
 		OutputTokens:    r.outputTokens,
 		TokensEstimated: r.tokensEstimated,
 		LatestMsg:       r.latestMsg,
+		Tasks:           append([]taskItem(nil), r.tasks...),
 		Confirmation:    cloneRendererConfirmation(r.confirmation),
 		Sleeping:        r.sleeping,
 		SleepSince:      r.sleepSince,
@@ -634,12 +730,44 @@ func (r *runRenderer) frame(width, height int) []string {
 	}
 	r.mu.Unlock()
 
-	todos := readTodoItems(todoPath)
-	if currentTask := firstOpenTodo(todos); currentTask != "" {
+	tasks := append([]taskItem(nil), snapshot.Tasks...)
+	if currentTask := firstOpenTask(tasks); currentTask != "" {
 		snapshot.Current = currentTask
 	}
-	snapshot.Todos = todos
+	snapshot.Tasks = tasks
 	return renderDashboard(snapshot, width, height)
+}
+
+func (r *runRenderer) taskIndexLocked(id string) int {
+	for i, task := range r.tasks {
+		if task.ID == id {
+			return i
+		}
+	}
+	return -1
+}
+
+func (r *runRenderer) upsertTaskLocked(id, title, status string, done bool) {
+	if strings.TrimSpace(title) == "" {
+		title = id
+	}
+	if idx := r.taskIndexLocked(id); idx >= 0 {
+		r.tasks[idx].Text = title
+		r.tasks[idx].Status = status
+		r.tasks[idx].Done = done
+		return
+	}
+	r.tasks = append(r.tasks, taskItem{ID: id, Text: title, Status: status, Done: done})
+}
+
+func taskDisplayTitle(task workflow.Task) string {
+	for _, value := range []string{task.Title, task.ID, task.Description} {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			return value
+		}
+	}
+	return "task"
 }
 
 func cloneRendererConfirmation(in *rendererConfirmation) *rendererConfirmation {
@@ -650,74 +778,13 @@ func cloneRendererConfirmation(in *rendererConfirmation) *rendererConfirmation {
 	return &out
 }
 
-func readTodoItems(path string) []todoItem {
-	if path == "" {
-		return nil
-	}
-	if filepath.Base(path) == "todo.md" {
-		if data, err := artifactdb.Read(filepath.Dir(path), "todo"); err == nil {
-			return parseTodoItems(strings.NewReader(data))
+func firstOpenTask(tasks []taskItem) string {
+	for _, item := range tasks {
+		if item.Status == "active" || item.Status == "blocked" || item.Status == "retrying" {
+			return item.Text
 		}
 	}
-	f, err := os.Open(path)
-	if err != nil {
-		return nil
-	}
-	defer f.Close()
-	return parseTodoItems(f)
-}
-
-func parseTodoItems(r io.Reader) []todoItem {
-	var items []todoItem
-	scanner := bufio.NewScanner(r)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		done := false
-		status := "pending"
-		switch {
-		case strings.HasPrefix(line, "- [ ] "):
-			line = strings.TrimSpace(strings.TrimPrefix(line, "- [ ] "))
-		case strings.HasPrefix(line, "- [>] "):
-			status = "active"
-			line = strings.TrimSpace(strings.TrimPrefix(line, "- [>] "))
-		case strings.HasPrefix(line, "- [!] "):
-			status = "blocked"
-			line = strings.TrimSpace(strings.TrimPrefix(line, "- [!] "))
-		case strings.HasPrefix(line, "- [~] "):
-			status = "retrying"
-			line = strings.TrimSpace(strings.TrimPrefix(line, "- [~] "))
-		case strings.HasPrefix(line, "- [x] "), strings.HasPrefix(line, "- [X] "):
-			done = true
-			status = "done"
-			line = strings.TrimSpace(line[6:])
-		default:
-			continue
-		}
-		if line != "" {
-			items = append(items, todoItem{Done: done, Status: status, Text: normalizeTodoDisplayText(line)})
-		}
-	}
-	return items
-}
-
-func normalizeTodoDisplayText(text string) string {
-	text = strings.TrimSpace(text)
-	if len(text) < 3 || text[1] != ' ' {
-		return text
-	}
-	prefix := text[:1]
-	if !isLoopCommitPrefix(prefix) {
-		return text
-	}
-	body := strings.TrimSpace(text[2:])
-	if body == "" {
-		return text
-	}
-	return prefix + ": " + body
-}
-
-func firstOpenTodo(todos []todoItem) string {
-	for _, item := range todos {
+	for _, item := range tasks {
 		if !item.Done {
 			return item.Text
 		}

@@ -418,7 +418,7 @@ func commandRunLegacy(ctx context.Context, g globals, args []string) error {
 		paths.PullRequestMode = cfg.Git.Integration.Mode == "pr"
 		paths.WorkDir = workDir
 		cleanup.EventLogPath = paths.Events
-		renderer.Iteration(iterationID, paths.Todo)
+		renderer.Iteration(iterationID)
 		if err := os.MkdirAll(iterDir, 0o755); err != nil {
 			return codedError{1, err}
 		}
