@@ -36,7 +36,7 @@ English is the default for all machine-generated human-readable output. This inc
 - Commit messages.
 - Branch slugs.
 - Pull request titles and bodies.
-- Skill instructions installed by `loop init`.
+- Skill instructions installed during `loop init`.
 
 A repository may override output language through configuration or custom skills. Even when another output language is configured, JSON keys, status values, command names, and contract fields stay in English.
 
@@ -69,7 +69,7 @@ The agent owns:
 
 ## Skill-based customization
 
-Repository skills define the repeatable behavior expected from the agent. `loop init` installs the default `loop` skill, but teams may edit, remove, or add skills. `loop` discovers existing project skill directories, uses `.agents/skills/` for new repositories by default, and avoids creating a duplicate `.loop/skills/` tree.
+Repository skills define the repeatable behavior expected from the agent. `loop init` installs the default `loop` skill by running `npx --yes skills add aki-0421/loop --skill loop --agent <agent> --yes`; it does not directly copy the built-in skill template. Teams may edit, remove, or add skills. `loop` discovers existing project skill directories and avoids creating a duplicate `.loop/skills/` tree.
 
 The CLI activates `loop` with a compact code-generated bootstrap. The user instruction file is task input only and is not responsible for activating mandatory loop behavior.
 

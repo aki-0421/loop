@@ -25,12 +25,13 @@ It is built for repositories where AI work should leave behind the same things g
 - **Pull request mode**: agents can create PRs, wait for checks, fetch failed job logs, fix failures, and merge through `gh`.
 - **Auditable runtime state**: prompts, effective config, event logs, errors, PR state, check output, and run state are stored under `.loop/`.
 - **GitHub context memory**: recent PRs, Issues, and comments are cached in `.loop/loop.db` and searched on demand.
-- **Skills instead of giant prompts**: `loop init` installs a repository skill while the CLI injects only a compact bootstrap into each agent run.
+- **Skills instead of giant prompts**: `loop init` delegates default skill installation to `npx skills` while the CLI injects only a compact bootstrap into each agent run.
 
 ## Quick Start
 
 Prerequisites
 - Initialized Git repository
+- Node.js/npm with `npx` available for default skill installation.
 - A Codex CLI on `PATH`; the built-in default adapter runs `codex exec --json`.
 - GitHub CLI (`gh`) authenticated for pull request mode, GitHub Issues, and GitHub-backed memory sync.
 - Go 1.25 or newer
@@ -119,7 +120,7 @@ Human-facing commands:
 
 | Command | Purpose |
 | --- | --- |
-| `loop init` | Create repository-local config and install the default skill. |
+| `loop init` | Create repository-local config and install the default skill through `npx skills`. |
 | `loop run <instruction.md>` | Run one or more automated coding iterations. |
 | `loop linter document` | Warn about unreachable required Markdown docs and invalid Markdown path references. |
 | `loop version` | Print build version, commit, and date. |
@@ -176,11 +177,12 @@ Configuration is layered from built-in defaults, user config, repository config,
 
 ## Runtime Files
 
-Committed setup files:
+Default Codex setup files:
 
 ```text
 .loop/config.yaml
 .loop/.gitignore
+skills-lock.json
 .agents/skills/loop/SKILL.md
 ```
 

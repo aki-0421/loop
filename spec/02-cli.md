@@ -49,21 +49,30 @@ Flags:
 | --- | --- | --- |
 | `--force` | `false` | Overwrite generated files that already exist |
 | `--agent <name>` | `codex` | Set the default agent in generated config |
-| `--skills` | `true` | Install the default skill into a discovered project skill directory |
+| `--skills` | `true` | Install the default skill through `npx skills` |
 | `--sync-agent-skills` | `false` | Explicitly sync skills into configured agent targets |
 | `--base <branch>` | unset | Pin the base branch instead of using the branch at run start |
 
-Generated tree:
+Default generated tree for the built-in Codex adapter:
 
 ```text
 .loop/
   config.yaml
   .gitignore
+skills-lock.json
 .agents/skills/
   loop/SKILL.md
 ```
 
-If `.agents/skills`, `.codex/skills`, `.claude/skills`, or another known agent skill directory already exists, `loop init` installs into the first discovered directory instead of creating a duplicate skill tree. `loop init` must not create `.loop/skills/` or `.loop/runs/`.
+With `--skills`, `loop init` runs:
+
+```bash
+npx --yes skills add aki-0421/loop --skill loop --agent <agent> --yes
+```
+
+`loop` maps built-in adapter names to the agent names expected by the skills CLI, such as `codex` to `codex` and `claude` to `claude-code`. If an existing discovered `loop` skill is present and `--force` is not set, `loop init` skips the `npx skills` invocation to avoid overwriting repository-customized skill content. `loop init` must not directly copy `SKILL.md` from embedded templates, and it must not create `.loop/skills/` or `.loop/runs/`.
+
+Agent-specific skill directories may differ from the Codex default; for example, `--agent claude` installs through the skills CLI's `claude-code` target and records `.claude/skills` as `skills.sourceDir`.
 
 Generated `.loop/config.yaml` contains only repository-specific overrides. Built-in defaults supply normal agent, run, git, validation, memory, and log settings.
 

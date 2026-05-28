@@ -39,12 +39,15 @@ type codedError struct {
 var prChecksSleep = sleepContext
 var githubSleepPoll = sleepContext
 var targetBranchConfirmationSleep = sleepContext
+var runSkillsCLIAdd = runSkillsCLIAddCommand
 
 var githubSleepPollInterval = 5 * time.Minute
 var targetBranchConfirmationDuration = 5 * time.Second
 var resultHandoffPollInterval = 200 * time.Millisecond
 
 var errPRChecksTimedOut = errors.New("pull request checks timed out")
+
+const defaultSkillPackage = "aki-0421/loop"
 
 func (e codedError) Error() string {
 	if e.err == nil {
@@ -194,7 +197,7 @@ func commandInit(ctx context.Context, g globals, args []string) error {
 	fs.SetOutput(os.Stderr)
 	force := fs.Bool("force", false, "overwrite generated files")
 	agentName := fs.String("agent", g.Agent, "default agent")
-	installSkills := fs.Bool("skills", true, "install the default skill")
+	installSkills := fs.Bool("skills", true, "install the default skill through npx skills")
 	syncAgentSkills := fs.Bool("sync-agent-skills", false, "sync skills into configured agent targets")
 	base := fs.String("base", "", "base branch")
 	if err := fs.Parse(args); err != nil {
@@ -205,19 +208,32 @@ func commandInit(ctx context.Context, g globals, args []string) error {
 		return codedError{1, fmt.Errorf("not inside a git repository: %w", err)}
 	}
 	baseBranch := *base
+	selectedAgent := strings.TrimSpace(*agentName)
+	if selectedAgent == "" {
+		selectedAgent = "codex"
+	}
 	cfg := config.Defaults()
-	cfg.Agent.Default = *agentName
+	cfg.Agent.Default = selectedAgent
 	if baseBranch != "" {
 		cfg.Git.BaseBranch = baseBranch
 	}
 	skillDir := skills.PreferredInstallDir(root, cfg)
+	if *installSkills {
+		installedDir, err := installDefaultSkillWithSkillsCLI(ctx, root, cfg, selectedAgent, *force, g.JSON)
+		if err != nil {
+			return codedError{1, err}
+		}
+		if installedDir != "" {
+			skillDir = installedDir
+		}
+	}
 	cfg.Skills.SourceDir = filepath.ToSlash(rel(root, skillDir))
 	if target, ok := cfg.Skills.Targets["codex"]; ok && target.Mode == "off" {
 		target.Path = cfg.Skills.SourceDir
 		cfg.Skills.Targets["codex"] = target
 	}
 	configPath := filepath.Join(root, ".loop", "config.yaml")
-	initConfig, err := minimalInitConfig(*agentName, baseBranch, cfg.Skills.SourceDir)
+	initConfig, err := minimalInitConfig(selectedAgent, baseBranch, cfg.Skills.SourceDir)
 	if err != nil {
 		return codedError{1, err}
 	}
@@ -228,17 +244,12 @@ func commandInit(ctx context.Context, g globals, args []string) error {
 	if err := writeUnlessExists(ignorePath, []byte("runs/\nworktrees/\ntmp/\nlocks/\nloop.db\n*.db\n*.db-wal\n*.db-shm\n*.log\n"), *force); err != nil {
 		return codedError{1, err}
 	}
-	if *installSkills {
-		if _, err := skills.InstallDefaults(root, skillDir, *force); err != nil {
-			return codedError{1, err}
-		}
-	}
 	if *syncAgentSkills {
 		if _, err := skills.Sync(root, cfg); err != nil {
 			return codedError{1, err}
 		}
 	}
-	out := map[string]any{"config": rel(root, configPath), "agent": *agentName, "skills": rel(root, skillDir)}
+	out := map[string]any{"config": rel(root, configPath), "agent": selectedAgent, "skills": rel(root, skillDir)}
 	baseLine := "Base: current branch at run start\n"
 	if baseBranch != "" {
 		out["base"] = baseBranch
@@ -604,6 +615,109 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 		summary = terminalSummary(lastResult)
 	}
 	return printResult(g, map[string]any{"run_id": runID, "status": state.Stage, "summary": summary, "logs": rel(root, runDir)}, fmt.Sprintf("Run: %s\nStatus: %s\nSummary: %s\nLogs: %s\n", runID, state.Stage, summary, rel(root, runDir)))
+}
+
+func installDefaultSkillWithSkillsCLI(ctx context.Context, root string, cfg config.Config, agentName string, force bool, quiet bool) (string, error) {
+	if !force {
+		if dir, ok, err := findDefaultSkillDir(root, cfg); err != nil {
+			return "", err
+		} else if ok {
+			return dir, nil
+		}
+	}
+	skillsAgent := skillsCLIAgentName(agentName)
+	args := []string{
+		"--yes",
+		"skills",
+		"add",
+		defaultSkillPackage,
+		"--skill",
+		"loop",
+		"--agent",
+		skillsAgent,
+		"--yes",
+	}
+	if err := runSkillsCLIAdd(ctx, root, args, quiet); err != nil {
+		return "", err
+	}
+	if dir, ok, err := findDefaultSkillDir(root, cfg); err != nil {
+		return "", err
+	} else if ok {
+		return dir, nil
+	}
+	return filepath.Join(root, skillsCLIDefaultDir(skillsAgent)), nil
+}
+
+func runSkillsCLIAddCommand(ctx context.Context, root string, args []string, quiet bool) error {
+	cmd := exec.CommandContext(ctx, "npx", args...)
+	cmd.Dir = root
+	if quiet {
+		var output bytes.Buffer
+		cmd.Stdout = &output
+		cmd.Stderr = &output
+		if err := cmd.Run(); err != nil {
+			text := strings.TrimSpace(output.String())
+			if text == "" {
+				return fmt.Errorf("install loop skill with npx skills: %w", err)
+			}
+			return fmt.Errorf("install loop skill with npx skills: %w\n%s", err, text)
+		}
+		return nil
+	}
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("install loop skill with npx skills: %w", err)
+	}
+	return nil
+}
+
+func findDefaultSkillDir(root string, cfg config.Config) (string, bool, error) {
+	dirs := skills.DiscoverDirs(root, cfg)
+	if len(dirs) == 0 {
+		dirs = []skills.Directory{{Agent: "project", Path: skills.PreferredInstallDir(root, cfg)}}
+	}
+	for _, dir := range dirs {
+		path := filepath.Join(dir.Path, "loop", "SKILL.md")
+		if _, err := os.Stat(path); err == nil {
+			return dir.Path, true, nil
+		} else if !os.IsNotExist(err) {
+			return "", false, err
+		}
+	}
+	return "", false, nil
+}
+
+func skillsCLIAgentName(agentName string) string {
+	switch strings.TrimSpace(agentName) {
+	case "", "codex":
+		return "codex"
+	case "claude":
+		return "claude-code"
+	case "gemini":
+		return "gemini-cli"
+	default:
+		return strings.TrimSpace(agentName)
+	}
+}
+
+func skillsCLIDefaultDir(agentName string) string {
+	switch agentName {
+	case "claude-code":
+		return ".claude/skills"
+	case "cline":
+		return ".cline/skills"
+	case "codebuddy":
+		return ".codebuddy/skills"
+	case "cursor":
+		return ".cursor/skills"
+	case "gemini-cli":
+		return ".gemini/skills"
+	case "opencode":
+		return ".opencode/skills"
+	default:
+		return skills.CanonicalProjectDir
+	}
 }
 
 func minimalInitConfig(agentName, baseBranch, skillSourceDir string) ([]byte, error) {

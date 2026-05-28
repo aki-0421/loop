@@ -30,7 +30,7 @@ The specification defines what to implement. It does not include source comparis
 | `11-error-resume.md` | Error handling, GitHub sleep, and stored run state |
 | `12-testing.md` | Test areas and fake-agent test harness |
 | `13-go-implementation.md` | Go package layout and implementation notes |
-| `templates/*` | Default configuration and skill examples |
+| `../skills/*` | Published skill package sources discoverable by external skill CLIs |
 
 ## Primary command shape
 

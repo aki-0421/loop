@@ -79,7 +79,7 @@ Path-bearing prompt placeholders such as `{prompt_file}`, `{result_file}`, and `
 
 ## `skills`
 
-`skills.sourceDir` is the preferred project skill directory. The default is `.agents/skills/`, matching agents that share project-level skills. `loop` also discovers existing project skill directories such as `.codex/skills/`, `.claude/skills/`, `.cline/skills/`, and `skills/` so init and prompt assembly do not create redundant copies.
+`skills.sourceDir` is the preferred project skill directory. The default is `.agents/skills/`, matching agents that share project-level skills. `loop` also discovers existing project skill directories such as `.codex/skills/`, `.claude/skills/`, `.cline/skills/`, and `skills/` so prompt assembly can find repository skills. `loop init` delegates default skill installation to `npx skills` instead of directly copying skill files.
 
 Sync modes:
 

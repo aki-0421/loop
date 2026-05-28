@@ -441,7 +441,7 @@ func allHelpCommands() []helpCommand {
 			Flags: []helpFlag{
 				{Name: "--force", Description: "overwrite generated files"},
 				{Name: "--agent <name>", Description: "set the default agent", Default: "codex"},
-				{Name: "--skills", Description: "install the default skill", Default: "true"},
+				{Name: "--skills", Description: "install the default skill through npx skills", Default: "true"},
 				{Name: "--sync-agent-skills", Description: "sync skills into configured agent targets", Default: "false"},
 				{Name: "--base <branch>", Description: "pin the base branch instead of using the branch at run start"},
 			},

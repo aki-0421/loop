@@ -26,6 +26,7 @@ Committed files:
 - `.loop/config.yaml`
 - `.agents/skills/` by default, or an existing discovered agent skill directory
 - `.loop/.gitignore`
+- `skills-lock.json` when written by `npx skills`
 
 Ignored files:
 

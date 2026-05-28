@@ -10,6 +10,16 @@ Each skill is a directory containing `SKILL.md`.
     SKILL.md
 ```
 
+The repository-published skill copy lives under:
+
+```text
+skills/
+  loop/
+    SKILL.md
+```
+
+This root `skills/<name>/SKILL.md` layout is compatible with external skill package CLIs that discover installable skills from repositories.
+
 `SKILL.md` begins with YAML front matter:
 
 ```yaml
@@ -22,7 +32,7 @@ version: 1
 
 The body is Markdown. Built-in skills are English. Repository owners may customize them.
 
-`loop` discovers existing project skill directories before choosing an install location. The discovery order starts with the configured `skills.sourceDir`, then `.agents/skills/`, then known agent directories such as `.codex/skills/`, `.claude/skills/`, `.cline/skills/`, and `skills/`. If no directory exists, `loop init` creates `.agents/skills/`. It must not create `.loop/skills/`.
+`loop` discovers existing project skill directories before choosing a source directory. The discovery order starts with the configured `skills.sourceDir`, then `.agents/skills/`, then known agent directories such as `.codex/skills/`, `.claude/skills/`, `.cline/skills/`, and `skills/`. For the default skill, `loop init` runs `npx skills add` and lets that CLI create the agent-specific skill directory. `loop init` must not directly copy the default `SKILL.md` from embedded templates, and it must not create `.loop/skills/`.
 
 ## Default skill
 
@@ -60,4 +70,4 @@ The generated prompt is only a compact bootstrap. Detailed pull request template
 
 ## Skill updates
 
-`loop skills install <name-or-path>` installs built-in or local skills. It never overwrites repository-customized skills unless `--force` is supplied.
+`loop init` installs the default skill through `npx skills add aki-0421/loop --skill loop --agent <agent> --yes`. `loop skills install <name-or-path>` remains a manual command for installing built-in or local skills and never overwrites repository-customized skills unless `--force` is supplied.
