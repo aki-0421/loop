@@ -806,8 +806,8 @@ func allHelpCommands() []helpCommand {
 		},
 		{
 			Path:    []string{"skills", "install"},
-			Usage:   "loop skills install <name-or-path> [--force]",
-			Summary: "Install a built-in or local skill",
+			Usage:   "loop skills install <loop|path> [--force]",
+			Summary: "Install the default loop skill through npx or a local skill path",
 			Flags: []helpFlag{
 				{Name: "--force", Description: "overwrite an existing skill", Default: "false"},
 			},

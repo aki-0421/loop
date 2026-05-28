@@ -9,24 +9,14 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/aki-0421/loop/internal/assets"
 	"github.com/aki-0421/loop/internal/config"
 )
-
-var DefaultNames = []string{
-	"loop",
-}
 
 type Skill struct {
 	Name        string
 	Path        string
 	Description string
 	Version     string
-}
-
-type InstallResult struct {
-	Installed []string
-	Skipped   []string
 }
 
 type SyncResult struct {
@@ -41,51 +31,6 @@ type DoctorReport struct {
 
 func (r DoctorReport) OK() bool {
 	return len(r.Errors) == 0
-}
-
-func InstallDefaults(repoRoot, dir string, force bool) (InstallResult, error) {
-	var result InstallResult
-	for _, name := range DefaultNames {
-		path, err := InstallBuiltIn(repoRoot, dir, name, force)
-		if err != nil {
-			return result, err
-		}
-		if path == "" {
-			result.Skipped = append(result.Skipped, name)
-		} else {
-			result.Installed = append(result.Installed, name)
-		}
-	}
-	return result, nil
-}
-
-func InstallBuiltIn(repoRoot, dir, name string, force bool) (string, error) {
-	if dir == "" {
-		return "", fmt.Errorf("skill directory is required")
-	}
-	name, err := safeSkillName(name)
-	if err != nil {
-		return "", err
-	}
-	data, err := assets.Read("templates/skills/" + name + "/SKILL.md")
-	if err != nil {
-		return "", fmt.Errorf("read built-in skill %s: %w", name, err)
-	}
-	path := filepath.Join(absDir(repoRoot, dir), name, "SKILL.md")
-	if !force {
-		if _, err := os.Stat(path); err == nil {
-			return "", nil
-		} else if !os.IsNotExist(err) {
-			return "", err
-		}
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return "", err
-	}
-	if err := os.WriteFile(path, data, 0o644); err != nil {
-		return "", err
-	}
-	return path, nil
 }
 
 func InstallFromPath(source, repoRoot, destDir string, force bool) (string, error) {

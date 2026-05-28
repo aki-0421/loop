@@ -157,6 +157,41 @@ func TestInitMapsClaudeAdapterForSkillsCLI(t *testing.T) {
 	}
 }
 
+func TestSkillsInstallLoopUsesSkillsCLI(t *testing.T) {
+	repo := newCleanupRepo(t)
+	withWorkingDir(t, repo)
+	var gotRoot string
+	var gotArgs []string
+	old := runSkillsCLIAdd
+	runSkillsCLIAdd = func(_ context.Context, root string, args []string, quiet bool) error {
+		gotRoot = root
+		gotArgs = append([]string(nil), args...)
+		if quiet {
+			t.Fatal("skills CLI install should stream output for text mode")
+		}
+		mustWriteTestFile(t, filepath.Join(root, ".agents", "skills", "loop", "SKILL.md"), "---\nname: loop\n")
+		return nil
+	}
+	t.Cleanup(func() { runSkillsCLIAdd = old })
+
+	if _, err := captureStdout(t, func() error {
+		return commandSkills(context.Background(), globals{}, []string{"install", "--force", "loop"})
+	}); err != nil {
+		t.Fatalf("loop skills install: %v", err)
+	}
+
+	if !samePath(t, gotRoot, repo) {
+		t.Fatalf("skills CLI root = %s, want %s", gotRoot, repo)
+	}
+	wantArgs := "--yes skills add aki-0421/loop --skill loop --agent codex --yes"
+	if strings.Join(gotArgs, " ") != wantArgs {
+		t.Fatalf("skills CLI args = %q, want %q", strings.Join(gotArgs, " "), wantArgs)
+	}
+	if _, err := os.Stat(filepath.Join(repo, ".agents", "skills", "loop", "SKILL.md")); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func withWorkingDir(t *testing.T, dir string) {
 	t.Helper()
 	oldwd, err := os.Getwd()

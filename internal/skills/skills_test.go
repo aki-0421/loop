@@ -10,51 +10,53 @@ import (
 	"github.com/aki-0421/loop/internal/config"
 )
 
-func TestInstallDefaultsDoesNotOverwriteUnlessForced(t *testing.T) {
+func TestInstallFromPathDoesNotOverwriteUnlessForced(t *testing.T) {
 	repo := t.TempDir()
-	result, err := InstallDefaults(repo, CanonicalProjectDir, false)
+	source := filepath.Join(repo, "source", "SKILL.md")
+	mustWrite(t, source, `---
+name: loop
+description: Loop skill.
+version: 1
+---
+# loop
+`)
+	path, err := InstallFromPath(source, repo, CanonicalProjectDir, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result.Installed) != 1 {
-		t.Fatalf("installed %d skills, want 1: %+v", len(result.Installed), result)
+	wantPath := filepath.Join(repo, ".agents", "skills", "loop", "SKILL.md")
+	if path != wantPath {
+		t.Fatalf("installed path = %s, want %s", path, wantPath)
 	}
-	path := filepath.Join(repo, ".agents", "skills", "loop", "SKILL.md")
-	if err := os.WriteFile(path, []byte("custom"), 0o644); err != nil {
+	if _, err := InstallFromPath(source, repo, CanonicalProjectDir, false); err == nil {
+		t.Fatal("expected duplicate install to require --force")
+	} else if !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("duplicate error = %v", err)
+	}
+	forcedSource := filepath.Join(repo, "forced", "SKILL.md")
+	mustWrite(t, forcedSource, `---
+name: loop
+description: Forced loop skill.
+version: 1
+---
+# loop
+`)
+	if _, err := InstallFromPath(forcedSource, repo, CanonicalProjectDir, true); err != nil {
 		t.Fatal(err)
-	}
-	result, err = InstallDefaults(repo, CanonicalProjectDir, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(result.Skipped) != 1 {
-		t.Fatalf("skipped %d skills, want 1: %+v", len(result.Skipped), result)
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(data) != "custom" {
-		t.Fatal("customized skill was overwritten without force")
-	}
-	if _, err := InstallBuiltIn(repo, CanonicalProjectDir, "loop", true); err != nil {
-		t.Fatal(err)
-	}
-	data, err = os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(data), "name: loop") {
-		t.Fatal("force install did not restore built-in skill")
+	if !strings.Contains(string(data), "Forced loop skill.") {
+		t.Fatal("force install did not overwrite existing skill")
 	}
 }
 
 func TestDoctorValidatesFrontMatter(t *testing.T) {
 	repo := t.TempDir()
 	dir := filepath.Join(repo, ".agents", "skills")
-	if _, err := InstallBuiltIn(repo, CanonicalProjectDir, "loop", false); err != nil {
-		t.Fatal(err)
-	}
+	writeLoopSkill(t, repo, CanonicalProjectDir)
 	report := Doctor(dir)
 	if !report.OK() {
 		t.Fatalf("valid skill failed doctor: %+v", report)
@@ -82,9 +84,7 @@ version: 2
 
 func TestSyncCopyOffAndSymlink(t *testing.T) {
 	repo := t.TempDir()
-	if _, err := InstallBuiltIn(repo, CanonicalProjectDir, "loop", false); err != nil {
-		t.Fatal(err)
-	}
+	writeLoopSkill(t, repo, CanonicalProjectDir)
 	cfg, err := config.Default()
 	if err != nil {
 		t.Fatal(err)
@@ -140,14 +140,8 @@ func TestPreferredInstallDirUsesExistingAgentSkillDir(t *testing.T) {
 	if dir != existing {
 		t.Fatalf("preferred dir = %s, want %s", dir, existing)
 	}
-	if _, err := InstallDefaults(repo, dir, false); err != nil {
-		t.Fatal(err)
-	}
 	if _, err := os.Stat(filepath.Join(repo, ".loop", "skills")); !os.IsNotExist(err) {
 		t.Fatalf(".loop/skills should not be created, err=%v", err)
-	}
-	if _, err := os.Stat(filepath.Join(existing, "loop", "SKILL.md")); err != nil {
-		t.Fatal(err)
 	}
 }
 
@@ -157,9 +151,7 @@ func TestListDiscoveredMergesAgentSkillDirs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := InstallBuiltIn(repo, filepath.Join(".codex", "skills"), "loop", false); err != nil {
-		t.Fatal(err)
-	}
+	writeLoopSkill(t, repo, filepath.Join(".codex", "skills"))
 	mustWrite(t, filepath.Join(repo, CanonicalProjectDir, "project-helper", "SKILL.md"), `---
 name: project-helper
 description: Project helper skill.
@@ -182,6 +174,23 @@ version: 1
 	if got != "loop,project-helper" {
 		t.Fatalf("discovered skills = %s", got)
 	}
+}
+
+func writeLoopSkill(t *testing.T, repoRoot, dir string) string {
+	t.Helper()
+	base := dir
+	if !filepath.IsAbs(base) {
+		base = filepath.Join(repoRoot, dir)
+	}
+	path := filepath.Join(base, "loop", "SKILL.md")
+	mustWrite(t, path, `---
+name: loop
+description: Loop skill.
+version: 1
+---
+# loop
+`)
+	return path
 }
 
 func mustWrite(t *testing.T, path, content string) {

@@ -70,7 +70,7 @@ The agent owns:
 
 ## Skill-based customization
 
-Repository skills define the repeatable behavior expected from the agent. `loop init` installs the default `loop` skill by running `npx --yes skills add aki-0421/loop --skill loop --agent <agent> --yes`; it does not directly copy the built-in skill template. Teams may edit, remove, or add skills. `loop` discovers existing project skill directories and avoids creating a duplicate `.loop/skills/` tree.
+Repository skills define the repeatable behavior expected from the agent. `loop init` installs the default `loop` skill by running `npx --yes skills add aki-0421/loop --skill loop --agent <agent> --yes`; it does not copy a local template. Teams may edit, remove, or add skills. `loop` discovers existing project skill directories and avoids creating a duplicate `.loop/skills/` tree.
 
 The CLI activates `loop` with a compact code-generated bootstrap. The user instruction file is task input only and is not responsible for activating mandatory loop behavior.
 

@@ -272,7 +272,7 @@ Manage repository skills.
 
 ```bash
 loop skills list
-loop skills install <name-or-path> [--force]
+loop skills install <loop|path> [--force]
 loop skills sync
 loop skills doctor
 ```
@@ -280,6 +280,7 @@ loop skills doctor
 Rules:
 
 - Repository skills live in discovered agent skill directories. The default new directory is `.agents/skills/`.
+- `install loop` delegates to `npx skills add aki-0421/loop --skill loop --agent <agent> --yes`; local paths are copied into `skills.sourceDir`.
 - `sync` copies or symlinks skills into configured agent-specific paths only when explicitly requested.
 - `doctor` validates `SKILL.md` front matter and required files.
 

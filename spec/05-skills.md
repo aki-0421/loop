@@ -65,4 +65,4 @@ The generated prompt is only a compact bootstrap. Detailed pull request template
 
 ## Skill updates
 
-`loop init` installs the default skill through `npx skills add aki-0421/loop --skill loop --agent <agent> --yes`. `loop skills install <name-or-path>` remains a manual command for installing built-in or local skills and never overwrites repository-customized skills unless `--force` is supplied.
+`loop init` installs the default skill through `npx skills add aki-0421/loop --skill loop --agent <agent> --yes`. `loop skills install loop` uses the same `npx skills` path. `loop skills install <path>` remains a manual command for installing local skills and never overwrites repository-customized skills unless `--force` is supplied.

@@ -1293,11 +1293,11 @@ func commandSkills(ctx context.Context, g globals, args []string) error {
 			return codedError{2, err}
 		}
 		if fs.NArg() != 1 {
-			return codedError{2, fmt.Errorf("usage: loop skills install <name-or-path> [--force]")}
+			return codedError{2, fmt.Errorf("usage: loop skills install <loop|path> [--force]")}
 		}
 		name := fs.Arg(0)
-		if contains(skills.DefaultNames, name) {
-			_, err = skills.InstallBuiltIn(root, sourceDir, name, *force)
+		if name == "loop" {
+			_, err = installDefaultSkillWithSkillsCLI(ctx, root, cfg, cfg.Agent.Default, *force, g.JSON)
 		} else {
 			_, err = skills.InstallFromPath(name, root, sourceDir, *force)
 		}
