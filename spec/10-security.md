@@ -25,7 +25,7 @@ Rules:
 
 The CLI and agent perform configured operations without asking the user. This is the only run behavior.
 
-To keep behavior inspectable, every action must be recorded as an event. Push, pull request creation, check waiting, merge, cleanup, agent command execution, and agent file reads must appear in `agent-events.jsonl` or a CLI event stream. Agent thinking, raw file contents, and raw diffs must not be persisted.
+To keep behavior inspectable, every action must be recorded as an event. Push, pull request creation, check waiting, merge, cleanup, agent command execution, and agent file reads must appear in the iteration event log, a task event log, or a CLI event stream. Agent thinking, raw file contents, and raw diffs must not be persisted.
 
 ## File protection
 

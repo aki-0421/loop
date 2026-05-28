@@ -1699,6 +1699,8 @@ type pathSet struct {
 	IntegrationMode  string
 	PullRequestMode  bool
 	WorkDir          string
+	TaskID           string
+	TaskDir          string
 	AgentPromptExtra string
 }
 
@@ -1733,7 +1735,7 @@ func writeRuntimeArtifact(paths pathSet) error {
 	if initialBranch != "" && paths.CurrentBranch != "" && initialBranch != paths.CurrentBranch {
 		branchRenamed = true
 	}
-	data, err := json.MarshalIndent(map[string]any{
+	payload := map[string]any{
 		"goal":              paths.Goal,
 		"output_language":   paths.Language,
 		"run_id":            paths.RunID,
@@ -1745,7 +1747,14 @@ func writeRuntimeArtifact(paths pathSet) error {
 		"integration_mode":  paths.IntegrationMode,
 		"pull_request_mode": paths.PullRequestMode,
 		"workdir":           paths.WorkDir,
-	}, "", "  ")
+	}
+	if strings.TrimSpace(paths.TaskID) != "" {
+		payload["task_id"] = paths.TaskID
+	}
+	if strings.TrimSpace(paths.TaskDir) != "" {
+		payload["task_dir"] = paths.TaskDir
+	}
+	data, err := json.MarshalIndent(payload, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -1794,7 +1803,8 @@ func runAgent(ctx context.Context, cfg config.Config, root string, paths pathSet
 	_, err := pa.Run(ctx, agent.RunRequest{
 		WorkDir: root, Env: env, PromptText: promptText,
 		IterationDir: paths.IterationDir, EventLogPath: paths.Events, ErrorsLogPath: paths.Errors,
-		OnEvent: onEvent,
+		EventMetadata: map[string]any{"agent_type": "single"},
+		OnEvent:       onEvent,
 	})
 	return err
 }

@@ -198,7 +198,7 @@ Ignored runtime files:
 .loop/loop.db
 ```
 
-The durable iteration directory keeps audit files such as `prompt.md`, `effective-config.yaml`, `agent-events.jsonl`, `task-tree.json`, `task-results/`, `review-result.json`, `errors.log`, `pr-state.json`, `pr-checks.json`, and `github-updates.md`. Disposable active-work artifacts such as runtime context, validation output, and prompt audits are accessed through CLI commands while the iteration is running.
+The durable iteration directory keeps audit files such as `prompt.md`, `effective-config.yaml`, `agent-events.jsonl`, `task-tree.json`, `tasks/<n>/task.json`, `tasks/<n>/agent-events.jsonl`, `task-results/`, `review-result.json`, `errors.log`, `pr-state.json`, `pr-checks.json`, and `github-updates.md`. Disposable active-work artifacts such as runtime context, validation output, and prompt audits are accessed through CLI commands while the iteration is running.
 
 ## Development
 

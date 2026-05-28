@@ -307,6 +307,10 @@ func runOrchestratedIteration(ctx context.Context, req orchestrationRequest) (it
 	if err := writeTaskTreeAudit(iterDir, tree); err != nil {
 		return iterationWorkflowResult{}, codedError{1, err}
 	}
+	taskDirs := newTaskDirectoryAllocator(iterDir)
+	if _, err := taskDirs.Ensure(tree.Tasks); err != nil {
+		return iterationWorkflowResult{}, codedError{1, err}
+	}
 	if len(tree.Tasks) == 0 {
 		goalComplete := tree.GoalComplete && strings.TrimSpace(req.Goal) != ""
 		req.State.Iterations[len(req.State.Iterations)-1].ShouldFullyStop = goalComplete
@@ -321,6 +325,10 @@ func runOrchestratedIteration(ctx context.Context, req orchestrationRequest) (it
 	pendingTasks := append([]workflow.Task(nil), tree.Tasks...)
 	var review workflow.ReviewResult
 	for cycle := 0; cycle <= cfg.Run.MaxReviewFixCycles; cycle++ {
+		currentTaskDirs, err := taskDirs.Ensure(pendingTasks)
+		if err != nil {
+			return iterationWorkflowResult{}, codedError{1, err}
+		}
 		req.State.Stage = runstate.StageCoding
 		_ = runstate.Write(req.StatePath, *req.State)
 		req.Renderer.Stage(runstate.StageCoding, "coding tasks")
@@ -334,6 +342,7 @@ func runOrchestratedIteration(ctx context.Context, req orchestrationRequest) (it
 			RunID:             req.RunID,
 			IterationID:       iterationID,
 			Tasks:             pendingTasks,
+			TaskDirs:          currentTaskDirs,
 			Renderer:          req.Renderer,
 		})
 		if err != nil {
@@ -426,7 +435,41 @@ type taskSetRequest struct {
 	RunID             string
 	IterationID       string
 	Tasks             []workflow.Task
+	TaskDirs          map[string]string
 	Renderer          *runRenderer
+}
+
+type taskDirectoryAllocator struct {
+	iterationDir string
+	next         int
+	dirs         map[string]string
+}
+
+func newTaskDirectoryAllocator(iterDir string) *taskDirectoryAllocator {
+	return &taskDirectoryAllocator{iterationDir: iterDir, dirs: map[string]string{}}
+}
+
+func (a *taskDirectoryAllocator) Ensure(tasks []workflow.Task) (map[string]string, error) {
+	out := make(map[string]string, len(tasks))
+	for _, task := range tasks {
+		dir, ok := a.dirs[task.ID]
+		if !ok {
+			a.next++
+			dir = filepath.Join(a.iterationDir, "tasks", fmt.Sprintf("%04d", a.next))
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				return nil, err
+			}
+			if err := writeTaskAudit(dir, task); err != nil {
+				return nil, err
+			}
+			if err := ensureEmptyFile(filepath.Join(dir, "agent-events.jsonl")); err != nil {
+				return nil, err
+			}
+			a.dirs[task.ID] = dir
+		}
+		out[task.ID] = dir
+	}
+	return out, nil
 }
 
 func executeTaskSet(ctx context.Context, req taskSetRequest) ([]workflow.TaskResult, []gitx.Commit, error) {
@@ -471,6 +514,10 @@ func executeTaskWave(ctx context.Context, req taskSetRequest, tasks []workflow.T
 	}
 	contexts := make([]taskContext, 0, len(tasks))
 	for _, task := range tasks {
+		taskDir := req.TaskDirs[task.ID]
+		if strings.TrimSpace(taskDir) == "" {
+			return nil, fmt.Errorf("task directory not allocated for task %s", task.ID)
+		}
 		branchBase := "task/" + req.IterationID + "-" + gitx.Slug(task.ID)
 		branch, err := rootRunner.UniqueBranchName(ctx, branchBase, "")
 		if err != nil {
@@ -491,6 +538,9 @@ func executeTaskWave(ctx context.Context, req taskSetRequest, tasks []workflow.T
 		taskPaths.ActiveDir = activeDir
 		taskPaths.WorkDir = worktree
 		taskPaths.CurrentBranch = branch
+		taskPaths.TaskID = task.ID
+		taskPaths.TaskDir = taskDir
+		taskPaths.Events = filepath.Join(taskDir, "agent-events.jsonl")
 		if err := writeRuntimeArtifact(taskPaths); err != nil {
 			return nil, err
 		}
@@ -628,10 +678,21 @@ func runRoleAgent(ctx context.Context, cfg config.Config, workDir string, paths 
 		"LOOP_PULL_REQUEST_MODE":         strconv.FormatBool(paths.PullRequestMode),
 		"LOOP_PR_MODE":                   strconv.FormatBool(paths.PullRequestMode),
 	}
+	if strings.TrimSpace(paths.TaskDir) != "" {
+		env["LOOP_TASK_DIR"] = paths.TaskDir
+	}
+	eventMetadata := map[string]any{"agent_type": role}
+	if strings.TrimSpace(taskID) != "" {
+		eventMetadata["task_id"] = taskID
+	}
+	if strings.TrimSpace(paths.TaskDir) != "" {
+		eventMetadata["task_dir"] = paths.TaskDir
+	}
 	_, err := pa.Run(ctx, agent.RunRequest{
 		WorkDir: workDir, Env: env, PromptText: promptText,
 		IterationDir: paths.IterationDir, EventLogPath: paths.Events, ErrorsLogPath: paths.Errors,
-		OnEvent: onEvent,
+		EventMetadata: eventMetadata,
+		OnEvent:       onEvent,
 	})
 	return err
 }
@@ -849,12 +910,34 @@ func writeTaskTreeAudit(iterDir string, tree workflow.TaskTree) error {
 	return os.WriteFile(filepath.Join(iterDir, "task-tree.json"), data, 0o644)
 }
 
+func writeTaskAudit(taskDir string, task workflow.Task) error {
+	data, err := workflow.MarshalIndent(task)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(taskDir, "task.json"), data, 0o644)
+}
+
 func writeReviewAudit(iterDir string, review workflow.ReviewResult) error {
 	data, err := workflow.MarshalIndent(review)
 	if err != nil {
 		return err
 	}
 	return os.WriteFile(filepath.Join(iterDir, "review-result.json"), data, 0o644)
+}
+
+func ensureEmptyFile(path string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	if errors.Is(err, os.ErrExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return file.Close()
 }
 
 func firstNonNil(errs ...error) error {

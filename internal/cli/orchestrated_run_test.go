@@ -65,8 +65,30 @@ git:
 			t.Fatalf("%s missing: %v", name, err)
 		}
 	}
-	if got := countEventType(t, iterDir, "agent.started"); got != 3 {
-		t.Fatalf("agent.started count = %d, want planner+coder+reviewer", got)
+	if got := countEventType(t, iterDir, "agent.started"); got != 2 {
+		t.Fatalf("iteration agent.started count = %d, want planner+reviewer", got)
+	}
+	iterationEvents := readText(t, filepath.Join(iterDir, "agent-events.jsonl"))
+	for _, want := range []string{`"agent_type":"planner"`, `"agent_type":"review"`} {
+		if !strings.Contains(iterationEvents, want) {
+			t.Fatalf("iteration events missing %s:\n%s", want, iterationEvents)
+		}
+	}
+	if strings.Contains(iterationEvents, `"agent_type":"coding"`) {
+		t.Fatalf("coding events should not be written to iteration event log:\n%s", iterationEvents)
+	}
+	taskDir := filepath.Join(iterDir, "tasks", "0001")
+	if data := readText(t, filepath.Join(taskDir, "task.json")); !strings.Contains(data, `"id": "fake-task"`) {
+		t.Fatalf("task audit missing fake task:\n%s", data)
+	}
+	if got := countEventType(t, taskDir, "agent.started"); got != 1 {
+		t.Fatalf("task agent.started count = %d, want coding agent", got)
+	}
+	taskEvents := readText(t, filepath.Join(taskDir, "agent-events.jsonl"))
+	for _, want := range []string{`"agent_type":"coding"`, `"task_id":"fake-task"`} {
+		if !strings.Contains(taskEvents, want) {
+			t.Fatalf("task events missing %s:\n%s", want, taskEvents)
+		}
 	}
 	assertBranchMissing(t, repo, "wip/0001")
 }

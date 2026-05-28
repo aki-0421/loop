@@ -33,10 +33,11 @@ func TestProcessAdapterPersistsOnlyAuditEvents(t *testing.T) {
 	}
 	var streamed []runstate.Event
 	result, err := adapter.Run(context.Background(), RunRequest{
-		WorkDir:      dir,
-		PromptText:   "prompt",
-		IterationDir: dir,
-		EventLogPath: filepath.Join(dir, "agent-events.jsonl"),
+		WorkDir:       dir,
+		PromptText:    "prompt",
+		IterationDir:  dir,
+		EventLogPath:  filepath.Join(dir, "agent-events.jsonl"),
+		EventMetadata: map[string]any{"agent_type": "coding", "task_id": "unit-task"},
 		OnEvent: func(event runstate.Event) {
 			streamed = append(streamed, event)
 		},
@@ -51,6 +52,8 @@ func TestProcessAdapterPersistsOnlyAuditEvents(t *testing.T) {
 	assertFileContains(t, filepath.Join(dir, "agent-events.jsonl"), "agent.command")
 	assertFileContains(t, filepath.Join(dir, "agent-events.jsonl"), "agent.file_read")
 	assertFileContains(t, filepath.Join(dir, "agent-events.jsonl"), "agent.exited")
+	assertFileContains(t, filepath.Join(dir, "agent-events.jsonl"), `"agent_type":"coding"`)
+	assertFileContains(t, filepath.Join(dir, "agent-events.jsonl"), `"task_id":"unit-task"`)
 	assertFileNotContains(t, filepath.Join(dir, "agent-events.jsonl"), "secret file line")
 	assertFileDoesNotExist(t, filepath.Join(dir, "agent.stdout.log"))
 	assertFileDoesNotExist(t, filepath.Join(dir, "agent.stderr.log"))
@@ -58,6 +61,11 @@ func TestProcessAdapterPersistsOnlyAuditEvents(t *testing.T) {
 	assertFileDoesNotExist(t, filepath.Join(dir, "errors.log"))
 	if !hasEventType(streamed, "agent.stream") {
 		t.Fatalf("expected non-persisted screen stream event, got %#v", streamed)
+	}
+	for _, event := range streamed {
+		if event["agent_type"] != "coding" {
+			t.Fatalf("streamed event missing agent metadata: %#v", event)
+		}
 	}
 	for _, event := range streamed {
 		if event["type"] == "agent.stream" && strings.Contains(fmt.Sprint(event["text"]), "cat README.md") {

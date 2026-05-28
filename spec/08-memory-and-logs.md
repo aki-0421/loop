@@ -15,6 +15,10 @@
           effective-config.yaml
           prompt.md
           agent-events.jsonl
+          tasks/
+            0001/
+              task.json
+              agent-events.jsonl
           errors.log        # only when an error occurs
   worktrees/
   tmp/
@@ -66,7 +70,9 @@ The durable iteration directory stores audit and replay files plus PR lifecycle 
 
 - `prompt`: instruction snapshot for the iteration.
 - `effective-config`: effective configuration snapshot.
-- `agent-events`: structured audit events.
+- `agent-events`: structured audit events for iteration-level agents such as planner and reviewer.
+- `tasks/<sequence>/task.json`: durable copy of the task assigned to one coding agent.
+- `tasks/<sequence>/agent-events.jsonl`: structured audit events for that coding agent only.
 - `errors`: process, result, validation, or sync warnings.
 - `task-tree`, `task-results/`, and `review-result`: durable role handoff audit copies.
 - `pr-state`, `pr-checks`, and `pr-check-log`: pull request lifecycle state and check diagnostics written by the CLI.
@@ -74,7 +80,7 @@ The durable iteration directory stores audit and replay files plus PR lifecycle 
 
 Agents should read runtime artifacts through `loop iteration` commands and write role outputs through `loop handoff`. Legacy `plan`, `todo`, and terminal close artifacts remain for compatibility with older single-agent workflows.
 
-After a merge or skip-merge terminal action, the active temp directory is removed. `prompt.md`, `effective-config.yaml`, `agent-events.jsonl`, `errors.log`, PR lifecycle diagnostics, GitHub update diffs, and run state remain for audit and replay.
+After a merge or skip-merge terminal action, the active temp directory is removed. `prompt.md`, `effective-config.yaml`, iteration and task `agent-events.jsonl` files, `errors.log`, PR lifecycle diagnostics, GitHub update diffs, and run state remain for audit and replay.
 
 ## GitHub context memory
 
@@ -119,7 +125,7 @@ Search uses SQLite FTS5 ranking and may be filtered by GitHub repository.
 
 ## Event log
 
-`agent-events.jsonl` is append-only. Events are newline-delimited JSON.
+`agent-events.jsonl` is append-only. Events are newline-delimited JSON. The iteration-level file records planner, reviewer, and CLI lifecycle events. Coding-agent events are written under `tasks/<sequence>/agent-events.jsonl` and are not duplicated into the iteration-level file.
 
 Required event fields:
 
@@ -128,14 +134,16 @@ Required event fields:
 | `type` | Event type |
 | `ts` | RFC3339 timestamp |
 | `iteration_id` | Iteration id when applicable |
+| `agent_type` | Agent role for agent-emitted events, such as `planner`, `coding`, `review`, or `single` |
+| `task_id` | Task id for coding-agent events |
 
 Event examples:
 
 ```json
 {"type":"iteration.started","ts":"2026-05-17T00:00:00Z","iteration_id":"0001"}
-{"type":"agent.command","ts":"2026-05-17T00:00:01Z","command":"make test"}
-{"type":"agent.file_read","ts":"2026-05-17T00:00:02Z","path":"internal/cli/renderer.go"}
-{"type":"agent.usage","ts":"2026-05-17T00:00:03Z","input_tokens":1200,"output_tokens":45,"cache_read_tokens":300,"cache_creation_tokens":0,"delta":true}
+{"type":"agent.command","ts":"2026-05-17T00:00:01Z","agent_type":"coding","task_id":"add-tests","command":"make test"}
+{"type":"agent.file_read","ts":"2026-05-17T00:00:02Z","agent_type":"planner","path":"internal/cli/renderer.go"}
+{"type":"agent.usage","ts":"2026-05-17T00:00:03Z","agent_type":"review","input_tokens":1200,"output_tokens":45,"cache_read_tokens":300,"cache_creation_tokens":0,"delta":true}
 {"type":"git.branch.created","ts":"2026-05-17T00:00:01Z","branch":"wip/0001"}
 {"type":"git.branch.renamed","ts":"2026-05-17T00:00:10Z","from":"wip/0001","to":"feat/add-login-flow"}
 {"type":"validation.command.completed","ts":"2026-05-17T00:03:00Z","name":"test","exit_code":0}

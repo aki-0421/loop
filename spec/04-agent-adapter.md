@@ -45,17 +45,18 @@ The CLI records:
 
 ```text
 agent-events.jsonl
+tasks/<sequence>/agent-events.jsonl
 errors.log        # only on non-successful phases
 ```
 
-`agent-events.jsonl` contains normalized events:
+Iteration and task `agent-events.jsonl` files contain normalized events. Coding-agent events are written to the task file only. Every agent event includes `agent_type`; coding-agent events also include `task_id` and `task_dir`.
 
 ```json
-{"type":"agent.started","ts":"2026-05-17T00:00:00Z","command":"codex"}
-{"type":"agent.usage","ts":"2026-05-17T00:00:00Z","input_tokens":1200,"output_tokens":45,"cache_read_tokens":300,"cache_creation_tokens":0,"delta":true}
-{"type":"agent.command","ts":"2026-05-17T00:00:01Z","command":"make test"}
-{"type":"agent.file_read","ts":"2026-05-17T00:00:02Z","path":"internal/cli/renderer.go"}
-{"type":"agent.exited","exit_code":0}
+{"type":"agent.started","ts":"2026-05-17T00:00:00Z","agent_type":"planner","command":"codex"}
+{"type":"agent.usage","ts":"2026-05-17T00:00:00Z","agent_type":"coding","task_id":"add-tests","input_tokens":1200,"output_tokens":45,"cache_read_tokens":300,"cache_creation_tokens":0,"delta":true}
+{"type":"agent.command","ts":"2026-05-17T00:00:01Z","agent_type":"coding","task_id":"add-tests","command":"make test"}
+{"type":"agent.file_read","ts":"2026-05-17T00:00:02Z","agent_type":"review","path":"internal/cli/renderer.go"}
+{"type":"agent.exited","ts":"2026-05-17T00:00:03Z","agent_type":"review","exit_code":0}
 ```
 
 `agent.usage` is the canonical usage accounting event. Adapters should emit it whenever they can normalize model-reported token usage. `input_tokens` and `output_tokens` are required when known. `cache_read_tokens`, `cache_creation_tokens`, `reasoning_output_tokens`, and `total_tokens` are optional metadata. `delta=true` means the event is an increment to add to the current iteration total. When `delta` is absent or false, the event is a snapshot relative to the current agent process; renderers and summaries must combine it with the usage baseline captured at `agent.started`. `estimated=true` marks heuristic usage.

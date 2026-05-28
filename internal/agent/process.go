@@ -69,8 +69,9 @@ func (a ProcessAdapter) Run(ctx context.Context, req RunRequest) (*RunResult, er
 		return nil, err
 	}
 	eventLog := runstate.EventLog{Path: req.EventLogPath}
+	eventMetadata := copyEventMetadata(req.EventMetadata)
 	started := time.Now().UTC()
-	appendAgentEvent(eventLog, req.OnEvent, startedEvent(prepared.Command, prepared.Args, req.PromptText))
+	appendAgentEvent(eventLog, req.OnEvent, startedEvent(prepared.Command, prepared.Args, req.PromptText), eventMetadata)
 
 	cmd := exec.CommandContext(ctx, prepared.Command, prepared.Args...)
 	cmd.Dir = req.WorkDir
@@ -79,8 +80,8 @@ func (a ProcessAdapter) Run(ctx context.Context, req RunRequest) (*RunResult, er
 		cmd.Stdin = strings.NewReader(req.PromptText)
 	}
 	configureCommandCancel(cmd)
-	stdoutCapture := newStreamCapture(eventLog, "stdout", req.OnEvent)
-	stderrCapture := newStreamCapture(eventLog, "stderr", req.OnEvent)
+	stdoutCapture := newStreamCapture(eventLog, "stdout", req.OnEvent, eventMetadata)
+	stderrCapture := newStreamCapture(eventLog, "stderr", req.OnEvent, eventMetadata)
 	cmd.Stdout = stdoutCapture
 	cmd.Stderr = stderrCapture
 
@@ -107,7 +108,7 @@ func (a ProcessAdapter) Run(ctx context.Context, req RunRequest) (*RunResult, er
 		}
 	}
 	finished := time.Now().UTC()
-	appendAgentEvent(eventLog, req.OnEvent, runstate.Event{"type": "agent.exited", "exit_code": exitCode})
+	appendAgentEvent(eventLog, req.OnEvent, runstate.Event{"type": "agent.exited", "exit_code": exitCode}, eventMetadata)
 	if waitErr != nil {
 		appendErrorLog(req.ErrorsLogPath, fmt.Sprintf("agent exited with code %d after %s: %s", exitCode, finished.Sub(started).Round(time.Millisecond), errorString(waitErr)))
 	}
@@ -140,16 +141,18 @@ type streamCapture struct {
 	eventLog             runstate.EventLog
 	stream               string
 	onEvent              func(runstate.Event)
+	eventMetadata        map[string]any
 	pending              []byte
 	err                  error
 	pendingCommandStarts map[string]time.Time
 }
 
-func newStreamCapture(eventLog runstate.EventLog, stream string, onEvent func(runstate.Event)) *streamCapture {
+func newStreamCapture(eventLog runstate.EventLog, stream string, onEvent func(runstate.Event), eventMetadata map[string]any) *streamCapture {
 	return &streamCapture{
 		eventLog:             eventLog,
 		stream:               stream,
 		onEvent:              onEvent,
+		eventMetadata:        copyEventMetadata(eventMetadata),
 		pendingCommandStarts: map[string]time.Time{},
 	}
 }
@@ -195,12 +198,12 @@ func (c *streamCapture) emit(text string) {
 	summary := summarizeAgentOutput(c.stream, text)
 	now := time.Now().UTC()
 	if summary.ScreenText != "" && c.onEvent != nil {
-		c.onEvent(runstate.Event{
+		c.onEvent(withEventMetadata(runstate.Event{
 			"type":   "agent.stream",
 			"stream": c.stream,
 			"text":   summary.ScreenText,
 			"ts":     now.Format(time.RFC3339),
-		})
+		}, c.eventMetadata))
 	}
 	for _, event := range summary.AuditEvents {
 		out, keep := c.rewriteCommandLifecycle(event, now)
@@ -208,6 +211,7 @@ func (c *streamCapture) emit(text string) {
 			continue
 		}
 		event = out
+		event = withEventMetadata(event, c.eventMetadata)
 		if c.eventLog.Path != "" {
 			if err := c.eventLog.Append(event); err != nil {
 				c.err = err
@@ -294,7 +298,8 @@ func eventArgsSlice(v any) []string {
 	}
 }
 
-func appendAgentEvent(log runstate.EventLog, onEvent func(runstate.Event), event runstate.Event) {
+func appendAgentEvent(log runstate.EventLog, onEvent func(runstate.Event), event runstate.Event, metadata map[string]any) {
+	event = withEventMetadata(event, metadata)
 	if log.Path != "" {
 		_ = log.Append(event)
 	} else if _, ok := event["ts"]; !ok {
@@ -303,6 +308,34 @@ func appendAgentEvent(log runstate.EventLog, onEvent func(runstate.Event), event
 	if onEvent != nil {
 		onEvent(event)
 	}
+}
+
+func copyEventMetadata(metadata map[string]any) map[string]any {
+	if len(metadata) == 0 {
+		return nil
+	}
+	out := make(map[string]any, len(metadata))
+	for k, v := range metadata {
+		if strings.TrimSpace(k) == "" {
+			continue
+		}
+		out[k] = v
+	}
+	return out
+}
+
+func withEventMetadata(event runstate.Event, metadata map[string]any) runstate.Event {
+	if len(metadata) == 0 || event == nil {
+		return event
+	}
+	out := make(runstate.Event, len(event)+len(metadata))
+	for k, v := range event {
+		out[k] = v
+	}
+	for k, v := range metadata {
+		out[k] = v
+	}
+	return out
 }
 
 func bytesIndexByte(b []byte, target byte) int {

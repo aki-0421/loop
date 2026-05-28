@@ -56,7 +56,7 @@ State reconstruction is not currently performed. If `run-state.json` is incomple
 - Git branch list.
 - Git commits on iteration branch.
 - Terminal close handoff.
-- `agent-events.jsonl`.
+- Iteration or task `agent-events.jsonl` files.
 - PR state files.
 
 ## Exit Codes
