@@ -46,8 +46,6 @@ internal/memory/
   memory.go
   github.go
   github_context.go
-internal/doclint/
-  doclint.go
 internal/validation/
   result.go
   runner.go
@@ -114,15 +112,6 @@ Responsibilities:
 - Wait for checks.
 - Merge pull requests.
 - Fetch check logs and parse pull request references.
-
-### `internal/doclint`
-
-Responsibilities:
-
-- Discover Git-tracked Markdown documents.
-- Apply built-in and command-supplied document exclusions.
-- Build reachable Markdown document graphs from local path references.
-- Report unreachable required Markdown documents and invalid local Markdown references.
 
 ### `internal/runstate`
 

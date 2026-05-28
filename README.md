@@ -122,7 +122,6 @@ Human-facing commands:
 | --- | --- |
 | `loop init` | Create repository-local config and install the default skill through `npx skills`. |
 | `loop run <instruction.md>` | Run one or more automated coding iterations. |
-| `loop linter document` | Warn about unreachable required Markdown docs and invalid Markdown path references. |
 | `loop version` | Print build version, commit, and date. |
 
 Agent-facing commands are included in the compact agent help:

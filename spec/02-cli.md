@@ -252,18 +252,6 @@ Agents use this command only for important product, policy, or large specificati
 
 `loop issue report` creates and applies `loop:proposal` for concrete repository or harness improvement proposals. `--kind` is one of `tool`, `docs`, `guardrail`, `observability`, `environment`, `workflow`, or `other`. Issue bodies should be GitHub-flavored Markdown and include evidence, impact, and the proposed repository improvement. Unsupported agent capabilities are rediscovered each iteration and are not persisted as Issues.
 
-## `loop linter`
-
-Run repository linters.
-
-```bash
-loop linter document [--strict] [--config <path>]
-```
-
-`loop linter document` validates Markdown document navigation from the `linter.document` config. `entry` is the root-level injected context file such as `AGENTS.md` or `CLAUDE.md`. `requiredReachable` is the Markdown set that must be reachable from `entry`; each item may be a file, path prefix, or glob. `excludes` removes matching files from the scan set, the required-reachable set, and invalid-reference targets; each item may be a file, path prefix, or glob.
-
-The command considers Git-tracked `.md` and `.markdown` files and always excludes any path segment named `skills`. It follows local Markdown path references from the entry file, reports required Markdown files that are not reachable, and reports local Markdown path references that point outside the repository or do not resolve to a non-excluded tracked Markdown file. By default, findings are warnings and the command exits successfully. With `--strict`, any finding exits non-zero. `--config` loads an alternate loop config file, including JSON files such as `loop.json`.
-
 ## `loop skills`
 
 Manage repository skills.

@@ -265,6 +265,19 @@ func TestRunUnknownCommandMentionsHelp(t *testing.T) {
 	}
 }
 
+func TestLinterCommandIsRemoved(t *testing.T) {
+	err := Run([]string{"linter", "document"})
+	if err == nil {
+		t.Fatal("removed linter command should fail")
+	}
+	if code, ok := ExitCode(err); !ok || code != 2 {
+		t.Fatalf("linter removal error code = %d, %v; want 2", code, err)
+	}
+	if !strings.Contains(err.Error(), "unknown command") {
+		t.Fatalf("error should report an unknown command: %v", err)
+	}
+}
+
 func TestRunHelpAliases(t *testing.T) {
 	for _, args := range [][]string{{"--help"}, {"-h"}} {
 		out, err := captureStdout(t, func() error {

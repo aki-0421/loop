@@ -52,14 +52,6 @@ validation:
   agentMayAddCommands: true
   requireRequiredCommandsToPass: true
 
-linter:
-  document:
-    entry: AGENTS.md
-    requiredReachable:
-      - docs
-    excludes:
-      - README.md
-
 logs:
   dir: .loop/runs
   retainRawAgentOutput: true

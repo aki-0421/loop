@@ -71,14 +71,26 @@ run:
 	if cfg.Git.Integration.PR.ChecksWatchTimeoutSeconds != 3600 {
 		t.Fatalf("default checks watch timeout = %d, want 3600", cfg.Git.Integration.PR.ChecksWatchTimeoutSeconds)
 	}
-	if cfg.Linter.Document.Entry != "AGENTS.md" {
-		t.Fatalf("default document linter entry = %q, want AGENTS.md", cfg.Linter.Document.Entry)
+}
+
+func TestRemovedDocumentLinterConfigIsRejected(t *testing.T) {
+	repo := t.TempDir()
+	t.Setenv("HOME", repo)
+	mustWrite(t, filepath.Join(repo, ".loop", "config.yaml"), `version: 1
+linter:
+  document:
+    entry: AGENTS.md
+    requiredReachable:
+      - docs
+    excludes:
+      - README.md
+`)
+	_, err := Load(LoadOptions{CWD: repo, Env: []string{}})
+	if err == nil {
+		t.Fatal("removed linter config should be rejected")
 	}
-	if strings.Join(cfg.Linter.Document.RequiredReachable, ",") != "docs" {
-		t.Fatalf("default required reachable = %#v", cfg.Linter.Document.RequiredReachable)
-	}
-	if strings.Join(cfg.Linter.Document.Excludes, ",") != "README.md" {
-		t.Fatalf("default document excludes = %#v", cfg.Linter.Document.Excludes)
+	if !strings.Contains(err.Error(), "field linter not found") {
+		t.Fatalf("error should mention removed linter field: %v", err)
 	}
 }
 
