@@ -84,13 +84,7 @@ Long-term memory comes from GitHub pull requests, Issues, and Issue/PR comments.
 
 PR sync includes open and merged pull requests. Closed pull requests that were not merged are removed from PR memory during incremental sync. Issue sync includes all repository Issues, including non-loop Issues, and incremental GitHub context sync stores newly observed Issue state changes and Issue/PR comments.
 
-The prompt never loads every historical GitHub record. Agents request only the amount of cached GitHub context they need:
-
-1. Recent cached GitHub context records through `loop memory recent --limit <n>`.
-2. SQLite FTS matches from PR titles/bodies, Issue titles/bodies, and cached comments through `loop memory search <query> --limit <n>`.
-3. Full cached bodies only when the skill requests them through `loop memory`.
-
-`loop memory recent` and `loop memory search` require an explicit positive `--limit` and never perform network access. They read the current cache and print records with kind, number, state, repository, URL, title, and excerpt. Kinds are `pr`, `issue`, `issue-comment`, and `pr-comment`.
+The prompt never loads every historical GitHub record, and agents do not have a command for querying cached memory directly. Cached GitHub records remain available to CLI-owned synchronization, polling, repair, and audit logic. Agents only receive GitHub context that the CLI deliberately writes into scoped runtime artifacts such as `github-updates`.
 
 ## Clarification Issues
 

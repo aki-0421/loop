@@ -120,8 +120,6 @@ func Run(args []string) error {
 		return commandHandoff(ctx, g, rest[1:])
 	case "skills":
 		return commandSkills(ctx, g, rest[1:])
-	case "memory":
-		return commandMemory(ctx, g, rest[1:])
 	case "doctor":
 		return commandDoctor(ctx, g, rest[1:])
 	default:
@@ -1328,93 +1326,6 @@ func commandSkills(ctx context.Context, g globals, args []string) error {
 	return nil
 }
 
-func commandMemory(ctx context.Context, g globals, args []string) error {
-	if len(args) == 0 {
-		return codedError{2, fmt.Errorf("usage: loop memory <recent|search>")}
-	}
-	root, err := gitx.RepoRoot(ctx, ".")
-	if err != nil {
-		return codedError{1, err}
-	}
-	cfg, err := config.Load(config.LoadOptions{CWD: root, ConfigPath: g.ConfigPath, Overrides: config.Overrides{Agent: g.Agent}})
-	if err != nil {
-		return codedError{3, err}
-	}
-	runsDir := filepath.Join(root, cfg.Logs.Dir)
-	switch args[0] {
-	case "recent":
-		recentArgs := flagsFirst(args[1:], map[string]bool{"run": true, "repo": true, "limit": true})
-		fs := flag.NewFlagSet("memory recent", flag.ContinueOnError)
-		run := fs.String("run", "", "deprecated; ignored")
-		repo := fs.String("repo", "", "GitHub owner/name")
-		limit := fs.Int("limit", 0, "limit")
-		if err := fs.Parse(recentArgs); err != nil {
-			return codedError{2, err}
-		}
-		if err := requireLimitFlag(fs, limit); err != nil {
-			return codedError{2, err}
-		}
-		_ = run
-		items, err := memory.RecentWithRepo(runsDir, *repo, *limit)
-		if err != nil {
-			return codedError{1, err}
-		}
-		for _, item := range items {
-			fmt.Println(formatMemoryRecord(item))
-		}
-	case "search":
-		searchArgs := flagsFirst(args[1:], map[string]bool{
-			"run": true, "iteration": true, "artifact": true, "repo": true, "limit": true,
-		})
-		fs := flag.NewFlagSet("memory search", flag.ContinueOnError)
-		run := fs.String("run", "", "deprecated; ignored")
-		iteration := fs.String("iteration", "", "deprecated; ignored")
-		artifact := fs.String("artifact", "", "deprecated; ignored")
-		repo := fs.String("repo", "", "GitHub owner/name")
-		limit := fs.Int("limit", 0, "limit")
-		if err := fs.Parse(searchArgs); err != nil {
-			return codedError{2, err}
-		}
-		if err := requireLimitFlag(fs, limit); err != nil {
-			return codedError{2, err}
-		}
-		if fs.NArg() != 1 {
-			return codedError{2, fmt.Errorf("usage: loop memory search <query>")}
-		}
-		_, _, _ = run, iteration, artifact
-		items, err := memory.SearchWithOptions(runsDir, memory.SearchOptions{
-			Query: fs.Arg(0),
-			Repo:  *repo,
-			Limit: *limit,
-		})
-		if err != nil {
-			return codedError{1, err}
-		}
-		for _, item := range items {
-			fmt.Println(formatMemoryRecord(item))
-		}
-	default:
-		return codedError{2, fmt.Errorf("unknown memory subcommand %q", args[0])}
-	}
-	return nil
-}
-
-func requireLimitFlag(fs *flag.FlagSet, limit *int) error {
-	seen := false
-	fs.Visit(func(f *flag.Flag) {
-		if f.Name == "limit" {
-			seen = true
-		}
-	})
-	if !seen {
-		return errors.New("--limit is required")
-	}
-	if limit == nil || *limit <= 0 {
-		return errors.New("--limit must be positive")
-	}
-	return nil
-}
-
 func commandIssue(ctx context.Context, g globals, args []string) error {
 	if len(args) == 0 {
 		return codedError{2, fmt.Errorf("usage: loop issue <ask|report>")}
@@ -1582,28 +1493,6 @@ func commandIssueReport(ctx context.Context, g globals, args []string) error {
 		"kind":   *kind,
 	}
 	return printResult(g, value, fmt.Sprintf("reported issue #%d %s\n", record.Number, record.URL))
-}
-
-func formatMemoryRecord(item memory.Record) string {
-	kind := item.Kind
-	if kind == "" {
-		kind = "pr"
-	}
-	return strings.Join([]string{
-		cleanMemoryField(kind),
-		fmt.Sprintf("#%d", item.Number),
-		item.State,
-		cleanMemoryField(item.Repo),
-		cleanMemoryField(item.Title),
-		cleanMemoryField(item.URL),
-		cleanMemoryField(item.Excerpt),
-	}, "\t")
-}
-
-func cleanMemoryField(value string) string {
-	value = strings.ReplaceAll(value, "\t", " ")
-	value = strings.ReplaceAll(value, "\n", " ")
-	return strings.TrimSpace(value)
 }
 
 func syncMemoryBeforeRun(ctx context.Context, root string, cfg config.Config, renderer *runRenderer) error {

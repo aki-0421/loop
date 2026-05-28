@@ -17,14 +17,13 @@ func TestHelpCommandListsCommands(t *testing.T) {
 	for _, want := range []string{
 		"Loop commands:",
 		"loop run",
-		"loop memory search",
 		"Run `loop help <command>` for details.",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("help output missing %q:\n%s", want, out)
 		}
 	}
-	for _, notWant := range []string{"loop iteration", "loop commit", "loop branch"} {
+	for _, notWant := range []string{"loop iteration", "loop commit", "loop branch", "loop memory"} {
 		if strings.Contains(out, notWant) {
 			t.Fatalf("human help should hide %q:\n%s", notWant, out)
 		}
@@ -38,6 +37,16 @@ func TestHelpCommandRejectsAgentOnlyDetail(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "loop help agent iteration close") {
 		t.Fatalf("error should point to agent help: %v", err)
+	}
+}
+
+func TestMemoryCommandIsRemoved(t *testing.T) {
+	err := Run([]string{"memory", "search", "checkout", "--limit", "1"})
+	if err == nil {
+		t.Fatal("expected memory command to be unavailable")
+	}
+	if !strings.Contains(err.Error(), `unknown command "memory"`) {
+		t.Fatalf("error = %v", err)
 	}
 }
 
@@ -56,7 +65,6 @@ func TestAgentHelpCommandShowsCompactList(t *testing.T) {
 		"cmd:loop iteration close",
 		"cmd:loop iteration todo",
 		"cmd:loop issue report",
-		"cmd:loop memory search",
 		"artifacts:",
 		"plan:rw:file",
 		"detail:loop help agent <command...>",
@@ -67,6 +75,9 @@ func TestAgentHelpCommandShowsCompactList(t *testing.T) {
 	}
 	if strings.Contains(out, "  ") || strings.Contains(out, "\n\n") {
 		t.Fatalf("agent help should avoid padding and blank lines:\n%s", out)
+	}
+	if strings.Contains(out, "loop memory") {
+		t.Fatalf("agent help should not expose memory commands:\n%s", out)
 	}
 }
 

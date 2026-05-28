@@ -28,7 +28,7 @@ The Go implementation includes tests for:
 - Local squash merge flow.
 - Pull request command construction.
 - Check waiting behavior.
-- Memory recent and search behavior.
+- GitHub memory sync, storage, and internal search behavior.
 - Run-state reads and resume status reporting.
 - Fully automated run contract violations.
 - Value-critical run resilience:

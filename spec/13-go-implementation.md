@@ -87,7 +87,7 @@ Responsibilities:
 - Build the compact code-generated skill bootstrap.
 - Avoid duplicating the full skill contract in the prompt.
 - Keep runtime metadata, goal text, instruction paths, and iteration paths out of the prompt.
-- Direct agents to `loop iteration`, `loop memory`, `loop issue`, and `loop handoff` commands.
+- Direct agents to `loop iteration`, `loop issue`, and `loop handoff` commands.
 
 ### Iteration artifact commands
 

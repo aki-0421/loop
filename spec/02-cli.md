@@ -284,17 +284,6 @@ Rules:
 - `sync` copies or symlinks skills into configured agent-specific paths only when explicitly requested.
 - `doctor` validates `SKILL.md` front matter and required files.
 
-## `loop memory`
-
-Inspect cached GitHub PR, Issue, and comment context.
-
-```bash
-loop memory recent --limit <n> [--repo <owner/name>]
-loop memory search <query> --limit <n> [--repo <owner/name>]
-```
-
-`recent` returns recent cached GitHub context records. `search` returns matching PR title/body, Issue title/body, and comment excerpts from the local `.loop/loop.db` cache without performing network access. Agents choose an explicit positive `--limit` for the current task; omitting it is an error. Output includes kind (`pr`, `issue`, `issue-comment`, or `pr-comment`), number, state, repository, title, URL, and excerpt. Memory refresh is automatic during `loop run` and after successful `loop pr merge`; there is no manual memory refresh command.
-
 ## `loop doctor`
 
 Check the environment.

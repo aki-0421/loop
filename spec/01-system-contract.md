@@ -81,7 +81,7 @@ The skill bootstrap is implemented in Go under the prompt assembly package. It i
 The CLI assembles each agent request in this order:
 
 1. Non-user-editable instruction to use the `loop` skill.
-2. Instruction to use `loop iteration`, `loop memory`, `loop issue`, and `loop handoff` commands for runtime context, GitHub Issues, and role handoffs.
+2. Instruction to use `loop iteration`, `loop issue`, and `loop handoff` commands for runtime context, GitHub Issues, and role handoffs.
 
 When an agent adapter supports a system or developer message channel, the bootstrap can be sent through that channel. When an adapter only supports a single prompt stream, the bootstrap is passed as the prompt. The implementation must avoid duplicating the full skill contract in the prompt.
 

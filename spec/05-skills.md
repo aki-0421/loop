@@ -40,8 +40,6 @@ The built-in `loop` skill consolidates the planner, coding, and review role conv
 
 - Read runtime context with `loop iteration read runtime`.
 - Read the user instruction with `loop iteration read instruction`.
-- Read recent GitHub PR, Issue, and comment context with `loop memory recent`.
-- Search older GitHub context with `loop memory search <query>`.
 - Create important clarification Issues with `loop issue ask`.
 - Report concrete repository or harness improvement proposals with `loop issue report`; do not persist unsupported agent capability findings as Issues.
 - Planner role: write `task-tree` with `loop handoff write task-tree`.
@@ -51,7 +49,7 @@ The built-in `loop` skill consolidates the planner, coding, and review role conv
 
 The planner role treats one iteration as one AI sprint-sized PR: a coherent development goal that autonomous agents can complete in hours. It splits that sprint into coding-agent work packets for dependency ordering, conflict avoidance, validation, and parallel execution, not for review convenience.
 
-The default skill keeps role behavior concise. Commit intent comes from planner task metadata; pull request titles, bodies, checks, and merges are handled by the CLI.
+The default skill keeps role behavior concise. It does not expose cached memory lookup commands to agents; GitHub context caching remains a CLI-owned internal capability. Commit intent comes from planner task metadata; pull request titles, bodies, checks, and merges are handled by the CLI.
 
 ## Pull request templates
 

@@ -31,13 +31,13 @@ An adapter receives:
 The assembled prompt is a compact, non-user-editable skill bootstrap:
 
 1. A short instruction to use the `loop` skill.
-2. A short instruction to use `loop iteration`, `loop memory`, `loop issue`, and `loop handoff` commands.
+2. A short instruction to use `loop iteration`, `loop issue`, and `loop handoff` commands.
 
-Detailed loop behavior and CLI usage live in repository skills, especially `loop`. The prompt intentionally does not inline skill instructions, effective config, JSON contract details, required file paths, runtime values, recent GitHub context memory, goal text, instruction Markdown content, or instruction file paths.
+Detailed loop behavior and CLI usage live in repository skills, especially `loop`. The prompt intentionally does not inline skill instructions, effective config, JSON contract details, required file paths, runtime values, cached GitHub context memory, goal text, instruction Markdown content, or instruction file paths.
 
 ## Bootstrap requirements
 
-The code-generated bootstrap activates the `loop` skill. Skills use `loop iteration`, `loop memory`, `loop issue`, and `loop handoff` commands for runtime context, GitHub Issues, and strict role handoffs. The CLI owns commit creation, pull request text, check waiting, check failure handling, PR merge, and cleanup.
+The code-generated bootstrap activates the `loop` skill. Skills use `loop iteration`, `loop issue`, and `loop handoff` commands for runtime context, GitHub Issues, and strict role handoffs. Agents do not receive a command for querying cached memory directly. The CLI owns commit creation, pull request text, check waiting, check failure handling, PR merge, and cleanup.
 
 ## Process output capture
 

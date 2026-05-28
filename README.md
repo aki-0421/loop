@@ -25,7 +25,7 @@ It is built for repositories where AI work should leave behind the same things g
 - **CLI-owned commits and pull requests**: the CLI stages, commits, pushes, checks, repairs, and merges from validated role handoffs.
 - **AI sprint PRs**: planner output is scoped to a coherent autonomous development sprint, not a small review-sized batch.
 - **Auditable runtime state**: prompts, effective config, event logs, errors, PR state, check output, and run state are stored under `.loop/`.
-- **GitHub context memory**: recent PRs, Issues, and comments are cached in `.loop/loop.db` and searched on demand.
+- **GitHub context cache**: recent PRs, Issues, and comments are cached in `.loop/loop.db` for CLI-owned synchronization and audit decisions.
 - **Skills instead of giant prompts**: `loop init` delegates default skill installation to `npx skills` while the CLI injects only a compact bootstrap into each agent run.
 
 ## Quick Start

@@ -11,7 +11,7 @@ You are running inside the `loop` harness. The CLI owns branches, worktrees, com
 ## Shared Rules
 
 - Do not run `git add`, `git commit`, branch rename/switch commands, `gh pr`, `loop commit`, `loop branch`, `loop pr`, or `loop iteration close`.
-- Read context with `loop iteration read runtime`, `loop iteration read instruction`, `loop memory recent`, and focused repository inspection.
+- Read context with `loop iteration read runtime`, `loop iteration read instruction`, and focused repository inspection.
 - Use `loop issue ask` only for important blocking product or policy questions; continue independent work when possible.
 - Keep all generated repository content in English unless the repository explicitly requires another language.
 - Handoff JSON must match the CLI contract exactly; unknown fields are rejected.

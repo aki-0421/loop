@@ -11,11 +11,14 @@ func TestAssembleIncludesOnlyBootstrap(t *testing.T) {
 	})
 	for _, want := range []string{
 		"Use the `loop` skill",
-		"Use `loop iteration`, `loop memory`, `loop issue`, and `loop handoff` commands",
+		"Use `loop iteration`, `loop issue`, and `loop handoff` commands",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("assembled prompt missing %q:\n%s", want, text)
 		}
+	}
+	if strings.Contains(text, "loop memory") {
+		t.Fatalf("assembled prompt should not expose memory commands:\n%s", text)
 	}
 	for _, notWant := range []string{
 		oldSkill("iteration"),

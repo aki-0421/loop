@@ -823,32 +823,6 @@ func allHelpCommands() []helpCommand {
 			Summary: "Validate skill front matter",
 		},
 		{
-			Path:    []string{"memory"},
-			Usage:   "loop memory <recent|search>",
-			Summary: "Inspect cached GitHub PR, Issue, and comment context",
-			Agent:   true,
-		},
-		{
-			Path:    []string{"memory", "recent"},
-			Usage:   "loop memory recent --limit <n> [--repo <owner/name>]",
-			Summary: "Print recent cached GitHub context",
-			Flags: []helpFlag{
-				{Name: "--repo <owner/name>", Description: "limit to one GitHub repository"},
-				{Name: "--limit <n>", Description: "maximum records"},
-			},
-			Agent: true,
-		},
-		{
-			Path:    []string{"memory", "search"},
-			Usage:   "loop memory search <query> --limit <n> [--repo <owner/name>]",
-			Summary: "Search cached GitHub PRs, Issues, and comments",
-			Flags: []helpFlag{
-				{Name: "--repo <owner/name>", Description: "limit to one GitHub repository"},
-				{Name: "--limit <n>", Description: "maximum matches"},
-			},
-			Agent: true,
-		},
-		{
 			Path:        []string{"doctor"},
 			Usage:       "loop doctor",
 			Summary:     "Check Git, config, agent command, validation commands, and PR tooling",

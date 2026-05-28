@@ -15,7 +15,7 @@ type Request struct {
 func HarnessContract(pullRequestMode bool) string {
 	lines := []string{
 		"Use the `loop` skill for this CLI-orchestrated role run.",
-		"Use `loop iteration`, `loop memory`, `loop issue`, and `loop handoff` commands for runtime context, GitHub Issues, and role handoff JSON.",
+		"Use `loop iteration`, `loop issue`, and `loop handoff` commands for runtime context, GitHub Issues, and role handoff JSON.",
 		"Do not create branches, commits, pull requests, or terminal iteration closes yourself; the CLI owns those mechanics.",
 	}
 	if pullRequestMode {
