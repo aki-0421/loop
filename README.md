@@ -12,7 +12,7 @@
   <a href="https://pkg.go.dev/github.com/aki-0421/loop"><img alt="Go Reference" src="https://pkg.go.dev/badge/github.com/aki-0421/loop.svg"></a>
 </p>
 
-`loop` turns one Markdown instruction file into a controlled sequence of role-orchestrated agent runs. Each iteration is one AI sprint-sized pull request: the CLI creates the branch, asks a planner agent for a dependency-aware task tree, runs coding agents in isolated task worktrees, gives coding agents a loop-owned task merge command so they can resolve conflicts before exiting, validates and reviews the result, then opens and manages the pull request.
+`loop` turns one Markdown instruction file into a controlled sequence of role-orchestrated agent runs. Each iteration is one AI sprint-sized pull request: the CLI creates the branch, asks a planner agent for a dependency-aware task tree, runs coding agents in isolated task worktrees with task-local TODO commits, validates the result, then asks the review agent to verify the work and drive pull request creation, checks, and merge through loop-owned commands.
 
 It is built for repositories where AI work should leave behind the same things good human work does: small commits, clear branches, validation evidence, pull request context, and enough logs to explain what happened later.
 
@@ -22,7 +22,7 @@ It is built for repositories where AI work should leave behind the same things g
 - **Git-native isolation**: every iteration and coding task runs in CLI-created branches and worktrees, then coding agents use a loop-owned command to squash-merge completed task branches into the iteration branch.
 - **Role orchestration**: one configured adapter is reused as planner, coding, and review agent with role-specific prompts and environment.
 - **Dependency-aware task scheduling**: planner task trees include dependencies and conflicts so independent coding tasks can run in parallel.
-- **CLI-owned commits and pull requests**: the CLI stages, commits, pushes, checks, repairs, and merges from validated role handoffs.
+- **CLI-owned mechanics through agent commands**: agents use loop commands for task commits, task merges, branch renames, pull request creation, checks, and merges.
 - **AI sprint PRs**: planner output is scoped to a coherent autonomous development sprint, not a small review-sized batch.
 - **Auditable runtime state**: prompts, effective config, event logs, errors, PR state, check output, and run state are stored under `.loop/`.
 - **GitHub context cache**: recent PRs, Issues, and comments are cached in `.loop/loop.db` for CLI-owned synchronization and audit decisions.
@@ -110,12 +110,12 @@ loop run task.md \
 2. The CLI creates the iteration branch and worktree before any agent starts.
 3. The planner agent explores the repository and writes a strict AI sprint-level `task-tree` handoff with dependencies and conflicts.
 4. The CLI schedules ready tasks, creates one worktree per coding task, and runs non-conflicting coding agents in parallel.
-5. Each coding agent edits files, writes a `task-result`, runs `loop task merge`, resolves merge conflicts when necessary, and exits only after the task is merged into the iteration branch. If an agent exits without completing the merge, the CLI discards that unmerged attempt branch/worktree and retries the task in a fresh branch/worktree when attempts remain.
+5. Each coding agent explores the repository, creates task-local TODOs, processes them serially, and uses `loop task todo complete` to create one task-branch commit per TODO. After writing a `task-result`, it runs `loop task merge`, resolves merge conflicts when necessary, and exits only after the task is merged into the iteration branch. If an agent exits without completing the merge, the CLI discards that unmerged attempt branch/worktree and retries the task in a fresh branch/worktree when attempts remain.
 6. The CLI runs configured validation, then asks the review agent for a `review-result`.
 7. Validation failures or review findings become repair tasks until the review passes or the fix-cycle limit is reached.
-8. The CLI creates the PR, waits for checks, performs configured merge behavior, cleans up worktrees and branches, and starts the next iteration when needed.
+8. In PR mode, the review agent renames `wip/<iteration>`, writes PR title/body artifacts from the repository template, creates the PR, waits for checks, and merges through `loop pr`; the CLI verifies the merged state, cleans up worktrees and branches, and starts the next iteration when needed.
 
-In automated PR mode, checks passing leads to a CLI-owned squash merge. Post-hoc review happens after or outside the autonomous development loop and is not a PR sizing constraint.
+In automated PR mode, checks passing leads to a loop-owned squash merge initiated by the review agent through `loop pr merge`. Post-hoc review happens after or outside the autonomous development loop and is not a PR sizing constraint.
 
 ## Commands
 

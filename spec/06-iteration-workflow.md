@@ -14,16 +14,16 @@ Each iteration is CLI-owned:
 2. Run the planner agent in the iteration worktree.
 3. Validate the planner's `task-tree` handoff.
 4. Schedule ready coding tasks by `depends_on` and `conflicts_with`, with at most `run.maxParallelTasks` active tasks.
-5. For each coding task attempt, create a task branch and worktree from the current iteration branch, run the coding agent, validate its `task-result`, require the coding agent to run `loop task merge`, remove the task worktree, and continue only after the task branch has been squash-merged into the iteration branch.
+5. For each coding task attempt, create a task branch and worktree from the current iteration branch, run the coding agent, require it to create and complete task-local TODOs before merging, validate its `task-result`, require `loop task merge --type <type> <summary>`, remove the task worktree, and continue only after the task branch has been squash-merged into the iteration branch.
 6. Run configured validation commands from the iteration worktree.
 7. Run the review agent with the task tree, task results, validation status, and repository diff available.
 8. If validation fails or review returns `changes_requested`, create repair tasks and repeat coding, validation, and review until approval or `run.maxReviewFixCycles` is exhausted.
-9. Create and integrate a pull request, or perform local merge mode when configured.
+9. In PR mode, require the review agent to rename the branch, write PR title/body artifacts, create the PR, wait for checks, and merge through `loop pr` before approval. In local mode, perform local merge after approval.
 10. Clean task and iteration worktrees and continue until `goal_complete=true`, the iteration limit is reached, or a terminal error occurs.
 
-Agents do not create branches, PRs, or iteration close handoffs in the role-orchestrated workflow. Coding agents do not run Git directly; they use `loop task merge` to create the task commit from task metadata, squash-merge into the iteration branch, and resolve conflicts before exiting.
+Agents do not run Git or GitHub commands directly. Coding agents create task-local TODOs before editing, complete each TODO through `loop task todo complete` so the CLI creates one task-branch commit per TODO, and use `loop task merge` to squash-merge the completed task branch into the iteration branch. Review agents use `loop branch rename` and `loop pr` commands for PR integration.
 
-If a coding agent exits without completing `loop task merge`, the CLI does not merge or salvage that task branch. It discards the unmerged attempt branch and worktree, clears stale task handoff state, records a discard event, and starts the next attempt in a fresh branch and worktree until `run.maxTaskAttempts` is exhausted.
+If a coding agent exits without completing `loop task merge`, the CLI does not merge or salvage that task branch. It discards the unmerged attempt branch and worktree, clears stale task handoff and task TODO state, records a discard event, and starts the next attempt in a fresh branch and worktree until `run.maxTaskAttempts` is exhausted. When attempts are exhausted, or when the agent explicitly runs `loop task discard --reason`, the planner runs again with the discarded task and current plan context; replanning is capped by `run.maxPlanRevisions`.
 
 ## Pull Request Scope
 
@@ -41,6 +41,7 @@ Durable iteration files include:
   task-tree.json
   tasks/0001/
     task.json
+    task-todo.json
     task-result.json
     task-merge.json
     agent-events.jsonl
@@ -63,8 +64,11 @@ loop handoff write task-tree --file task-tree.json
 Coding agents write:
 
 ```bash
+loop task todo add --type F --title "Implement behavior" --acceptance "Behavior is implemented and covered." implement behavior
+loop task todo start 1
+loop task todo complete 1
 loop handoff write task-result --task "$LOOP_TASK_ID" --file "$LOOP_TASK_DIR/task-result.json"
-loop task merge
+loop task merge --type F complete "$LOOP_TASK_ID"
 ```
 
 If `loop task merge` reports conflicts, the coding agent resolves the conflicts in the printed iteration worktree and completes the merge with `loop task merge --continue`.
@@ -75,21 +79,21 @@ Review agents write:
 loop handoff write review-result --file review-result.json
 ```
 
-The CLI rejects unknown JSON fields and invalid dependency, conflict, status, goal, or commit metadata before proceeding.
+The CLI rejects unknown JSON fields, removed planner/review commit metadata, and invalid dependency, conflict, status, or goal values before proceeding.
 
 ## Validation And Repair
 
 Configured validation runs after all currently scheduled coding tasks are merged into the iteration branch. Required validation failures do not integrate. When fix cycles remain, the CLI creates a validation repair task and reruns the coding/review loop.
 
-Review findings are converted into repair tasks. A review agent must provide enough finding detail for the CLI to create tasks with acceptance criteria and commit metadata.
+Review findings are converted into repair tasks. A review agent must provide enough finding detail for the CLI to create tasks with acceptance criteria.
 
 ## Integration
 
 Pull request mode is the primary integration path:
 
-- The CLI writes PR title/body artifacts from task and review context.
-- The CLI pushes the iteration branch, creates or reuses the PR, waits for checks when configured, and squash-merges when checks pass.
-- With `git.integration.pr.humanReview=true` or `loop run --human-review`, the CLI creates the PR and pauses for external post-hoc review or merge updates instead of auto-merging.
+- The review agent renames the branch with `loop branch rename` before PR creation.
+- The review agent reads `loop iteration read pr-template`, writes `pr-title` and `pr-body`, then runs `loop pr create`, `loop pr checks`, and `loop pr merge`.
+- If checks fail, the review agent writes `changes_requested` findings instead of approving.
 
 Local merge mode remains available for local-only repositories and tests. It squash-merges the approved iteration branch into the base branch.
 

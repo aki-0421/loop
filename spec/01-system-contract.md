@@ -8,8 +8,8 @@
 2. Load recent GitHub PR, Issue, and comment context from the local `.loop/loop.db` cache.
 3. Run the configured adapter as planner, coding, and review agents with compact role prompts.
 4. Validate the planner task tree, schedule coding tasks by dependency and conflict metadata, and run coding agents in CLI-created worktrees.
-5. Require coding agents to complete `loop task merge`, which commits task work from task metadata, squash-merges task branches into the iteration branch, and lets the coding agent resolve conflicts before validation and review.
-6. Open, check, and merge the pull request, or perform local merge mode when configured.
+5. Require coding agents to create task-local TODOs before editing, complete each TODO as one CLI-created task-branch commit, then complete `loop task merge` to squash-merge the task branch into the iteration branch.
+6. Require review agents to rename the iteration branch, create PR text from the template, create/check/merge the pull request through `loop pr`, or perform local merge mode when configured.
 7. Repeat until role output reports `goal_complete=true` for a CLI-provided goal, the iteration limit is reached, or a terminal error is recorded.
 
 ## Fully automated default
@@ -23,7 +23,7 @@ Runs are fully automated:
 - Missing information is handled by making a local, explicit assumption and continuing.
 - After creating a clarification Issue, agents continue unrelated work when possible. The review or planner handoff reports when external context prevents useful progress.
 - GitHub sleep mode polls GitHub Issue/PR updates and starts the next iteration when new context appears. In an interactive terminal, any keypress triggers an immediate fetch. Sleep mode is an explicit skip-merge choice and does not reuse the goal-completion stop decision.
-- Local merge, pull, cleanup, and run-state inspection are performed by the CLI according to configuration. In pull request mode, the CLI performs PR creation, check waiting, check failure handling, and PR merge. `--human-review` pauses after PR creation for external post-hoc review or merge updates.
+- Local merge, pull, cleanup, and run-state inspection are performed by the CLI according to configuration. In pull request mode, review agents drive PR creation, check waiting, check failure handling, and PR merge through loop commands. `--human-review` pauses after PR creation for external post-hoc review or merge updates.
 
 ## Iteration Scope
 
@@ -94,7 +94,7 @@ When an agent adapter supports a system or developer message channel, the bootst
 - Agent command line.
 - Agent event stream.
 - Git branch names.
-- Commits produced by the CLI from task metadata.
+- Commits produced by the CLI from completed task TODOs.
 - Validation commands and outputs.
 - Role handoff JSON.
 - Integration action.

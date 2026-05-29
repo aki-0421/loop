@@ -277,6 +277,108 @@ git:
 	assertBranchMissing(t, repo, "wip/0001")
 }
 
+func TestRoleOrchestratedReplansAfterExplicitDiscard(t *testing.T) {
+	ctx := context.Background()
+	repo := newCleanupRepo(t)
+	mustWrite(t, filepath.Join(repo, "task.md"), "# Task\n\nReplan after an explicit discard.\n")
+	agentCommand, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, filepath.Join(repo, ".loop", "config.yaml"), `version: 1
+
+agent:
+  default: rolediscard
+  adapters:
+    rolediscard:
+      command: `+yamlSingleQuote(agentCommand)+`
+      args: [-test.run=TestHelperProcessRoleAgent, --]
+      prompt: stdin
+      env:
+        LOOP_ROLE_TEST_AGENT: "1"
+        LOOP_ROLE_TEST_AGENT_MODE: "explicit-discard-replan"
+
+run:
+  maxIterations: 1
+
+git:
+  baseBranch: develop
+  integration:
+    mode: local_merge
+`)
+	git(t, repo, "add", "task.md", ".loop/config.yaml")
+	git(t, repo, "commit", "-m", "T: add role discard fixture")
+	withWorkingDir(t, repo)
+
+	if _, err := captureStdout(t, func() error {
+		return commandRun(ctx, globals{Agent: "rolediscard", JSON: true, NoColor: true}, []string{"task.md"})
+	}); err != nil {
+		t.Fatalf("loop run should replan after discard: %v", err)
+	}
+
+	if data := readText(t, filepath.Join(repo, "replacement.txt")); data != "replacement\n" {
+		t.Fatalf("replacement.txt = %q, want replacement", data)
+	}
+	iterDir := latestIterationDir(t, repo, "0001")
+	if got := countEventType(t, iterDir, "agent.started"); got != 3 {
+		t.Fatalf("iteration agent.started count = %d, want two planners plus review", got)
+	}
+}
+
+func TestRoleOrchestratedReplansAfterMaxAttemptExhaustion(t *testing.T) {
+	ctx := context.Background()
+	repo := newCleanupRepo(t)
+	mustWrite(t, filepath.Join(repo, "task.md"), "# Task\n\nReplan after task attempts are exhausted.\n")
+	agentCommand, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, filepath.Join(repo, ".loop", "config.yaml"), `version: 1
+
+agent:
+  default: roleexhaust
+  adapters:
+    roleexhaust:
+      command: `+yamlSingleQuote(agentCommand)+`
+      args: [-test.run=TestHelperProcessRoleAgent, --]
+      prompt: stdin
+      env:
+        LOOP_ROLE_TEST_AGENT: "1"
+        LOOP_ROLE_TEST_AGENT_MODE: "max-attempt-exhaustion-replan"
+
+run:
+  maxIterations: 1
+  maxTaskAttempts: 1
+
+git:
+  baseBranch: develop
+  integration:
+    mode: local_merge
+`)
+	git(t, repo, "add", "task.md", ".loop/config.yaml")
+	git(t, repo, "commit", "-m", "T: add max attempt discard fixture")
+	withWorkingDir(t, repo)
+
+	if _, err := captureStdout(t, func() error {
+		return commandRun(ctx, globals{Agent: "roleexhaust", JSON: true, NoColor: true}, []string{"task.md"})
+	}); err != nil {
+		t.Fatalf("loop run should replan after max attempt exhaustion: %v", err)
+	}
+
+	if data := readText(t, filepath.Join(repo, "max-exhaustion-replacement.txt")); data != "replacement\n" {
+		t.Fatalf("max-exhaustion-replacement.txt = %q, want replacement", data)
+	}
+	iterDir := latestIterationDir(t, repo, "0001")
+	discardedResult := readText(t, filepath.Join(iterDir, "tasks", "0001", "task-result.json"))
+	if !strings.Contains(discardedResult, `"status": "discarded"`) || !strings.Contains(discardedResult, `"discard_reason"`) {
+		t.Fatalf("exhausted task should be marked discarded:\n%s", discardedResult)
+	}
+	replacementResult := readText(t, filepath.Join(iterDir, "tasks", "0002", "task-result.json"))
+	if !strings.Contains(replacementResult, "max-attempt replacement") {
+		t.Fatalf("replacement task result missing:\n%s", replacementResult)
+	}
+}
+
 func TestHelperProcessRoleAgent(t *testing.T) {
 	if os.Getenv("LOOP_ROLE_TEST_AGENT") != "1" {
 		return
@@ -293,6 +395,84 @@ func runRoleTestAgent() int {
 		case "planner-error":
 			fmt.Fprintln(os.Stderr, "forced planner failure")
 			return 1
+		case "explicit-discard-replan":
+			iterDir := os.Getenv("LOOP_ITERATION_DIR")
+			countFile := filepath.Join(iterDir, "planner-count.txt")
+			_, firstErr := os.Stat(countFile)
+			_ = os.WriteFile(countFile, []byte("seen\n"), 0o644)
+			if os.IsNotExist(firstErr) {
+				payload := `{
+  "schema_version": 1,
+  "summary": "Discard one task before replanning",
+  "goal_evaluation": "Fake planner selected a task that will be discarded.",
+  "tasks": [
+    {
+      "id": "discard-task",
+      "title": "Discard task",
+      "description": "Discard this task so the planner can revise the plan.",
+      "depends_on": [],
+      "conflicts_with": [],
+      "acceptance": ["The task is discarded with a reason."]
+    }
+  ]
+}`
+				return exitCode(commandHandoff(ctx, globals{}, []string{"write", "task-tree", "--value", payload}))
+			}
+			payload := `{
+  "schema_version": 1,
+  "summary": "Run replacement task",
+  "goal_evaluation": "Fake planner replaced the discarded task.",
+  "tasks": [
+    {
+      "id": "replacement-task",
+      "title": "Replacement task",
+      "description": "Create the replacement marker.",
+      "depends_on": [],
+      "conflicts_with": [],
+      "acceptance": ["replacement.txt contains the replacement value."]
+    }
+  ]
+}`
+			return exitCode(commandHandoff(ctx, globals{}, []string{"write", "task-tree", "--value", payload}))
+		case "max-attempt-exhaustion-replan":
+			iterDir := os.Getenv("LOOP_ITERATION_DIR")
+			countFile := filepath.Join(iterDir, "planner-count.txt")
+			_, firstErr := os.Stat(countFile)
+			_ = os.WriteFile(countFile, []byte("seen\n"), 0o644)
+			if os.IsNotExist(firstErr) {
+				payload := `{
+  "schema_version": 1,
+  "summary": "Exhaust one task before replanning",
+  "goal_evaluation": "Fake planner selected a task that will exhaust attempts.",
+  "tasks": [
+    {
+      "id": "exhaust-task",
+      "title": "Exhaust task",
+      "description": "Exit without a handoff so attempts are exhausted.",
+      "depends_on": [],
+      "conflicts_with": [],
+      "acceptance": ["The task is discarded after attempts are exhausted."]
+    }
+  ]
+}`
+				return exitCode(commandHandoff(ctx, globals{}, []string{"write", "task-tree", "--value", payload}))
+			}
+			payload := `{
+  "schema_version": 1,
+  "summary": "Run max-attempt replacement task",
+  "goal_evaluation": "Fake planner replaced the exhausted task.",
+  "tasks": [
+    {
+      "id": "max-attempt-replacement",
+      "title": "Max-attempt replacement task",
+      "description": "Create the replacement marker.",
+      "depends_on": [],
+      "conflicts_with": [],
+      "acceptance": ["max-exhaustion-replacement.txt contains the replacement value."]
+    }
+  ]
+}`
+			return exitCode(commandHandoff(ctx, globals{}, []string{"write", "task-tree", "--value", payload}))
 		case "merge-conflict":
 			payload := `{
   "schema_version": 1,
@@ -305,9 +485,7 @@ func runRoleTestAgent() int {
       "description": "Create the first shared file value.",
       "depends_on": [],
       "conflicts_with": [],
-      "acceptance": ["shared.txt contains the first value."],
-      "commit_type": "F",
-      "commit_message": "write first shared value"
+      "acceptance": ["shared.txt contains the first value."]
     },
     {
       "id": "second-task",
@@ -315,9 +493,7 @@ func runRoleTestAgent() int {
       "description": "Create the second shared file value.",
       "depends_on": [],
       "conflicts_with": [],
-      "acceptance": ["shared.txt contains the second value."],
-      "commit_type": "F",
-      "commit_message": "write second shared value"
+      "acceptance": ["shared.txt contains the second value."]
     }
   ]
 }`
@@ -334,9 +510,7 @@ func runRoleTestAgent() int {
       "description": "Create a retry marker after one discarded attempt.",
       "depends_on": [],
       "conflicts_with": [],
-      "acceptance": ["retry.txt contains the second attempt value."],
-      "commit_type": "F",
-      "commit_message": "retry unmerged task attempt"
+      "acceptance": ["retry.txt contains the second attempt value."]
     }
   ]
 }`
@@ -353,9 +527,7 @@ func runRoleTestAgent() int {
       "description": "Create a deterministic fake workflow change.",
       "depends_on": [],
       "conflicts_with": [],
-      "acceptance": ["The fake workflow marker file exists."],
-      "commit_type": "F",
-      "commit_message": "run fake role workflow"
+      "acceptance": ["The fake workflow marker file exists."]
     }
   ]
 }`
@@ -364,12 +536,19 @@ func runRoleTestAgent() int {
 		taskID := os.Getenv("LOOP_TASK_ID")
 		workDir := os.Getenv("LOOP_WORKDIR")
 		switch os.Getenv("LOOP_ROLE_TEST_AGENT_MODE") {
-		case "merge-conflict":
-			value := "first\n"
-			if taskID == "second-task" {
-				value = "second\n"
+		case "explicit-discard-replan":
+			if taskID == "discard-task" {
+				return exitCode(commandTask(ctx, globals{}, []string{"discard", "--reason", "The fake task is intentionally discarded."}))
 			}
-			if err := os.WriteFile(filepath.Join(workDir, "shared.txt"), []byte(value), 0o644); err != nil {
+			if err := startRoleTaskTodo(ctx, taskID, "run replacement task"); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 1
+			}
+			if err := os.WriteFile(filepath.Join(workDir, "replacement.txt"), []byte("replacement\n"), 0o644); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 1
+			}
+			if err := completeRoleTaskTodo(ctx); err != nil {
 				fmt.Fprintln(os.Stderr, err)
 				return 1
 			}
@@ -377,7 +556,50 @@ func runRoleTestAgent() int {
 				fmt.Fprintln(os.Stderr, err)
 				return 1
 			}
-			if err := commandTask(ctx, globals{}, []string{"merge"}); err == nil {
+			return exitCode(commandTask(ctx, globals{}, []string{"merge", "--type", "F", "complete", taskID}))
+		case "max-attempt-exhaustion-replan":
+			if taskID == "exhaust-task" {
+				return 0
+			}
+			if err := startRoleTaskTodo(ctx, taskID, "run max-attempt replacement"); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 1
+			}
+			if err := os.WriteFile(filepath.Join(workDir, "max-exhaustion-replacement.txt"), []byte("replacement\n"), 0o644); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 1
+			}
+			if err := completeRoleTaskTodo(ctx); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 1
+			}
+			if err := writeRoleTaskResult(ctx, taskID, "Fake coding agent completed the max-attempt replacement."); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 1
+			}
+			return exitCode(commandTask(ctx, globals{}, []string{"merge", "--type", "F", "complete", taskID}))
+		case "merge-conflict":
+			value := "first\n"
+			if taskID == "second-task" {
+				value = "second\n"
+			}
+			if err := startRoleTaskTodo(ctx, taskID, "write "+taskID); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 1
+			}
+			if err := os.WriteFile(filepath.Join(workDir, "shared.txt"), []byte(value), 0o644); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 1
+			}
+			if err := completeRoleTaskTodo(ctx); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 1
+			}
+			if err := writeRoleTaskResult(ctx, taskID, "Fake coding agent completed "+taskID+"."); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 1
+			}
+			if err := commandTask(ctx, globals{}, []string{"merge", "--type", "F", "complete", taskID}); err == nil {
 				return 0
 			}
 			iterationWorktree := os.Getenv("LOOP_ITERATION_WORKTREE")
@@ -394,11 +616,11 @@ func runRoleTestAgent() int {
 					fmt.Fprintln(os.Stderr, err)
 					return 1
 				}
-				if err := os.WriteFile(filepath.Join(workDir, "retry.txt"), []byte("first attempt\n"), 0o644); err != nil {
+				if err := startRoleTaskTodo(ctx, taskID, "retry unmerged task attempt"); err != nil {
 					fmt.Fprintln(os.Stderr, err)
 					return 1
 				}
-				if err := writeRoleTaskResult(ctx, taskID, "Fake coding agent stopped before merging the first attempt."); err != nil {
+				if err := os.WriteFile(filepath.Join(workDir, "retry.txt"), []byte("first attempt\n"), 0o644); err != nil {
 					fmt.Fprintln(os.Stderr, err)
 					return 1
 				}
@@ -416,15 +638,23 @@ func runRoleTestAgent() int {
 					fmt.Fprintln(os.Stderr, err)
 					return 1
 				}
-				mergeErr := commandTask(ctx, globals{}, []string{"merge"})
+				completeErr := completeRoleTaskTodo(ctx)
 				_ = os.Remove(hookPath)
-				if mergeErr == nil {
-					fmt.Fprintln(os.Stderr, "first attempt merge unexpectedly succeeded")
+				if completeErr == nil {
+					fmt.Fprintln(os.Stderr, "first attempt commit unexpectedly succeeded")
 					return 1
 				}
 				return 0
 			}
+			if err := startRoleTaskTodo(ctx, taskID, "retry unmerged task attempt"); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 1
+			}
 			if err := os.WriteFile(filepath.Join(workDir, "retry.txt"), []byte("second attempt\n"), 0o644); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 1
+			}
+			if err := completeRoleTaskTodo(ctx); err != nil {
 				fmt.Fprintln(os.Stderr, err)
 				return 1
 			}
@@ -432,9 +662,17 @@ func runRoleTestAgent() int {
 				fmt.Fprintln(os.Stderr, err)
 				return 1
 			}
-			return exitCode(commandTask(ctx, globals{}, []string{"merge"}))
+			return exitCode(commandTask(ctx, globals{}, []string{"merge", "--type", "F", "complete", taskID}))
+		}
+		if err := startRoleTaskTodo(ctx, taskID, "run fake role workflow"); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
 		}
 		if err := os.WriteFile(filepath.Join(workDir, "loop-fake-role-change.txt"), []byte("fake role change\n"), 0o644); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		if err := completeRoleTaskTodo(ctx); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return 1
 		}
@@ -442,7 +680,7 @@ func runRoleTestAgent() int {
 			fmt.Fprintln(os.Stderr, err)
 			return 1
 		}
-		return exitCode(commandTask(ctx, globals{}, []string{"merge"}))
+		return exitCode(commandTask(ctx, globals{}, []string{"merge", "--type", "F", "complete", taskID}))
 	case "review":
 		payload := `{
   "schema_version": 1,
@@ -471,6 +709,17 @@ func writeRoleTaskResult(ctx context.Context, taskID, summary string) error {
 		return err
 	}
 	return commandHandoff(ctx, globals{}, []string{"write", "task-result", "--task", taskID, "--file", path})
+}
+
+func startRoleTaskTodo(ctx context.Context, taskID, message string) error {
+	if err := commandTask(ctx, globals{}, []string{"todo", "add", "--type", "F", "--title", "Complete " + taskID, "--acceptance", "The task acceptance criteria are met.", message}); err != nil {
+		return err
+	}
+	return commandTask(ctx, globals{}, []string{"todo", "start", "1"})
+}
+
+func completeRoleTaskTodo(ctx context.Context) error {
+	return commandTask(ctx, globals{}, []string{"todo", "complete", "1"})
 }
 
 func exitCode(err error) int {

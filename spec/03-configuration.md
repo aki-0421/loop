@@ -38,6 +38,7 @@ run:
   maxParallelTasks: 2
   maxTaskAttempts: 2
   maxReviewFixCycles: 3
+  maxPlanRevisions: 3
 
 skills:
   sourceDir: .codex/skills
@@ -88,6 +89,7 @@ Path-bearing prompt placeholders such as `{prompt_file}`, `{result_file}`, and `
 | `maxParallelTasks` | integer | Maximum non-conflicting coding tasks to run at once. Built-in value is `2`. |
 | `maxTaskAttempts` | integer | Attempts for a coding task before failing the iteration. Built-in value is `2`. |
 | `maxReviewFixCycles` | integer | Validation/review repair cycles before failing the iteration. Built-in value is `3`. |
+| `maxPlanRevisions` | integer | Planner revision cycles after discarded tasks before failing the iteration. Built-in value is `3`. |
 
 ## `skills`
 
@@ -116,9 +118,9 @@ Modes:
 | Mode | Behavior |
 | --- | --- |
 | `local_merge` | Squash merge the approved iteration branch into the base branch locally. |
-| `pr` | CLI creates, checks, optionally pauses for external post-hoc review, and merges the pull request. |
+| `pr` | The review agent creates, checks, and merges the pull request through loop-owned PR commands; the CLI verifies merged state before cleanup. |
 
-Pull request mode is the built-in default and uses `gh` commands. The CLI writes the generated title and body to files before invoking `gh`.
+Pull request mode is the built-in default and uses `gh` commands. In role-orchestrated mode, the review agent reads the PR template, writes `pr-title` and `pr-body`, and then invokes `loop pr create`.
 
 Pull request check timing:
 
@@ -134,7 +136,7 @@ Pull request check timing:
 
 If no checks are reported after the discovery timeout, the check wait is treated as skipped.
 
-`git.integration.pr.mergeWhenChecksPass` is accepted for compatibility with older configs, but role-orchestrated PR merges are initiated by the CLI after review and checks pass.
+`git.integration.pr.mergeWhenChecksPass` is accepted for compatibility with older configs, but role-orchestrated PR merges are initiated by the review agent with `loop pr merge` after checks pass.
 
 ## `validation`
 

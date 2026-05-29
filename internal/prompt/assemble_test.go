@@ -52,7 +52,7 @@ func TestAssembleMentionsPRWriterOnlyInPullRequestMode(t *testing.T) {
 		PullRequestMode: true,
 	})
 	for _, want := range []string{
-		"Pull request creation, check waiting, repairs, and merging are performed by the CLI",
+		"review agents create, check, and merge pull requests through loop-owned PR commands before approval",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("PR prompt missing %q:\n%s", want, text)

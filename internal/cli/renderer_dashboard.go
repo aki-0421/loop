@@ -359,17 +359,8 @@ func taskListBlock(s rendererSnapshot, symbols dashboardSymbols, screenWidth, bl
 	}
 	rows := []taskLine{}
 	markerWidth := 0
-	visibleCount := len(items)
-	hiddenBelow := 0
-	if len(items) > limit {
-		visibleCount = limit - 1
-		if visibleCount < 0 {
-			visibleCount = 0
-		}
-		hiddenBelow = len(items) - visibleCount
-	}
 	active := activeTaskIndex(items)
-	for i := 0; i < visibleCount; i++ {
+	for i := 0; i < len(items); i++ {
 		marker := styledTaskMarker(s, symbols, items[i], i == active)
 		if w := displayWidth(marker); w > markerWidth {
 			markerWidth = w
@@ -379,7 +370,7 @@ func taskListBlock(s rendererSnapshot, symbols dashboardSymbols, screenWidth, bl
 		markerWidth = 1
 	}
 
-	for i := 0; i < visibleCount; i++ {
+	for i := 0; i < len(items); i++ {
 		item := items[i]
 		marker := styledTaskMarker(s, symbols, item, i == active)
 		gap := "  "
@@ -389,6 +380,27 @@ func taskListBlock(s rendererSnapshot, symbols dashboardSymbols, screenWidth, bl
 		}
 		text := ellipsize(item.Text, available)
 		rows = append(rows, taskLine{line: padRightPreserve(marker, markerWidth) + gap + text})
+		if i == active {
+			for _, todo := range item.Todos {
+				todoMarker := styledTodoMarker(s, symbols, todo)
+				todoGap := "  "
+				todoPrefix := strings.Repeat(" ", markerWidth) + todoGap + "  " + todoMarker + " "
+				todoAvailable := maxBlockWidth - displayWidth(todoPrefix)
+				if todoAvailable < 8 {
+					todoAvailable = 8
+				}
+				rows = append(rows, taskLine{line: todoPrefix + ellipsize(todo.Text, todoAvailable)})
+			}
+		}
+	}
+	hiddenBelow := 0
+	if len(rows) > limit {
+		visibleRows := limit - 1
+		if visibleRows < 0 {
+			visibleRows = 0
+		}
+		hiddenBelow = len(rows) - visibleRows
+		rows = rows[:visibleRows]
 	}
 	if hiddenBelow > 0 {
 		rows = append(rows, taskLine{line: colorize(s, ansiDim, fmt.Sprintf("%d hidden below", hiddenBelow))})
@@ -421,6 +433,18 @@ func styledTaskMarker(s rendererSnapshot, symbols dashboardSymbols, item taskIte
 	case item.Status == "retrying":
 		return colorize(s, ansiMagenta+ansiBold, marker)
 	case active || item.Status == "active":
+		return colorize(s, ansiYellow+ansiBold, marker)
+	default:
+		return colorize(s, ansiGray, marker)
+	}
+}
+
+func styledTodoMarker(s rendererSnapshot, symbols dashboardSymbols, item taskTodoDisplay) string {
+	marker := taskTodoMarker(item, symbols)
+	switch item.Status {
+	case "done":
+		return colorize(s, ansiGreen, marker)
+	case "active":
 		return colorize(s, ansiYellow+ansiBold, marker)
 	default:
 		return colorize(s, ansiGray, marker)
@@ -592,6 +616,17 @@ func taskMarker(s rendererSnapshot, item taskItem, active bool, symbols dashboar
 		return symbols.Retrying
 	case active || item.Status == "active":
 		return spinnerSymbol(s)
+	default:
+		return symbols.Pending
+	}
+}
+
+func taskTodoMarker(item taskTodoDisplay, symbols dashboardSymbols) string {
+	switch item.Status {
+	case "done":
+		return symbols.Done
+	case "active":
+		return symbols.Active
 	default:
 		return symbols.Pending
 	}

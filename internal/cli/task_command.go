@@ -38,42 +38,293 @@ type taskMergeCommit struct {
 }
 
 type taskMergeRecord struct {
-	SchemaVersion   int             `json:"schema_version"`
-	TaskID          string          `json:"task_id"`
-	Status          string          `json:"status"`
-	Branch          string          `json:"branch"`
-	IterationBranch string          `json:"iteration_branch"`
-	TaskCommit      taskMergeCommit `json:"task_commit"`
-	MergeCommit     taskMergeCommit `json:"merge_commit"`
-	MergedAt        string          `json:"merged_at"`
+	SchemaVersion   int               `json:"schema_version"`
+	TaskID          string            `json:"task_id"`
+	Status          string            `json:"status"`
+	Branch          string            `json:"branch"`
+	IterationBranch string            `json:"iteration_branch"`
+	TaskCommits     []taskMergeCommit `json:"task_commits"`
+	MergeCommit     taskMergeCommit   `json:"merge_commit"`
+	MergedAt        string            `json:"merged_at"`
+}
+
+type taskTodoFile struct {
+	SchemaVersion int            `json:"schema_version"`
+	TaskID        string         `json:"task_id"`
+	Items         []taskTodoItem `json:"items"`
+}
+
+type taskTodoItem struct {
+	Status        string   `json:"status"`
+	Type          string   `json:"type"`
+	Title         string   `json:"title"`
+	Acceptance    []string `json:"acceptance"`
+	CommitMessage string   `json:"commit_message"`
+	CommitSHA     string   `json:"commit_sha,omitempty"`
+	CommitSubject string   `json:"commit_subject,omitempty"`
+	StartedAt     string   `json:"started_at,omitempty"`
+	CompletedAt   string   `json:"completed_at,omitempty"`
 }
 
 type taskMergeLock struct {
-	SchemaVersion     int             `json:"schema_version"`
-	RunID             string          `json:"run_id"`
-	IterationID       string          `json:"iteration_id"`
-	TaskID            string          `json:"task_id"`
-	Branch            string          `json:"branch"`
-	IterationBranch   string          `json:"iteration_branch"`
-	IterationWorktree string          `json:"iteration_worktree"`
-	TaskCommit        taskMergeCommit `json:"task_commit"`
-	Subject           string          `json:"subject"`
-	Status            string          `json:"status"`
-	ConflictPaths     []string        `json:"conflict_paths,omitempty"`
-	CreatedAt         string          `json:"created_at"`
-	UpdatedAt         string          `json:"updated_at"`
+	SchemaVersion     int               `json:"schema_version"`
+	RunID             string            `json:"run_id"`
+	IterationID       string            `json:"iteration_id"`
+	TaskID            string            `json:"task_id"`
+	Branch            string            `json:"branch"`
+	IterationBranch   string            `json:"iteration_branch"`
+	IterationWorktree string            `json:"iteration_worktree"`
+	TaskCommits       []taskMergeCommit `json:"task_commits"`
+	Subject           string            `json:"subject"`
+	Status            string            `json:"status"`
+	ConflictPaths     []string          `json:"conflict_paths,omitempty"`
+	CreatedAt         string            `json:"created_at"`
+	UpdatedAt         string            `json:"updated_at"`
 }
 
 func commandTask(ctx context.Context, g globals, args []string) error {
 	if len(args) == 0 {
-		return codedError{2, fmt.Errorf("usage: loop task <merge> ...")}
+		return codedError{2, fmt.Errorf("usage: loop task <todo|merge|discard> ...")}
 	}
 	switch args[0] {
+	case "todo":
+		return commandTaskTodo(ctx, g, args[1:])
 	case "merge":
 		return commandTaskMerge(ctx, g, args[1:])
+	case "discard":
+		return commandTaskDiscard(ctx, g, args[1:])
 	default:
 		return codedError{2, fmt.Errorf("unknown task subcommand %q", args[0])}
 	}
+}
+
+type stringListFlag []string
+
+func (f *stringListFlag) String() string {
+	return strings.Join(*f, ", ")
+}
+
+func (f *stringListFlag) Set(value string) error {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return errors.New("value must not be empty")
+	}
+	*f = append(*f, value)
+	return nil
+}
+
+func commandTaskTodo(ctx context.Context, g globals, args []string) error {
+	if len(args) == 0 {
+		return codedError{2, fmt.Errorf("usage: loop task todo <add|list|start|complete> ...")}
+	}
+	switch args[0] {
+	case "add":
+		return commandTaskTodoAdd(ctx, g, args[1:])
+	case "list":
+		return commandTaskTodoList(ctx, g, args[1:])
+	case "start":
+		return commandTaskTodoStart(ctx, g, args[1:])
+	case "complete":
+		return commandTaskTodoComplete(ctx, g, args[1:])
+	default:
+		return codedError{2, fmt.Errorf("unknown task todo subcommand %q", args[0])}
+	}
+}
+
+func commandTaskTodoAdd(ctx context.Context, g globals, args []string) error {
+	fs := flag.NewFlagSet("task todo add", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	iterDir := fs.String("iteration-dir", "", "iteration directory")
+	dirAlias := fs.String("dir", "", "iteration directory")
+	runID := fs.String("run", os.Getenv("LOOP_RUN_ID"), "run id")
+	iteration := fs.String("iteration", defaultIterationEnv(), "iteration id")
+	taskID := fs.String("task", os.Getenv("LOOP_TASK_ID"), "task id")
+	kind := fs.String("type", "", "commit type")
+	title := fs.String("title", "", "TODO title")
+	var acceptance stringListFlag
+	fs.Var(&acceptance, "acceptance", "acceptance criterion; repeatable")
+	args = flagsFirst(args, map[string]bool{
+		"iteration-dir": true, "dir": true, "run": true, "iteration": true,
+		"task": true, "type": true, "title": true, "acceptance": true,
+	})
+	if err := fs.Parse(args); err != nil {
+		return codedError{2, err}
+	}
+	if *dirAlias != "" {
+		*iterDir = *dirAlias
+	}
+	if strings.TrimSpace(*kind) == "" || strings.TrimSpace(*title) == "" || len(acceptance) == 0 || fs.NArg() < 1 {
+		return codedError{2, fmt.Errorf("usage: loop task todo add --type <type> --title <title> --acceptance <text>... <commit-message>")}
+	}
+	mergeCtx, err := resolveTaskMergeContext(ctx, g, *iterDir, *runID, *iteration, *taskID)
+	if err != nil {
+		return codedError{2, err}
+	}
+	if err := requireCleanTaskWorktree(ctx, mergeCtx.TaskWorktree, "add task TODOs before editing"); err != nil {
+		return codedError{1, err}
+	}
+	todos, err := readTaskTodoFile(mergeCtx)
+	if err != nil {
+		return codedError{1, err}
+	}
+	if taskTodoWorkStarted(todos.Items) {
+		return codedError{2, errors.New("cannot add task TODOs after task work has started")}
+	}
+	subject, err := buildLoopCommitSubject(*kind, strings.Join(fs.Args(), " "), loopCommitMessageMaxLength)
+	if err != nil {
+		return codedError{2, err}
+	}
+	prefix, _, _ := strings.Cut(subject, ": ")
+	item := taskTodoItem{
+		Status:        "pending",
+		Type:          prefix,
+		Title:         strings.TrimSpace(*title),
+		Acceptance:    append([]string(nil), acceptance...),
+		CommitMessage: strings.Join(fs.Args(), " "),
+	}
+	todos.Items = append(todos.Items, item)
+	if err := writeTaskTodoFile(mergeCtx, todos); err != nil {
+		return codedError{1, err}
+	}
+	index := len(todos.Items)
+	appendTaskMergeEvent(mergeCtx, runstate.Event{"type": "task.todo.added", "task_id": mergeCtx.TaskID, "index": index, "title": item.Title, "commit_subject": subject})
+	return printResult(g, map[string]any{"task": mergeCtx.TaskID, "index": index, "todo": taskTodoJSONItem(index, item)}, fmt.Sprintf("added task todo %d\n", index))
+}
+
+func commandTaskTodoList(ctx context.Context, g globals, args []string) error {
+	fs := flag.NewFlagSet("task todo list", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	iterDir := fs.String("iteration-dir", "", "iteration directory")
+	dirAlias := fs.String("dir", "", "iteration directory")
+	runID := fs.String("run", os.Getenv("LOOP_RUN_ID"), "run id")
+	iteration := fs.String("iteration", defaultIterationEnv(), "iteration id")
+	taskID := fs.String("task", os.Getenv("LOOP_TASK_ID"), "task id")
+	args = flagsFirst(args, map[string]bool{"iteration-dir": true, "dir": true, "run": true, "iteration": true, "task": true})
+	if err := fs.Parse(args); err != nil {
+		return codedError{2, err}
+	}
+	if *dirAlias != "" {
+		*iterDir = *dirAlias
+	}
+	if fs.NArg() != 0 {
+		return codedError{2, fmt.Errorf("usage: loop task todo list [--task <id>] [--iteration-dir <dir>|--run <run-id> --iteration <n>]")}
+	}
+	mergeCtx, err := resolveTaskMergeContext(ctx, g, *iterDir, *runID, *iteration, *taskID)
+	if err != nil {
+		return codedError{2, err}
+	}
+	todos, err := readTaskTodoFile(mergeCtx)
+	if err != nil {
+		return codedError{1, err}
+	}
+	return printResult(g, map[string]any{"task": mergeCtx.TaskID, "items": taskTodoJSONItems(todos.Items)}, renderTaskTodoList(todos.Items))
+}
+
+func commandTaskTodoStart(ctx context.Context, g globals, args []string) error {
+	return updateTaskTodoStatus(ctx, g, args, "start")
+}
+
+func commandTaskTodoComplete(ctx context.Context, g globals, args []string) error {
+	return updateTaskTodoStatus(ctx, g, args, "complete")
+}
+
+func updateTaskTodoStatus(ctx context.Context, g globals, args []string, action string) error {
+	fs := flag.NewFlagSet("task todo "+action, flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	iterDir := fs.String("iteration-dir", "", "iteration directory")
+	dirAlias := fs.String("dir", "", "iteration directory")
+	runID := fs.String("run", os.Getenv("LOOP_RUN_ID"), "run id")
+	iteration := fs.String("iteration", defaultIterationEnv(), "iteration id")
+	taskID := fs.String("task", os.Getenv("LOOP_TASK_ID"), "task id")
+	args = flagsFirst(args, map[string]bool{"iteration-dir": true, "dir": true, "run": true, "iteration": true, "task": true})
+	if err := fs.Parse(args); err != nil {
+		return codedError{2, err}
+	}
+	if *dirAlias != "" {
+		*iterDir = *dirAlias
+	}
+	if fs.NArg() != 1 {
+		return codedError{2, fmt.Errorf("usage: loop task todo %s <n> [--task <id>] [--iteration-dir <dir>|--run <run-id> --iteration <n>]", action)}
+	}
+	index, err := parseTodoIndex(fs.Arg(0))
+	if err != nil {
+		return codedError{2, err}
+	}
+	mergeCtx, err := resolveTaskMergeContext(ctx, g, *iterDir, *runID, *iteration, *taskID)
+	if err != nil {
+		return codedError{2, err}
+	}
+	todos, err := readTaskTodoFile(mergeCtx)
+	if err != nil {
+		return codedError{1, err}
+	}
+	if index < 1 || index > len(todos.Items) {
+		return codedError{2, fmt.Errorf("todo index %d is out of range", index)}
+	}
+	if action == "start" {
+		if err := startTaskTodoItem(&todos, index); err != nil {
+			return codedError{2, err}
+		}
+		if err := writeTaskTodoFile(mergeCtx, todos); err != nil {
+			return codedError{1, err}
+		}
+		appendTaskMergeEvent(mergeCtx, runstate.Event{"type": "task.todo.started", "task_id": mergeCtx.TaskID, "index": index})
+		return printResult(g, map[string]any{"task": mergeCtx.TaskID, "index": index, "todo": taskTodoJSONItem(index, todos.Items[index-1])}, fmt.Sprintf("started task todo %d\n", index))
+	}
+	commit, err := completeTaskTodoItem(ctx, mergeCtx, &todos, index)
+	if err != nil {
+		return codedError{1, err}
+	}
+	if err := writeTaskTodoFile(mergeCtx, todos); err != nil {
+		return codedError{1, err}
+	}
+	appendTaskMergeEvent(mergeCtx, runstate.Event{"type": "task.todo.completed", "task_id": mergeCtx.TaskID, "index": index, "commit": commit.SHA})
+	return printResult(g, map[string]any{"task": mergeCtx.TaskID, "index": index, "commit": commit, "todo": taskTodoJSONItem(index, todos.Items[index-1])}, fmt.Sprintf("completed task todo %d: %s %s\n", index, shortSHA(commit.SHA), commit.Subject))
+}
+
+func commandTaskDiscard(ctx context.Context, g globals, args []string) error {
+	fs := flag.NewFlagSet("task discard", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	iterDir := fs.String("iteration-dir", "", "iteration directory")
+	dirAlias := fs.String("dir", "", "iteration directory")
+	runID := fs.String("run", os.Getenv("LOOP_RUN_ID"), "run id")
+	iteration := fs.String("iteration", defaultIterationEnv(), "iteration id")
+	taskID := fs.String("task", os.Getenv("LOOP_TASK_ID"), "task id")
+	reason := fs.String("reason", "", "discard reason")
+	args = flagsFirst(args, map[string]bool{"iteration-dir": true, "dir": true, "run": true, "iteration": true, "task": true, "reason": true})
+	if err := fs.Parse(args); err != nil {
+		return codedError{2, err}
+	}
+	if *dirAlias != "" {
+		*iterDir = *dirAlias
+	}
+	if fs.NArg() != 0 || strings.TrimSpace(*reason) == "" {
+		return codedError{2, fmt.Errorf("usage: loop task discard --reason <reason> [--task <id>] [--iteration-dir <dir>|--run <run-id> --iteration <n>]")}
+	}
+	mergeCtx, err := resolveTaskMergeContext(ctx, g, *iterDir, *runID, *iteration, *taskID)
+	if err != nil {
+		return codedError{2, err}
+	}
+	result := workflow.TaskResult{
+		SchemaVersion: 1,
+		TaskID:        mergeCtx.TaskID,
+		Status:        "discarded",
+		Summary:       "Task discarded.",
+		DiscardReason: strings.TrimSpace(*reason),
+	}
+	data, err := workflow.MarshalIndent(result)
+	if err != nil {
+		return codedError{1, err}
+	}
+	globalPath := artifactdb.GlobalDBPathForIteration(mergeCtx.IterationDir)
+	if err := artifactdb.WriteRoleHandoff(globalPath, mergeCtx.RunID, mergeCtx.IterationID, "task-result", mergeCtx.TaskID, string(data)); err != nil {
+		return codedError{1, err}
+	}
+	if err := writeTaskResultAudit(mergeCtx.IterationDir, mergeCtx.TaskDir, mergeCtx.TaskID, data); err != nil {
+		return codedError{1, err}
+	}
+	appendTaskMergeEvent(mergeCtx, runstate.Event{"type": "task.discarded", "task_id": mergeCtx.TaskID, "reason": result.DiscardReason})
+	return printResult(g, map[string]any{"task": mergeCtx.TaskID, "status": "discarded", "reason": result.DiscardReason}, "discarded task "+mergeCtx.TaskID+"\n")
 }
 
 func commandTaskMerge(ctx context.Context, g globals, args []string) error {
@@ -84,9 +335,11 @@ func commandTaskMerge(ctx context.Context, g globals, args []string) error {
 	runID := fs.String("run", os.Getenv("LOOP_RUN_ID"), "run id")
 	iteration := fs.String("iteration", defaultIterationEnv(), "iteration id")
 	taskID := fs.String("task", os.Getenv("LOOP_TASK_ID"), "task id")
+	kind := fs.String("type", "", "merge commit type")
 	continueMerge := fs.Bool("continue", false, "commit a conflict resolution for a pending task merge")
 	args = flagsFirst(args, map[string]bool{
 		"iteration-dir": true, "dir": true, "run": true, "iteration": true, "task": true,
+		"type": true,
 	})
 	if err := fs.Parse(args); err != nil {
 		return codedError{2, err}
@@ -94,8 +347,12 @@ func commandTaskMerge(ctx context.Context, g globals, args []string) error {
 	if *dirAlias != "" {
 		*iterDir = *dirAlias
 	}
-	if fs.NArg() != 0 {
-		return codedError{2, fmt.Errorf("usage: loop task merge [--continue] [--task <id>] [--iteration-dir <dir>|--run <run-id> --iteration <n>]")}
+	if *continueMerge {
+		if fs.NArg() != 0 {
+			return codedError{2, fmt.Errorf("usage: loop task merge --continue [--task <id>] [--iteration-dir <dir>|--run <run-id> --iteration <n>]")}
+		}
+	} else if strings.TrimSpace(*kind) == "" || fs.NArg() < 1 {
+		return codedError{2, fmt.Errorf("usage: loop task merge --type <type> <summary> [--task <id>] [--iteration-dir <dir>|--run <run-id> --iteration <n>]")}
 	}
 	mergeCtx, err := resolveTaskMergeContext(ctx, g, *iterDir, *runID, *iteration, *taskID)
 	if err != nil {
@@ -104,7 +361,11 @@ func commandTaskMerge(ctx context.Context, g globals, args []string) error {
 	if *continueMerge {
 		return continueTaskMerge(ctx, g, mergeCtx)
 	}
-	return startTaskMerge(ctx, g, mergeCtx)
+	subject, err := buildLoopCommitSubject(*kind, strings.Join(fs.Args(), " "), loopCommitMessageMaxLength)
+	if err != nil {
+		return codedError{2, err}
+	}
+	return startTaskMerge(ctx, g, mergeCtx, subject)
 }
 
 func resolveTaskMergeContext(ctx context.Context, g globals, iterDir, runID, iteration, taskID string) (taskMergeContext, error) {
@@ -180,7 +441,7 @@ func resolveTaskMergeContext(ctx context.Context, g globals, iterDir, runID, ite
 	}, nil
 }
 
-func startTaskMerge(ctx context.Context, g globals, mergeCtx taskMergeContext) error {
+func startTaskMerge(ctx context.Context, g globals, mergeCtx taskMergeContext, subject string) error {
 	lockDir, err := acquireTaskMergeLock(ctx, mergeCtx)
 	if err != nil {
 		return codedError{1, err}
@@ -192,8 +453,11 @@ func startTaskMerge(ctx context.Context, g globals, mergeCtx taskMergeContext) e
 		}
 	}()
 	appendTaskMergeEvent(mergeCtx, runstate.Event{"type": "task.merge.started", "task_id": mergeCtx.TaskID, "branch": mergeCtx.TaskBranch})
-	taskCommit, err := ensureTaskCommit(ctx, mergeCtx)
+	taskCommits, err := requireCompletedTaskTodos(ctx, mergeCtx)
 	if err != nil {
+		return codedError{1, err}
+	}
+	if err := requireCleanTaskWorktree(ctx, mergeCtx.TaskWorktree, "complete task TODOs before merging"); err != nil {
 		return codedError{1, err}
 	}
 	lock := taskMergeLock{
@@ -204,8 +468,8 @@ func startTaskMerge(ctx context.Context, g globals, mergeCtx taskMergeContext) e
 		Branch:            mergeCtx.TaskBranch,
 		IterationBranch:   mergeCtx.IterationBranch,
 		IterationWorktree: mergeCtx.IterationWorktree,
-		TaskCommit:        taskCommit,
-		Subject:           taskCommit.Subject,
+		TaskCommits:       taskCommits,
+		Subject:           subject,
 		Status:            "merging",
 		CreatedAt:         time.Now().UTC().Format(time.RFC3339),
 		UpdatedAt:         time.Now().UTC().Format(time.RFC3339),
@@ -232,11 +496,11 @@ func startTaskMerge(ctx context.Context, g globals, mergeCtx taskMergeContext) e
 		_, _ = runGitCleanPreservingLoopRuntime(context.Background(), iterRunner)
 		return codedError{1, err}
 	}
-	mergeCommit, err := commitMergedTask(ctx, iterRunner, taskCommit.Subject)
+	mergeCommit, err := commitMergedTask(ctx, iterRunner, subject)
 	if err != nil {
 		return codedError{1, err}
 	}
-	record := buildTaskMergeRecord(mergeCtx, taskCommit, mergeCommit)
+	record := buildTaskMergeRecord(mergeCtx, taskCommits, mergeCommit)
 	if err := writeTaskMergeAudit(mergeCtx.TaskDir, record); err != nil {
 		return codedError{1, err}
 	}
@@ -254,7 +518,7 @@ func continueTaskMerge(ctx context.Context, g globals, mergeCtx taskMergeContext
 		return codedError{2, fmt.Errorf("pending task merge belongs to %s, not %s", lock.TaskID, mergeCtx.TaskID)}
 	}
 	iterRunner := gitx.Runner{Dir: firstNonEmpty(lock.IterationWorktree, mergeCtx.IterationWorktree)}
-	subject := firstNonEmpty(lock.Subject, lock.TaskCommit.Subject)
+	subject := strings.TrimSpace(lock.Subject)
 	if subject == "" {
 		return codedError{1, errors.New("pending task merge is missing its commit subject")}
 	}
@@ -262,8 +526,7 @@ func continueTaskMerge(ctx context.Context, g globals, mergeCtx taskMergeContext
 	if err != nil {
 		return codedError{1, err}
 	}
-	taskCommit := lock.TaskCommit
-	record := buildTaskMergeRecord(mergeCtx, taskCommit, mergeCommit)
+	record := buildTaskMergeRecord(mergeCtx, lock.TaskCommits, mergeCommit)
 	if err := writeTaskMergeAudit(mergeCtx.TaskDir, record); err != nil {
 		return codedError{1, err}
 	}
@@ -272,26 +535,259 @@ func continueTaskMerge(ctx context.Context, g globals, mergeCtx taskMergeContext
 	return printTaskMergeResult(g, record)
 }
 
-func ensureTaskCommit(ctx context.Context, mergeCtx taskMergeContext) (taskMergeCommit, error) {
-	commit, err := commitTaskChanges(ctx, mergeCtx.TaskWorktree, mergeCtx.Task)
+func readTaskTodoFile(mergeCtx taskMergeContext) (taskTodoFile, error) {
+	path := taskTodoPath(mergeCtx.TaskDir)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return taskTodoFile{SchemaVersion: 1, TaskID: mergeCtx.TaskID}, nil
+		}
+		return taskTodoFile{}, err
+	}
+	var todos taskTodoFile
+	dec := json.NewDecoder(strings.NewReader(string(data)))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&todos); err != nil {
+		return taskTodoFile{}, err
+	}
+	if todos.SchemaVersion != 1 {
+		return taskTodoFile{}, errors.New("task TODO schema_version must be 1")
+	}
+	if todos.TaskID != mergeCtx.TaskID {
+		return taskTodoFile{}, fmt.Errorf("task TODO task_id %q does not match %q", todos.TaskID, mergeCtx.TaskID)
+	}
+	for i, item := range todos.Items {
+		if err := validateTaskTodoItem(i+1, item); err != nil {
+			return taskTodoFile{}, err
+		}
+	}
+	return todos, nil
+}
+
+func writeTaskTodoFile(mergeCtx taskMergeContext, todos taskTodoFile) error {
+	todos.SchemaVersion = 1
+	todos.TaskID = mergeCtx.TaskID
+	data, err := json.MarshalIndent(todos, "", "  ")
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+	if err := os.MkdirAll(mergeCtx.TaskDir, 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(taskTodoPath(mergeCtx.TaskDir), data, 0o644)
+}
+
+func taskTodoPath(taskDir string) string {
+	return filepath.Join(taskDir, "task-todo.json")
+}
+
+func validateTaskTodoItem(index int, item taskTodoItem) error {
+	if !validTaskTodoStatus(item.Status) {
+		return fmt.Errorf("todo %d status must be pending, active, or done", index)
+	}
+	if _, err := normalizeLoopCommitType(item.Type); err != nil {
+		return fmt.Errorf("todo %d %w", index, err)
+	}
+	if strings.TrimSpace(item.Title) == "" {
+		return fmt.Errorf("todo %d title is required", index)
+	}
+	if len(item.Acceptance) == 0 {
+		return fmt.Errorf("todo %d acceptance must have at least one item", index)
+	}
+	if strings.TrimSpace(item.CommitMessage) == "" {
+		return fmt.Errorf("todo %d commit_message is required", index)
+	}
+	if item.Status == "done" {
+		if strings.TrimSpace(item.CommitSHA) == "" || strings.TrimSpace(item.CommitSubject) == "" {
+			return fmt.Errorf("todo %d done item requires commit_sha and commit_subject", index)
+		}
+		if err := validateLoopCommitSubject(item.CommitSubject, loopCommitMessageMaxLength); err != nil {
+			return fmt.Errorf("todo %d commit_subject is invalid: %w", index, err)
+		}
+	}
+	return nil
+}
+
+func validTaskTodoStatus(status string) bool {
+	switch status {
+	case "pending", "active", "done":
+		return true
+	default:
+		return false
+	}
+}
+
+func taskTodoWorkStarted(items []taskTodoItem) bool {
+	for _, item := range items {
+		if item.Status != "pending" {
+			return true
+		}
+	}
+	return false
+}
+
+func requireCleanTaskWorktree(ctx context.Context, worktree, purpose string) error {
+	runner := gitx.Runner{Dir: worktree}
+	dirty, err := runner.CheckClean(ctx, gitx.CleanOptions{IgnoreRuntime: true})
+	if err != nil {
+		return err
+	}
+	if !dirty.Clean {
+		if strings.TrimSpace(purpose) == "" {
+			purpose = "continue"
+		}
+		return fmt.Errorf("%s; working tree is dirty: %s", purpose, dirtyList(dirty.Dirty))
+	}
+	return nil
+}
+
+func startTaskTodoItem(todos *taskTodoFile, index int) error {
+	if len(todos.Items) == 0 {
+		return errors.New("task TODO list is empty")
+	}
+	for i := range todos.Items {
+		switch {
+		case i < index-1 && todos.Items[i].Status != "done":
+			return fmt.Errorf("todo %d must be completed before todo %d can start", i+1, index)
+		case i == index-1:
+			if todos.Items[i].Status != "pending" {
+				return fmt.Errorf("todo %d status is %s, not pending", index, todos.Items[i].Status)
+			}
+		case todos.Items[i].Status == "active":
+			return fmt.Errorf("todo %d is already active", i+1)
+		}
+	}
+	todos.Items[index-1].Status = "active"
+	todos.Items[index-1].StartedAt = time.Now().UTC().Format(time.RFC3339)
+	return nil
+}
+
+func completeTaskTodoItem(ctx context.Context, mergeCtx taskMergeContext, todos *taskTodoFile, index int) (taskMergeCommit, error) {
+	if len(todos.Items) == 0 {
+		return taskMergeCommit{}, errors.New("task TODO list is empty")
+	}
+	for i := range todos.Items {
+		if i < index-1 && todos.Items[i].Status != "done" {
+			return taskMergeCommit{}, fmt.Errorf("todo %d must be completed before todo %d can complete", i+1, index)
+		}
+	}
+	item := todos.Items[index-1]
+	if item.Status != "active" {
+		return taskMergeCommit{}, fmt.Errorf("todo %d status is %s, not active", index, item.Status)
+	}
+	subject, err := buildLoopCommitSubject(item.Type, item.CommitMessage, loopCommitMessageMaxLength)
 	if err != nil {
 		return taskMergeCommit{}, err
 	}
-	if commit.Hash != "" {
-		return taskMergeCommit{SHA: commit.Hash, Subject: commit.Subject}, nil
-	}
-	commits, err := (gitx.Runner{Dir: mergeCtx.TaskWorktree}).ListCommits(ctx, mergeCtx.IterationBranch, "HEAD")
+	commit, err := commitTaskTodoChanges(ctx, mergeCtx.TaskWorktree, subject)
 	if err != nil {
 		return taskMergeCommit{}, err
 	}
-	if len(commits) == 0 {
-		return taskMergeCommit{}, fmt.Errorf("task %s completed without repository changes", mergeCtx.TaskID)
-	}
-	latest := commits[0]
-	if err := validateLoopCommitSubject(latest.Subject, loopCommitMessageMaxLength); err != nil {
+	todos.Items[index-1].Status = "done"
+	todos.Items[index-1].CommitSHA = commit.SHA
+	todos.Items[index-1].CommitSubject = commit.Subject
+	todos.Items[index-1].CompletedAt = time.Now().UTC().Format(time.RFC3339)
+	return commit, nil
+}
+
+func commitTaskTodoChanges(ctx context.Context, workDir, subject string) (taskMergeCommit, error) {
+	runner := gitx.Runner{Dir: workDir}
+	dirty, err := runner.CheckClean(ctx, gitx.CleanOptions{IgnoreRuntime: true})
+	if err != nil {
 		return taskMergeCommit{}, err
 	}
-	return taskMergeCommit{SHA: latest.Hash, Subject: latest.Subject}, nil
+	if dirty.Clean {
+		return taskMergeCommit{}, errors.New("no repository changes to commit for active task TODO")
+	}
+	pathspecs := dirtyPathspecs(dirty.Dirty)
+	if len(pathspecs) == 0 {
+		return taskMergeCommit{}, errors.New("no repository changes to commit for active task TODO")
+	}
+	addArgs := append([]string{"add", "-A", "--"}, pathspecs...)
+	if _, err := runner.Run(ctx, addArgs...); err != nil {
+		return taskMergeCommit{}, err
+	}
+	unstageRuntimePaths(ctx, runner)
+	if _, err := runner.Run(ctx, "commit", "-m", subject); err != nil {
+		return taskMergeCommit{}, err
+	}
+	sha, err := runner.Head(ctx)
+	if err != nil {
+		return taskMergeCommit{}, err
+	}
+	return taskMergeCommit{SHA: strings.TrimSpace(sha), Subject: subject}, nil
+}
+
+func requireCompletedTaskTodos(ctx context.Context, mergeCtx taskMergeContext) ([]taskMergeCommit, error) {
+	todos, err := readTaskTodoFile(mergeCtx)
+	if err != nil {
+		return nil, err
+	}
+	if len(todos.Items) == 0 {
+		return nil, fmt.Errorf("task %s has no TODOs; create task TODOs before implementation", mergeCtx.TaskID)
+	}
+	commits := make([]taskMergeCommit, 0, len(todos.Items))
+	for i, item := range todos.Items {
+		if item.Status != "done" {
+			return nil, fmt.Errorf("task TODO %d is %s, not done", i+1, item.Status)
+		}
+		commits = append(commits, taskMergeCommit{SHA: item.CommitSHA, Subject: item.CommitSubject})
+	}
+	gitCommits, err := (gitx.Runner{Dir: mergeCtx.TaskWorktree}).ListCommits(ctx, mergeCtx.IterationBranch, "HEAD")
+	if err != nil {
+		return nil, err
+	}
+	if len(gitCommits) != len(commits) {
+		return nil, fmt.Errorf("task branch has %d commit(s), but task TODOs recorded %d completed commit(s)", len(gitCommits), len(commits))
+	}
+	return commits, nil
+}
+
+func renderTaskTodoList(items []taskTodoItem) string {
+	var b strings.Builder
+	for i, item := range items {
+		subject, _ := buildLoopCommitSubject(item.Type, item.CommitMessage, loopCommitMessageMaxLength)
+		fmt.Fprintf(&b, "%d. [%s] %s - %s\n", i+1, taskTodoStatusMarker(item.Status), item.Title, subject)
+	}
+	return b.String()
+}
+
+func taskTodoJSONItems(items []taskTodoItem) []map[string]any {
+	out := make([]map[string]any, 0, len(items))
+	for i, item := range items {
+		out = append(out, taskTodoJSONItem(i+1, item))
+	}
+	return out
+}
+
+func taskTodoJSONItem(index int, item taskTodoItem) map[string]any {
+	value := map[string]any{
+		"index":          index,
+		"status":         item.Status,
+		"type":           item.Type,
+		"title":          item.Title,
+		"acceptance":     item.Acceptance,
+		"commit_message": item.CommitMessage,
+	}
+	if item.CommitSHA != "" {
+		value["commit_sha"] = item.CommitSHA
+	}
+	if item.CommitSubject != "" {
+		value["commit_subject"] = item.CommitSubject
+	}
+	return value
+}
+
+func taskTodoStatusMarker(status string) string {
+	switch status {
+	case "active":
+		return ">"
+	case "done":
+		return "x"
+	default:
+		return " "
+	}
 }
 
 func commitMergedTask(ctx context.Context, runner gitx.Runner, subject string) (taskMergeCommit, error) {
@@ -325,21 +821,21 @@ func commitMergedTask(ctx context.Context, runner gitx.Runner, subject string) (
 	return taskMergeCommit{SHA: strings.TrimSpace(sha), Subject: subject}, nil
 }
 
-func buildTaskMergeRecord(mergeCtx taskMergeContext, taskCommit, mergeCommit taskMergeCommit) taskMergeRecord {
+func buildTaskMergeRecord(mergeCtx taskMergeContext, taskCommits []taskMergeCommit, mergeCommit taskMergeCommit) taskMergeRecord {
 	return taskMergeRecord{
 		SchemaVersion:   1,
 		TaskID:          mergeCtx.TaskID,
 		Status:          "merged",
 		Branch:          mergeCtx.TaskBranch,
 		IterationBranch: mergeCtx.IterationBranch,
-		TaskCommit:      taskCommit,
+		TaskCommits:     append([]taskMergeCommit(nil), taskCommits...),
 		MergeCommit:     mergeCommit,
 		MergedAt:        time.Now().UTC().Format(time.RFC3339),
 	}
 }
 
 func printTaskMergeResult(g globals, record taskMergeRecord) error {
-	return printResult(g, map[string]any{"task_merge": record}, fmt.Sprintf("Merged task %s into %s\nTask commit: %s %s\nMerge commit: %s %s\n", record.TaskID, record.IterationBranch, shortSHA(record.TaskCommit.SHA), record.TaskCommit.Subject, shortSHA(record.MergeCommit.SHA), record.MergeCommit.Subject))
+	return printResult(g, map[string]any{"task_merge": record}, fmt.Sprintf("Merged task %s into %s\nTask commits: %d\nMerge commit: %s %s\n", record.TaskID, record.IterationBranch, len(record.TaskCommits), shortSHA(record.MergeCommit.SHA), record.MergeCommit.Subject))
 }
 
 func readTaskAuditFile(taskDir, taskID string) (workflow.Task, error) {
@@ -378,6 +874,14 @@ func readTaskMergeAudit(taskDir, taskID string) (taskMergeRecord, error) {
 	}
 	if record.Status != "merged" {
 		return taskMergeRecord{}, fmt.Errorf("task merge status is %q", record.Status)
+	}
+	if len(record.TaskCommits) == 0 {
+		return taskMergeRecord{}, errors.New("task merge task_commits must have at least one item")
+	}
+	for i, commit := range record.TaskCommits {
+		if strings.TrimSpace(commit.SHA) == "" || strings.TrimSpace(commit.Subject) == "" {
+			return taskMergeRecord{}, fmt.Errorf("task_commits[%d] requires sha and subject", i)
+		}
 	}
 	return record, nil
 }

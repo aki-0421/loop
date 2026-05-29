@@ -69,8 +69,15 @@ type rendererConfirmation struct {
 }
 
 type taskItem struct {
-	ID     string
-	Done   bool
+	ID      string
+	Done    bool
+	Status  string
+	Text    string
+	TaskDir string
+	Todos   []taskTodoDisplay
+}
+
+type taskTodoDisplay struct {
 	Status string
 	Text   string
 }
@@ -222,6 +229,23 @@ func (r *runRenderer) TaskStarted(task workflow.Task) {
 		r.line("task", "started "+title)
 	}
 	r.render()
+}
+
+func (r *runRenderer) TaskDirectory(task workflow.Task, taskDir string) {
+	if !r.enabled {
+		return
+	}
+	id := strings.TrimSpace(task.ID)
+	if id == "" || strings.TrimSpace(taskDir) == "" {
+		return
+	}
+	r.mu.Lock()
+	if idx := r.taskIndexLocked(id); idx >= 0 {
+		r.tasks[idx].TaskDir = taskDir
+	} else {
+		r.tasks = append(r.tasks, taskItem{ID: id, Status: "pending", Text: taskDisplayTitle(task), TaskDir: taskDir})
+	}
+	r.mu.Unlock()
 }
 
 func (r *runRenderer) TaskCompleted(task workflow.Task) {
@@ -731,6 +755,7 @@ func (r *runRenderer) frame(width, height int) []string {
 	r.mu.Unlock()
 
 	tasks := append([]taskItem(nil), snapshot.Tasks...)
+	refreshActiveTaskTodos(tasks)
 	if currentTask := firstOpenTask(tasks); currentTask != "" {
 		snapshot.Current = currentTask
 	}
@@ -790,6 +815,37 @@ func firstOpenTask(tasks []taskItem) string {
 		}
 	}
 	return ""
+}
+
+func refreshActiveTaskTodos(tasks []taskItem) {
+	active := activeTaskIndex(tasks)
+	if active < 0 || active >= len(tasks) {
+		return
+	}
+	taskDir := strings.TrimSpace(tasks[active].TaskDir)
+	if taskDir == "" {
+		return
+	}
+	data, err := os.ReadFile(taskTodoPath(taskDir))
+	if err != nil {
+		return
+	}
+	var todos taskTodoFile
+	if err := json.Unmarshal(data, &todos); err != nil {
+		return
+	}
+	items := make([]taskTodoDisplay, 0, len(todos.Items))
+	for _, item := range todos.Items {
+		subject, err := buildLoopCommitSubject(item.Type, item.CommitMessage, loopCommitMessageMaxLength)
+		if err != nil {
+			subject = strings.TrimSpace(item.Title)
+		}
+		if subject == "" {
+			continue
+		}
+		items = append(items, taskTodoDisplay{Status: item.Status, Text: subject})
+	}
+	tasks[active].Todos = items
 }
 
 func (r *runRenderer) line(label, message string) {

@@ -19,12 +19,10 @@ func TestHandoffWriteTaskResultUsesTaskDirectoryAudit(t *testing.T) {
 		t.Fatal(err)
 	}
 	taskData, err := workflow.MarshalIndent(workflow.Task{
-		ID:            "fake-task",
-		Title:         "Fake task",
-		Description:   "Complete a fake task.",
-		Acceptance:    []string{"The fake task is done."},
-		CommitType:    "F",
-		CommitMessage: "complete fake task",
+		ID:          "fake-task",
+		Title:       "Fake task",
+		Description: "Complete a fake task.",
+		Acceptance:  []string{"The fake task is done."},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -58,12 +56,10 @@ func TestHandoffWriteRemovesUntrackedRootSourceFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	taskData, err := workflow.MarshalIndent(workflow.Task{
-		ID:            "fake-task",
-		Title:         "Fake task",
-		Description:   "Complete a fake task.",
-		Acceptance:    []string{"The fake task is done."},
-		CommitType:    "F",
-		CommitMessage: "complete fake task",
+		ID:          "fake-task",
+		Title:       "Fake task",
+		Description: "Complete a fake task.",
+		Acceptance:  []string{"The fake task is done."},
 	})
 	if err != nil {
 		t.Fatal(err)

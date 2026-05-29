@@ -52,6 +52,7 @@ type RunConfig struct {
 	MaxParallelTasks   int `yaml:"maxParallelTasks" json:"maxParallelTasks"`
 	MaxTaskAttempts    int `yaml:"maxTaskAttempts" json:"maxTaskAttempts"`
 	MaxReviewFixCycles int `yaml:"maxReviewFixCycles" json:"maxReviewFixCycles"`
+	MaxPlanRevisions   int `yaml:"maxPlanRevisions" json:"maxPlanRevisions"`
 }
 
 type SkillsConfig struct {
@@ -273,6 +274,9 @@ func Validate(cfg Config) error {
 	}
 	if cfg.Run.MaxReviewFixCycles < 0 {
 		errs = append(errs, "run.maxReviewFixCycles must be at least 0")
+	}
+	if cfg.Run.MaxPlanRevisions < 0 {
+		errs = append(errs, "run.maxPlanRevisions must be at least 0")
 	}
 	if cfg.Skills.SourceDir == "" {
 		errs = append(errs, "skills.sourceDir is required")

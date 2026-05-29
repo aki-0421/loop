@@ -16,11 +16,11 @@ func HarnessContract(pullRequestMode bool) string {
 	lines := []string{
 		"Use the `loop` skill for this CLI-orchestrated role run.",
 		"Use `loop iteration`, `loop issue`, and `loop handoff` commands for runtime context, GitHub Issues, and role handoff JSON.",
-		"Do not create branches, commits, pull requests, or terminal iteration closes yourself; the CLI owns those mechanics.",
+		"Do not run Git or GitHub commands directly; use loop-owned commands for branch renames, commits, pull requests, task merges, and handoffs.",
 		"Use `loop help agent handoff write` for the current handoff schema and command flags if needed.",
 	}
 	if pullRequestMode {
-		lines = append(lines, "Pull request creation, check waiting, repairs, and merging are performed by the CLI after review succeeds.")
+		lines = append(lines, "In pull request mode, review agents create, check, and merge pull requests through loop-owned PR commands before approval.")
 	}
 	return strings.TrimSpace(strings.Join(lines, "\n"))
 }

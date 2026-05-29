@@ -13,13 +13,11 @@ func TestValidateTaskTreeRejectsInvalidDependencies(t *testing.T) {
 func TestValidateTaskTreeRejectsCycles(t *testing.T) {
 	tree := validTree()
 	tree.Tasks = append(tree.Tasks, Task{
-		ID:            "second",
-		Title:         "Second",
-		Description:   "Second task.",
-		DependsOn:     []string{"first"},
-		Acceptance:    []string{"Second task is complete."},
-		CommitType:    "F",
-		CommitMessage: "complete second task",
+		ID:          "second",
+		Title:       "Second",
+		Description: "Second task.",
+		DependsOn:   []string{"first"},
+		Acceptance:  []string{"Second task is complete."},
 	})
 	tree.Tasks[0].DependsOn = []string{"second"}
 	if problems := ValidateTaskTree(tree); len(problems) == 0 {
@@ -29,10 +27,10 @@ func TestValidateTaskTreeRejectsCycles(t *testing.T) {
 
 func TestExecutionWavesHonorsDependenciesConflictsAndParallelCap(t *testing.T) {
 	tasks := []Task{
-		{ID: "alpha", Title: "Alpha", Description: "Alpha.", Acceptance: []string{"Alpha."}, CommitType: "F", CommitMessage: "complete alpha"},
-		{ID: "beta", Title: "Beta", Description: "Beta.", ConflictsWith: []string{"gamma"}, Acceptance: []string{"Beta."}, CommitType: "F", CommitMessage: "complete beta"},
-		{ID: "gamma", Title: "Gamma", Description: "Gamma.", Acceptance: []string{"Gamma."}, CommitType: "F", CommitMessage: "complete gamma"},
-		{ID: "delta", Title: "Delta", Description: "Delta.", DependsOn: []string{"alpha"}, Acceptance: []string{"Delta."}, CommitType: "F", CommitMessage: "complete delta"},
+		{ID: "alpha", Title: "Alpha", Description: "Alpha.", Acceptance: []string{"Alpha."}},
+		{ID: "beta", Title: "Beta", Description: "Beta.", ConflictsWith: []string{"gamma"}, Acceptance: []string{"Beta."}},
+		{ID: "gamma", Title: "Gamma", Description: "Gamma.", Acceptance: []string{"Gamma."}},
+		{ID: "delta", Title: "Delta", Description: "Delta.", DependsOn: []string{"alpha"}, Acceptance: []string{"Delta."}},
 	}
 	waves, err := ExecutionWaves(tasks, 2)
 	if err != nil {
@@ -61,18 +59,48 @@ func TestDecodeTaskTreeRejectsUnknownFields(t *testing.T) {
 	}
 }
 
+func TestDecodeTaskTreeRejectsRemovedCommitMetadata(t *testing.T) {
+	_, err := DecodeTaskTree([]byte(`{
+  "schema_version": 1,
+  "summary": "x",
+  "goal_evaluation": "x",
+  "tasks": [{
+    "id": "first",
+    "title": "First",
+    "description": "First task.",
+    "depends_on": [],
+    "conflicts_with": [],
+    "acceptance": ["First task is complete."],
+    "commit_type": "F",
+    "commit_message": "complete first task"
+  }]
+}`))
+	if err == nil {
+		t.Fatal("expected removed commit metadata to be rejected")
+	}
+}
+
+func TestValidateTaskResultRequiresDiscardReason(t *testing.T) {
+	result := TaskResult{SchemaVersion: SchemaVersion, TaskID: "first", Status: "discarded", Summary: "Discarded."}
+	if problems := ValidateTaskResult(result); len(problems) == 0 {
+		t.Fatal("expected discarded task without reason to be rejected")
+	}
+	result.DiscardReason = "No safe path remains."
+	if problems := ValidateTaskResult(result); len(problems) != 0 {
+		t.Fatalf("valid discarded result rejected: %v", problems)
+	}
+}
+
 func validTree() TaskTree {
 	return TaskTree{
 		SchemaVersion:  SchemaVersion,
 		Summary:        "Valid tree",
 		GoalEvaluation: "More work remains.",
 		Tasks: []Task{{
-			ID:            "first",
-			Title:         "First",
-			Description:   "First task.",
-			Acceptance:    []string{"First task is complete."},
-			CommitType:    "F",
-			CommitMessage: "complete first task",
+			ID:          "first",
+			Title:       "First",
+			Description: "First task.",
+			Acceptance:  []string{"First task is complete."},
 		}},
 	}
 }

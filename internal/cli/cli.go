@@ -1789,6 +1789,7 @@ type pathSet struct {
 	BranchRenamed     bool
 	IntegrationMode   string
 	PullRequestMode   bool
+	RoleOrchestrated  bool
 	WorkDir           string
 	TaskID            string
 	TaskDir           string
@@ -1838,6 +1839,7 @@ func writeRuntimeArtifact(paths pathSet) error {
 		"branch_renamed":    branchRenamed,
 		"integration_mode":  paths.IntegrationMode,
 		"pull_request_mode": paths.PullRequestMode,
+		"role_orchestrated": paths.RoleOrchestrated,
 		"workdir":           paths.WorkDir,
 	}
 	if strings.TrimSpace(paths.IterationWorktree) != "" {

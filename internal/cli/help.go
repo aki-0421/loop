@@ -521,7 +521,7 @@ func allHelpCommands() []helpCommand {
 			Path:        []string{"pr"},
 			Usage:       "loop pr <create|checks|logs|merge> ...",
 			Summary:     "Create, check, inspect, and merge the current iteration pull request",
-			Description: "Compatibility commands for older single-agent workflows. Role-orchestrated runs perform PR creation, checks, and merging in the CLI.",
+			Description: "Agent-facing PR lifecycle commands. In role-orchestrated PR mode, the review agent writes PR artifacts and uses these commands for creation, checks, logs, and merge.",
 			AgentOnly:   true,
 		},
 		{
@@ -536,7 +536,7 @@ func allHelpCommands() []helpCommand {
 			Path:        []string{"pr", "checks"},
 			Usage:       "loop pr checks [--iteration-dir <dir>|--run <run-id> --iteration <n>]",
 			Summary:     "Push current commits and wait for pull request checks",
-			Description: "Writes pr-checks. Failed checks exit non-zero with concise errors; inspect pr-checks or fetch job logs before rerunning checks or choosing skip-merge.",
+			Description: "Writes pr-checks. Failed checks exit non-zero with concise errors; inspect pr-checks or fetch job logs before rerunning checks or writing changes_requested findings.",
 			Flags:       iterationLocatorFlags(),
 			AgentOnly:   true,
 		},
@@ -801,19 +801,85 @@ func allHelpCommands() []helpCommand {
 		},
 		{
 			Path:        []string{"task"},
-			Usage:       "loop task <merge> ...",
+			Usage:       "loop task <todo|merge|discard> ...",
 			Summary:     "Complete coding-task integration actions",
 			Description: "Agent-facing task lifecycle commands for role-orchestrated coding agents.",
 			Agent:       true,
 			AgentOnly:   true,
 		},
 		{
-			Path:        []string{"task", "merge"},
-			Usage:       "loop task merge [--continue] [--task <id>] [--iteration-dir <dir>|--run <run-id> --iteration <n>]",
-			Summary:     "Commit and merge the completed coding task",
-			Description: "Creates the task commit from task metadata, serializes access to the iteration branch, squash-merges the task branch, and records task-merge.json. If conflicts are reported, resolve them in the printed iteration worktree and rerun with --continue.",
+			Path:        []string{"task", "todo"},
+			Usage:       "loop task todo <add|list|start|complete> ...",
+			Summary:     "Manage task-local TODO commits",
+			Description: "Task-local TODOs must be created before editing. Each TODO is processed serially and completed by a CLI-created commit.",
+			Agent:       true,
+			AgentOnly:   true,
+		},
+		{
+			Path:        []string{"task", "todo", "add"},
+			Usage:       "loop task todo add --type <type> --title <title> --acceptance <text>... <commit-message>",
+			Summary:     "Add one task-local TODO",
+			Description: "Adds a pending task TODO. The task worktree must be clean and task work must not have started.",
 			Flags: append(iterationLocatorFlags(),
 				helpFlag{Name: "--task <id>", Description: "task id"},
+				helpFlag{Name: "--type <type>", Description: "commit type: F, T, R, D, S, V, or C"},
+				helpFlag{Name: "--title <title>", Description: "TODO title"},
+				helpFlag{Name: "--acceptance <text>", Description: "acceptance criterion; repeatable"},
+			),
+			Agent:     true,
+			AgentOnly: true,
+		},
+		{
+			Path:    []string{"task", "todo", "list"},
+			Usage:   "loop task todo list [--task <id>] [--iteration-dir <dir>|--run <run-id> --iteration <n>]",
+			Summary: "List task-local TODOs",
+			Flags: append(iterationLocatorFlags(),
+				helpFlag{Name: "--task <id>", Description: "task id"},
+			),
+			Agent:     true,
+			AgentOnly: true,
+		},
+		{
+			Path:    []string{"task", "todo", "start"},
+			Usage:   "loop task todo start <n> [--task <id>] [--iteration-dir <dir>|--run <run-id> --iteration <n>]",
+			Summary: "Start the next task-local TODO",
+			Flags: append(iterationLocatorFlags(),
+				helpFlag{Name: "--task <id>", Description: "task id"},
+			),
+			Agent:     true,
+			AgentOnly: true,
+		},
+		{
+			Path:        []string{"task", "todo", "complete"},
+			Usage:       "loop task todo complete <n> [--task <id>] [--iteration-dir <dir>|--run <run-id> --iteration <n>]",
+			Summary:     "Commit and complete the active task-local TODO",
+			Description: "Stages current task worktree changes, creates the TODO commit, records its SHA, and marks the TODO done.",
+			Flags: append(iterationLocatorFlags(),
+				helpFlag{Name: "--task <id>", Description: "task id"},
+			),
+			Agent:     true,
+			AgentOnly: true,
+		},
+		{
+			Path:        []string{"task", "discard"},
+			Usage:       "loop task discard --reason <reason> [--task <id>] [--iteration-dir <dir>|--run <run-id> --iteration <n>]",
+			Summary:     "Discard the current coding task",
+			Description: "Writes a discarded task-result so the planner can revise or rewrite the remaining plan.",
+			Flags: append(iterationLocatorFlags(),
+				helpFlag{Name: "--task <id>", Description: "task id"},
+				helpFlag{Name: "--reason <reason>", Description: "discard reason"},
+			),
+			Agent:     true,
+			AgentOnly: true,
+		},
+		{
+			Path:        []string{"task", "merge"},
+			Usage:       "loop task merge --type <type> <summary> [--task <id>] [--iteration-dir <dir>|--run <run-id> --iteration <n>]",
+			Summary:     "Merge the completed coding task",
+			Description: "Requires all task TODOs to be committed, serializes access to the iteration branch, squash-merges the task branch, and records task-merge.json. If conflicts are reported, resolve them in the printed iteration worktree and rerun with --continue.",
+			Flags: append(iterationLocatorFlags(),
+				helpFlag{Name: "--task <id>", Description: "task id"},
+				helpFlag{Name: "--type <type>", Description: "merge commit type: F, T, R, D, S, V, or C"},
 				helpFlag{Name: "--continue", Description: "commit a resolved conflicted task merge", Default: "false"},
 			),
 			Agent:     true,
@@ -926,15 +992,15 @@ func handoffWriteHelpText() string {
 }
 
 func taskTreeSchemaHelpText() string {
-	return "task-tree={schema_version:1,summary:string,goal_evaluation:string,goal_complete?:bool,tasks:[{id,title,description,depends_on:[],conflicts_with:[],acceptance:[],commit_type:F|T|R|D|S|V|C,commit_message:lowercase-imperative}]}; ids start with a lowercase letter and contain lowercase letters, digits, or hyphens."
+	return "task-tree={schema_version:1,summary:string,goal_evaluation:string,goal_complete?:bool,tasks:[{id,title,description,depends_on:[],conflicts_with:[],acceptance:[]}]}; ids start with a lowercase letter and contain lowercase letters, digits, or hyphens."
 }
 
 func taskResultSchemaHelpText() string {
-	return "task-result={schema_version:1,task_id:string,status:completed|failed|skipped,summary:string,validation?:[],notes?:[]}."
+	return "task-result={schema_version:1,task_id:string,status:completed|discarded|failed,summary:string,discard_reason?:string,validation?:[],notes?:[]}; discarded requires discard_reason."
 }
 
 func reviewResultSchemaHelpText() string {
-	return "review-result={schema_version:1,status:approved|changes_requested|failed,summary:string,goal_evaluation:string,goal_complete?:bool,findings?:[{id,task_id?,title,description,acceptance:[],commit_type:F|T|R|D|S|V|C,commit_message:lowercase-imperative}]}."
+	return "review-result={schema_version:1,status:approved|changes_requested|failed,summary:string,goal_evaluation:string,goal_complete?:bool,findings?:[{id,task_id?,title,description,acceptance:[]}]}."
 }
 
 func iterationLocatorFlags() []helpFlag {

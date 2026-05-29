@@ -263,6 +263,35 @@ func TestRunRendererShowsRoleTasks(t *testing.T) {
 	assertFrameBounds(t, frameLines, 100, 22)
 }
 
+func TestRunRendererShowsActiveTaskTodosIndented(t *testing.T) {
+	t.Setenv("LOOP_ASCII", "1")
+	now := time.Now()
+	lines := renderDashboard(rendererSnapshot{
+		Started: now.Add(-time.Minute),
+		Now:     now,
+		Tasks: []taskItem{{
+			ID:     "api",
+			Status: "active",
+			Text:   "Add API route",
+			Todos: []taskTodoDisplay{
+				{Status: "active", Text: "F: add parser support"},
+				{Status: "pending", Text: "T: cover invalid input"},
+				{Status: "done", Text: "D: update workflow docs"},
+			},
+		}},
+		InputTokens:  100,
+		OutputTokens: 50,
+		LatestMsg:    "Working task TODOs.",
+	}, 100, 24)
+	frame := stripANSISequences(strings.Join(lines, "\n"))
+	for _, want := range []string{"Add API route", "[>] F: add parser support", "[ ] T: cover invalid input", "[x] D: update workflow docs"} {
+		if !strings.Contains(frame, want) {
+			t.Fatalf("task TODO frame missing %q:\n%s", want, frame)
+		}
+	}
+	assertFrameBounds(t, lines, 100, 24)
+}
+
 func TestRunRendererPlannerShowsCompactStatusAndTruncatedCommand(t *testing.T) {
 	t.Setenv("LOOP_ASCII", "1")
 	var out bytes.Buffer

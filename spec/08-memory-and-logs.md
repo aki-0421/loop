@@ -75,8 +75,9 @@ The durable iteration directory stores audit and replay files plus PR lifecycle 
 - `effective-config`: effective configuration snapshot.
 - `agent-events`: structured audit events for iteration-level agents such as planner and reviewer.
 - `tasks/<sequence>/task.json`: durable copy of the task assigned to one coding agent.
+- `tasks/<sequence>/task-todo.json`: durable task-local TODO state, including the task-branch commits created for completed TODOs.
 - `tasks/<sequence>/task-result.json`: durable copy of that coding agent's result handoff.
-- `tasks/<sequence>/task-merge.json`: durable audit of the task commit and iteration squash-merge commit.
+- `tasks/<sequence>/task-merge.json`: durable audit of task TODO commits and the iteration squash-merge commit.
 - `tasks/<sequence>/agent-events.jsonl`: structured audit events for that coding agent only.
 - `errors`: process, result, validation, or sync warnings.
 - `task-tree` and `review-result`: durable iteration-level role handoff audit copies.

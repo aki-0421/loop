@@ -91,14 +91,14 @@ Responsibilities:
 
 ### Iteration artifact commands
 
-The CLI exposes `loop iteration path/read/write/append` for fixed artifact names and `loop handoff` for role handoff JSON. Role-orchestrated runs use `task-tree`, `task-result`, and `review-result` handoffs. Legacy `loop iteration plan`, `loop iteration todo`, `loop iteration close`, `loop commit`, and `loop branch rename` commands remain available for compatibility and diagnostics.
+The CLI exposes `loop iteration path/read/write/append` for fixed artifact names and `loop handoff` for role handoff JSON. Role-orchestrated runs use `task-tree`, `task-result`, and `review-result` handoffs, task-local TODO commands, branch rename, and PR commands. Legacy `loop iteration plan`, `loop iteration todo`, `loop iteration close`, and `loop commit` commands remain available for older single-agent workflows and diagnostics.
 
 ### `internal/workflow`
 
 Responsibilities:
 
 - Decode and validate task-tree, task-result, and review-result JSON.
-- Reject unknown fields, invalid task IDs, dependency cycles, unknown dependencies/conflicts, and invalid commit metadata.
+- Reject unknown fields, invalid task IDs, dependency cycles, unknown dependencies/conflicts, and removed planner/review commit metadata.
 - Build dependency/conflict-respecting execution waves for coding task scheduling.
 
 ### `internal/gitx`

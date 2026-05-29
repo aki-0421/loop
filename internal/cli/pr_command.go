@@ -87,14 +87,18 @@ func commandPRCreate(ctx context.Context, g globals, args []string) error {
 		return codedError{4, err}
 	}
 
-	template := readPullRequestTemplate(prCtx.workDir)
 	title := strings.TrimSpace(readArtifactOptional(prCtx.iterDir, "pr-title"))
-	if title == "" {
+	body := strings.TrimSpace(readArtifactOptional(prCtx.iterDir, "pr-body"))
+	if isRoleOrchestratedPR(prCtx) {
+		if err := ensureRoleOrchestratedPRArtifacts(prCtx, title, body); err != nil {
+			return codedError{2, err}
+		}
+	} else if title == "" {
 		title = fallbackPRTitle(prCtx.branch)
 		_ = artifactdb.Write(prCtx.iterDir, "pr-title", title+"\n")
 	}
-	body := strings.TrimSpace(readArtifactOptional(prCtx.iterDir, "pr-body"))
 	if body == "" {
+		template := readPullRequestTemplate(prCtx.workDir)
 		body = fallbackPRBody(prCtx.branch, template)
 		_ = artifactdb.Write(prCtx.iterDir, "pr-body", body)
 	}
@@ -389,6 +393,7 @@ func loadPRCommandContext(ctx context.Context, g globals, subcommand string, arg
 	paths.CurrentBranch = branch
 	paths.IntegrationMode = firstNonEmpty(runtime["integration_mode"], cfg.Git.Integration.Mode)
 	paths.PullRequestMode = paths.IntegrationMode == "pr"
+	paths.RoleOrchestrated = strings.EqualFold(strings.TrimSpace(runtime["role_orchestrated"]), "true")
 	paths.WorkDir = workDir
 	return prCommandContext{
 		root:    storageRoot,
@@ -416,6 +421,26 @@ func argsWithoutPRLocatorFlags(args []string) []string {
 func ensurePRMode(prCtx prCommandContext) error {
 	if prCtx.cfg.Git.Integration.Mode != "pr" && prCtx.paths.IntegrationMode != "pr" {
 		return errors.New("pull request commands require git.integration.mode=pr")
+	}
+	return nil
+}
+
+func isRoleOrchestratedPR(prCtx prCommandContext) bool {
+	value := strings.ToLower(strings.TrimSpace(prCtx.runtime["role_orchestrated"]))
+	return value == "true" || value == "1" || strings.TrimSpace(os.Getenv("LOOP_ROLE_ORCHESTRATED")) == "true"
+}
+
+func ensureRoleOrchestratedPRArtifacts(prCtx prCommandContext, title, body string) error {
+	initial := firstNonEmpty(prCtx.runtime["initial_branch"], os.Getenv("LOOP_INITIAL_BRANCH"))
+	current := firstNonEmpty(prCtx.runtime["current_branch"], prCtx.branch, os.Getenv("LOOP_CURRENT_BRANCH"))
+	if current == "" || strings.HasPrefix(current, "wip/") || (initial != "" && current == initial) {
+		return errors.New("role-orchestrated PR creation requires `loop branch rename` before `loop pr create`")
+	}
+	if strings.TrimSpace(title) == "" {
+		return errors.New("role-orchestrated PR creation requires a pr-title artifact")
+	}
+	if strings.TrimSpace(body) == "" {
+		return errors.New("role-orchestrated PR creation requires a pr-body artifact")
 	}
 	return nil
 }

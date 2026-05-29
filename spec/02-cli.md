@@ -108,10 +108,10 @@ Runtime rules:
 - If `--goal` is empty, `--should-stop true` is invalid regardless of instruction, Issue, PR, or comment text.
 - The planner agent writes an AI sprint-level `task-tree` handoff for one coherent PR-sized development goal.
 - The CLI schedules non-conflicting ready tasks and runs coding agents in task worktrees.
-- Coding agents write `task-result` handoffs, run `loop task merge`, and resolve conflicts before exiting; the command commits from task metadata and squash-merges task branches into the iteration branch.
+- Coding agents create task-local TODOs before editing, complete each TODO as one CLI-created task-branch commit, write `task-result` handoffs, run `loop task merge`, and resolve conflicts before exiting.
 - The CLI runs validation, then the review agent writes a `review-result` handoff.
 - Validation failures and review findings become repair tasks until approval or the configured fix-cycle limit.
-- In PR mode, the CLI creates, checks, and merges the PR. With `--human-review`, the CLI creates the PR and pauses for external post-hoc review or merge updates.
+- In PR mode, review agents rename the branch, create PR title/body artifacts from the template, create/check/merge the PR through loop commands, and approve only after `pr-state.status=merged`. With `--human-review`, the PR command flow pauses for external post-hoc review or merge updates.
 - `goal_complete=true` can stop the run only after successful integration and only when `--goal` is non-empty.
 
 Example:
@@ -232,11 +232,20 @@ loop handoff list [--kind <task-tree|task-result|review-result>]
 Complete coding-task integration actions through agent-facing CLI commands.
 
 ```bash
-loop task merge [--iteration-dir <dir>|--run <run-id> --iteration <n>] [--task <id>]
+loop task todo add --type <type> --title <title> --acceptance <text>... <commit-message>
+loop task todo list [--iteration-dir <dir>|--run <run-id> --iteration <n>] [--task <id>]
+loop task todo start <n> [--iteration-dir <dir>|--run <run-id> --iteration <n>] [--task <id>]
+loop task todo complete <n> [--iteration-dir <dir>|--run <run-id> --iteration <n>] [--task <id>]
+loop task discard --reason <reason> [--iteration-dir <dir>|--run <run-id> --iteration <n>] [--task <id>]
+loop task merge --type <type> <summary> [--iteration-dir <dir>|--run <run-id> --iteration <n>] [--task <id>]
 loop task merge --continue [--iteration-dir <dir>|--run <run-id> --iteration <n>] [--task <id>]
 ```
 
-`loop task merge` is used by coding agents after a completed `task-result` handoff. It creates the task commit from the assigned task metadata, waits for exclusive access to the iteration branch, squash-merges the task branch into the iteration branch, writes `tasks/<n>/task-merge.json`, and exits non-zero if conflicts require agent resolution.
+Coding agents must create the task-local TODO list before implementation. `loop task todo add` is rejected after task work starts. `loop task todo start` enforces serial ordering. `loop task todo complete` stages current task worktree changes, creates the loop-formatted task-branch commit, records its SHA and subject in `tasks/<n>/task-todo.json`, and marks that TODO done. It rejects clean completions.
+
+`loop task discard` writes a discarded `task-result` with a required reason so the planner can revise or rewrite the remaining plan.
+
+`loop task merge` is used by coding agents after all task TODOs are complete and a completed `task-result` handoff exists. It waits for exclusive access to the iteration branch, squash-merges the task branch into the iteration branch with the supplied summary, writes `tasks/<n>/task-merge.json`, and exits non-zero if conflicts require agent resolution.
 
 When conflicts occur, the command leaves the iteration worktree in the conflicted state and prints that path. The coding agent resolves conflicts there, then runs `loop task merge --continue` to stage the resolution, commit the squash merge, write the merge audit, and release the merge lock.
 

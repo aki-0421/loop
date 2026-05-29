@@ -30,10 +30,8 @@ Task fields:
 | `depends_on` | array | Task IDs that must complete first. |
 | `conflicts_with` | array | Task IDs that must not run concurrently. |
 | `acceptance` | array | Concrete acceptance checks. |
-| `commit_type` | enum | `F`, `T`, `R`, `D`, `S`, `V`, or `C`. |
-| `commit_message` | string | Lowercase imperative message body; the CLI adds `<TYPE>:`. |
 
-The CLI rejects duplicate IDs, unknown dependencies or conflicts, self-dependencies, self-conflicts, dependency cycles, invalid IDs, and invalid commit metadata.
+The CLI rejects duplicate IDs, unknown dependencies or conflicts, self-dependencies, self-conflicts, dependency cycles, invalid IDs, and unknown fields. Planner tasks must not include commit metadata.
 
 ### Task Result
 
@@ -43,8 +41,9 @@ Required fields:
 | --- | --- | --- |
 | `schema_version` | integer | Current value is `1`. |
 | `task_id` | string | Completed task ID. |
-| `status` | enum | `completed`, `failed`, or `skipped`. |
+| `status` | enum | `completed`, `discarded`, or `failed`. |
 | `summary` | string | Outcome summary. |
+| `discard_reason` | string | Required when `status=discarded`; explains why the planner must revise or replace the task. |
 | `validation` | array | Optional validation notes. |
 | `notes` | array | Optional additional notes. |
 
@@ -61,7 +60,31 @@ Required fields:
 | `goal_evaluation` | string | Explanation of the goal decision. |
 | `findings` | array | Repair-task findings when changes are requested. |
 
-Each finding has `id`, optional `task_id`, `title`, `description`, `acceptance`, `commit_type`, and `commit_message`. Findings must be specific enough for the CLI to create repair tasks.
+Each finding has `id`, optional `task_id`, `title`, `description`, and `acceptance`. Findings must be specific enough for the CLI to create repair tasks.
+
+## Task TODOs
+
+`loop task todo` writes `tasks/<sequence>/task-todo.json`. Coding agents must create TODOs before editing the task worktree. TODOs are processed serially; `loop task todo complete <n>` creates the task-branch commit and then marks the item done.
+
+TODO file fields:
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `schema_version` | integer | Current value is `1`. |
+| `task_id` | string | Coding task ID. |
+| `items` | array | Ordered task-local TODO items. |
+
+TODO item fields:
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `status` | enum | `pending`, `active`, or `done`. |
+| `type` | enum | Commit type `F`, `T`, `R`, `D`, `S`, `V`, or `C`. |
+| `title` | string | Short TODO title. |
+| `acceptance` | array | TODO-specific success criteria. |
+| `commit_message` | string | Lowercase imperative commit body. |
+| `commit_sha` | string | Required when done; created by `loop task todo complete`. |
+| `commit_subject` | string | Required when done; final `<TYPE>: <message>` subject. |
 
 ## Task Merge Audit
 
@@ -76,7 +99,7 @@ Required fields:
 | `status` | enum | `merged`. |
 | `branch` | string | Task branch that was merged. |
 | `iteration_branch` | string | Iteration branch that received the squash merge. |
-| `task_commit` | object | The task branch commit as `sha` and `subject`. |
+| `task_commits` | array | Task-branch TODO commits as `sha` and `subject`. |
 | `merge_commit` | object | The iteration branch squash commit as `sha` and `subject`. |
 | `merged_at` | string | UTC timestamp when the merge completed. |
 

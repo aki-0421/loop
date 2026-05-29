@@ -29,8 +29,6 @@ type Task struct {
 	DependsOn     []string `json:"depends_on"`
 	ConflictsWith []string `json:"conflicts_with"`
 	Acceptance    []string `json:"acceptance"`
-	CommitType    string   `json:"commit_type"`
-	CommitMessage string   `json:"commit_message"`
 }
 
 type TaskResult struct {
@@ -38,6 +36,7 @@ type TaskResult struct {
 	TaskID        string   `json:"task_id"`
 	Status        string   `json:"status"`
 	Summary       string   `json:"summary"`
+	DiscardReason string   `json:"discard_reason,omitempty"`
 	Validation    []string `json:"validation,omitempty"`
 	Notes         []string `json:"notes,omitempty"`
 }
@@ -52,13 +51,11 @@ type ReviewResult struct {
 }
 
 type ReviewFinding struct {
-	ID            string   `json:"id"`
-	TaskID        string   `json:"task_id,omitempty"`
-	Title         string   `json:"title"`
-	Description   string   `json:"description"`
-	Acceptance    []string `json:"acceptance"`
-	CommitType    string   `json:"commit_type"`
-	CommitMessage string   `json:"commit_message"`
+	ID          string   `json:"id"`
+	TaskID      string   `json:"task_id,omitempty"`
+	Title       string   `json:"title"`
+	Description string   `json:"description"`
+	Acceptance  []string `json:"acceptance"`
 }
 
 type ValidationError struct {
@@ -158,11 +155,14 @@ func ValidateTaskResult(result TaskResult) []string {
 	if !validTaskID(result.TaskID) {
 		problems = append(problems, "task_id must start with a lowercase letter and contain only lowercase letters, digits, or hyphens")
 	}
-	if !oneOf(result.Status, "completed", "failed", "skipped") {
-		problems = append(problems, "status must be completed, failed, or skipped")
+	if !oneOf(result.Status, "completed", "discarded", "failed") {
+		problems = append(problems, "status must be completed, discarded, or failed")
 	}
 	if strings.TrimSpace(result.Summary) == "" {
 		problems = append(problems, "summary is required")
+	}
+	if result.Status == "discarded" && strings.TrimSpace(result.DiscardReason) == "" {
+		problems = append(problems, "discard_reason is required when status is discarded")
 	}
 	return problems
 }
@@ -194,12 +194,6 @@ func ValidateReviewResult(result ReviewResult) []string {
 		}
 		if len(finding.Acceptance) == 0 {
 			problems = append(problems, prefix+".acceptance must have at least one item")
-		}
-		if !validCommitType(finding.CommitType) {
-			problems = append(problems, prefix+".commit_type must be one of F, T, R, D, S, V, or C")
-		}
-		if strings.TrimSpace(finding.CommitMessage) == "" {
-			problems = append(problems, prefix+".commit_message is required")
 		}
 	}
 	return problems
@@ -251,12 +245,10 @@ func ExecutionWaves(tasks []Task, maxParallel int) ([][]Task, error) {
 
 func FindingTask(finding ReviewFinding) Task {
 	return Task{
-		ID:            finding.ID,
-		Title:         finding.Title,
-		Description:   finding.Description,
-		Acceptance:    finding.Acceptance,
-		CommitType:    finding.CommitType,
-		CommitMessage: finding.CommitMessage,
+		ID:          finding.ID,
+		Title:       finding.Title,
+		Description: finding.Description,
+		Acceptance:  finding.Acceptance,
 	}
 }
 
@@ -291,26 +283,11 @@ func validateTask(prefix string, task Task) []string {
 	if len(task.Acceptance) == 0 {
 		problems = append(problems, prefix+".acceptance must have at least one item")
 	}
-	if !validCommitType(task.CommitType) {
-		problems = append(problems, prefix+".commit_type must be one of F, T, R, D, S, V, or C")
-	}
-	if strings.TrimSpace(task.CommitMessage) == "" {
-		problems = append(problems, prefix+".commit_message is required")
-	}
 	return problems
 }
 
 func validTaskID(id string) bool {
 	return taskIDPattern.MatchString(strings.TrimSpace(id))
-}
-
-func validCommitType(value string) bool {
-	switch strings.ToUpper(strings.TrimSpace(value)) {
-	case "F", "T", "R", "D", "S", "V", "C":
-		return true
-	default:
-		return false
-	}
 }
 
 func oneOf(value string, allowed ...string) bool {

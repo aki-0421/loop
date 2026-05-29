@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -17,8 +18,6 @@ import (
 	"github.com/aki-0421/loop/internal/artifactdb"
 	"github.com/aki-0421/loop/internal/config"
 	"github.com/aki-0421/loop/internal/gitx"
-	"github.com/aki-0421/loop/internal/memory"
-	"github.com/aki-0421/loop/internal/pr"
 	"github.com/aki-0421/loop/internal/prompt"
 	"github.com/aki-0421/loop/internal/runstate"
 	"github.com/aki-0421/loop/internal/skills"
@@ -27,14 +26,28 @@ import (
 )
 
 type taskExecutionResult struct {
-	Task      workflow.Task
-	Result    workflow.TaskResult
-	Branch    string
-	Commit    gitx.Commit
-	Attempt   int
-	ActiveDir string
-	Worktree  string
-	Err       error
+	Task          workflow.Task
+	Result        workflow.TaskResult
+	Branch        string
+	Commits       []gitx.Commit
+	Attempt       int
+	ActiveDir     string
+	Worktree      string
+	Discarded     bool
+	DiscardReason string
+	Err           error
+}
+
+type taskSetExecution struct {
+	Results []workflow.TaskResult
+	Commits []gitx.Commit
+	Discard *discardedTask
+}
+
+type discardedTask struct {
+	Task   workflow.Task
+	Result workflow.TaskResult
+	Reason string
 }
 
 type iterationWorkflowResult struct {
@@ -245,6 +258,7 @@ func runOrchestratedIteration(ctx context.Context, req orchestrationRequest) (re
 	paths.CurrentBranch = initialBranch
 	paths.IntegrationMode = cfg.Git.Integration.Mode
 	paths.PullRequestMode = cfg.Git.Integration.Mode == "pr"
+	paths.RoleOrchestrated = true
 	paths.WorkDir = iterationWorktree
 	paths.IterationWorktree = iterationWorktree
 	cleanupRegistered := false
@@ -344,8 +358,10 @@ func runOrchestratedIteration(ctx context.Context, req orchestrationRequest) (re
 	}
 
 	var allCommits []gitx.Commit
+	var completedTaskResults []workflow.TaskResult
 	pendingTasks := append([]workflow.Task(nil), tree.Tasks...)
 	var review workflow.ReviewResult
+	planRevisions := 0
 	for cycle := 0; cycle <= cfg.Run.MaxReviewFixCycles; cycle++ {
 		currentTaskDirs, err := taskDirs.Ensure(pendingTasks)
 		if err != nil {
@@ -355,7 +371,7 @@ func runOrchestratedIteration(ctx context.Context, req orchestrationRequest) (re
 		req.State.Stage = runstate.StageCoding
 		_ = runstate.Write(req.StatePath, *req.State)
 		req.Renderer.Stage(runstate.StageCoding, "coding tasks")
-		taskResults, commits, err := executeTaskSet(ctx, taskSetRequest{
+		taskSet, err := executeTaskSet(ctx, taskSetRequest{
 			Config:            cfg,
 			Root:              req.Root,
 			IterationWorktree: iterationWorktree,
@@ -371,8 +387,32 @@ func runOrchestratedIteration(ctx context.Context, req orchestrationRequest) (re
 		if err != nil {
 			return iterationWorkflowResult{}, codedError{4, err}
 		}
-		allCommits = append(allCommits, commits...)
+		completedTaskResults = append(completedTaskResults, taskSet.Results...)
+		allCommits = append(allCommits, taskSet.Commits...)
 		req.Renderer.Commits(len(allCommits))
+		if taskSet.Discard != nil {
+			if planRevisions >= cfg.Run.MaxPlanRevisions {
+				return iterationWorkflowResult{}, codedError{4, fmt.Errorf("planner revision limit reached after discarded task %s: %s", taskSet.Discard.Task.ID, taskSet.Discard.Reason)}
+			}
+			planRevisions++
+			req.State.Stage = runstate.StagePlanning
+			_ = runstate.Write(req.StatePath, *req.State)
+			req.Renderer.Stage(runstate.StagePlanning, "planner revising discarded task")
+			revisionPaths := paths
+			revisionPaths.AgentPromptExtra = plannerRevisionPrompt(tree, completedTaskResults, *taskSet.Discard, planRevisions)
+			tree, err = runPlannerRole(ctx, cfg, iterationWorktree, revisionPaths, req.Renderer.AgentEvent)
+			if err != nil {
+				return iterationWorkflowResult{}, codedError{4, err}
+			}
+			if err := writeTaskTreeAudit(iterDir, tree); err != nil {
+				return iterationWorkflowResult{}, codedError{1, err}
+			}
+			pendingTasks = append([]workflow.Task(nil), tree.Tasks...)
+			if len(pendingTasks) == 0 {
+				return iterationWorkflowResult{}, codedError{4, errors.New("planner returned no tasks after a discarded task")}
+			}
+			continue
+		}
 
 		req.State.Stage = runstate.StageValidating
 		_ = runstate.Write(req.StatePath, *req.State)
@@ -389,7 +429,7 @@ func runOrchestratedIteration(ctx context.Context, req orchestrationRequest) (re
 		req.State.Stage = runstate.StageReviewing
 		_ = runstate.Write(req.StatePath, *req.State)
 		req.Renderer.Stage(runstate.StageReviewing, "review agent running")
-		review, err = runReviewRole(ctx, cfg, iterationWorktree, paths, tree, taskResults, validationResults, req.Renderer.AgentEvent)
+		review, err = runReviewRole(ctx, cfg, iterationWorktree, paths, tree, completedTaskResults, validationResults, req.Renderer.AgentEvent)
 		if err != nil {
 			return iterationWorkflowResult{}, codedError{4, err}
 		}
@@ -416,10 +456,21 @@ func runOrchestratedIteration(ctx context.Context, req orchestrationRequest) (re
 	req.Renderer.Stage(runstate.StagePullRequest, "integrating iteration")
 	summary := firstNonEmpty(strings.TrimSpace(review.Summary), tree.Summary)
 	goalComplete := review.GoalComplete && strings.TrimSpace(req.Goal) != ""
+	finalBranch := initialBranch
 	if cfg.Git.Integration.Mode == "pr" {
-		if err := integrateIterationPR(ctx, cfg, req.Root, iterationWorktree, iterDir, paths, initialBranch, summary, review, tree, req.Renderer); err != nil {
+		state, ok, err := readPRState(iterDir)
+		if err != nil {
 			return iterationWorkflowResult{}, codedError{6, err}
 		}
+		if !ok || state.Status != "merged" {
+			return iterationWorkflowResult{}, codedError{6, errors.New("approved PR-mode review must merge the pull request with `loop pr merge` before approval")}
+		}
+		finalBranch = firstNonEmpty(state.Branch, initialBranch)
+		cleanup.Branch = finalBranch
+		if err := finalizeAgentOwnedPR(ctx, rootRunner, cleanup, iterationWorktree, req.Root, cfg, finalBranch); err != nil {
+			return iterationWorkflowResult{}, codedError{6, err}
+		}
+		cleanup.Integrated = true
 	} else {
 		if err := rootRunner.RemoveWorktree(ctx, iterationWorktree, false); err != nil {
 			return iterationWorkflowResult{}, codedError{6, err}
@@ -441,7 +492,7 @@ func runOrchestratedIteration(ctx context.Context, req orchestrationRequest) (re
 		appendErrorLog(paths.Errors, "iteration file cleanup failed: "+strings.Join(issues, "; "))
 	}
 	cleanup.Active = false
-	req.State.Iterations[len(req.State.Iterations)-1].BranchFinal = initialBranch
+	req.State.Iterations[len(req.State.Iterations)-1].BranchFinal = finalBranch
 	req.State.Iterations[len(req.State.Iterations)-1].SummarySentence = summary
 	req.State.Iterations[len(req.State.Iterations)-1].ShouldFullyStop = goalComplete
 	_ = runstate.Write(req.StatePath, *req.State)
@@ -495,32 +546,83 @@ func (a *taskDirectoryAllocator) Ensure(tasks []workflow.Task) (map[string]strin
 	return out, nil
 }
 
-func executeTaskSet(ctx context.Context, req taskSetRequest) ([]workflow.TaskResult, []gitx.Commit, error) {
+func executeTaskSet(ctx context.Context, req taskSetRequest) (taskSetExecution, error) {
 	waves, err := workflow.ExecutionWaves(req.Tasks, req.Config.Run.MaxParallelTasks)
 	if err != nil {
-		return nil, nil, err
+		return taskSetExecution{}, err
 	}
 	var results []workflow.TaskResult
 	var commits []gitx.Commit
 	for _, wave := range waves {
 		executed, err := executeTaskWave(ctx, req, wave)
 		if err != nil {
-			return nil, nil, err
+			return taskSetExecution{Results: results, Commits: commits}, err
 		}
 		sort.Slice(executed, func(i, j int) bool { return executed[i].Task.ID < executed[j].Task.ID })
 		for _, item := range executed {
+			if item.Discarded {
+				reason := firstNonEmpty(item.DiscardReason, item.Result.DiscardReason)
+				if reason == "" && item.Err != nil {
+					reason = item.Err.Error()
+				}
+				if reason == "" {
+					reason = "Task was discarded."
+				}
+				result, err := writeDiscardedTaskResult(req, item.Task, item.Result, reason)
+				if err != nil {
+					return taskSetExecution{Results: results, Commits: commits}, err
+				}
+				_ = (gitx.Runner{Dir: req.Root}).DeleteBranch(ctx, item.Branch, true)
+				return taskSetExecution{
+					Results: results,
+					Commits: commits,
+					Discard: &discardedTask{Task: item.Task, Result: result, Reason: reason},
+				}, nil
+			}
 			if item.Err != nil {
-				return nil, nil, item.Err
+				return taskSetExecution{Results: results, Commits: commits}, item.Err
 			}
 			if item.Result.Status != "completed" {
-				return nil, nil, fmt.Errorf("task %s ended with status %s", item.Task.ID, item.Result.Status)
+				return taskSetExecution{Results: results, Commits: commits}, fmt.Errorf("task %s ended with status %s", item.Task.ID, item.Result.Status)
 			}
 			_ = (gitx.Runner{Dir: req.Root}).DeleteBranch(ctx, item.Branch, true)
 			results = append(results, item.Result)
-			commits = append(commits, item.Commit)
+			commits = append(commits, item.Commits...)
 		}
 	}
-	return results, commits, nil
+	return taskSetExecution{Results: results, Commits: commits}, nil
+}
+
+func writeDiscardedTaskResult(req taskSetRequest, task workflow.Task, existing workflow.TaskResult, reason string) (workflow.TaskResult, error) {
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = "Task was discarded."
+	}
+	result := existing
+	if result.TaskID == "" {
+		result.TaskID = task.ID
+	}
+	if result.SchemaVersion == 0 {
+		result.SchemaVersion = workflow.SchemaVersion
+	}
+	result.Status = "discarded"
+	if strings.TrimSpace(result.Summary) == "" {
+		result.Summary = "Task discarded."
+	}
+	result.DiscardReason = reason
+	data, err := workflow.MarshalIndent(result)
+	if err != nil {
+		return workflow.TaskResult{}, err
+	}
+	taskDir := req.TaskDirs[task.ID]
+	globalPath := artifactdb.GlobalDBPathForIteration(req.IterationDir)
+	if err := artifactdb.WriteRoleHandoff(globalPath, req.RunID, req.IterationID, "task-result", task.ID, string(data)); err != nil {
+		return workflow.TaskResult{}, err
+	}
+	if err := writeTaskResultAudit(req.IterationDir, taskDir, task.ID, data); err != nil {
+		return workflow.TaskResult{}, err
+	}
+	return result, nil
 }
 
 func executeTaskWave(ctx context.Context, req taskSetRequest, tasks []workflow.Task) ([]taskExecutionResult, error) {
@@ -545,6 +647,7 @@ func executeTaskWave(ctx context.Context, req taskSetRequest, tasks []workflow.T
 		wg.Add(1)
 		go func(taskCtx taskContext) {
 			defer wg.Done()
+			req.Renderer.TaskDirectory(taskCtx.task, taskCtx.taskDir)
 			req.Renderer.TaskStarted(taskCtx.task)
 			result := runCodingTaskWithAttempts(ctx, req, taskCtx.task, taskCtx.taskDir, taskCtx.branchBase, &gitMu, req.Renderer.AgentEvent)
 			if result.Err != nil || result.Result.Status != "completed" {
@@ -595,8 +698,13 @@ func runCodingTaskWithAttempts(ctx context.Context, req taskSetRequest, task wor
 			last = taskExecutionResult{Task: task, Attempt: attempt, Err: err}
 			return last
 		}
-		result, commit, err := runCodingRole(ctx, req.Config, attemptCtx.worktree, attemptCtx.paths, task, attemptCtx.branch, attempt, onEvent)
-		last = taskExecutionResult{Task: task, Result: result, Branch: attemptCtx.branch, Commit: commit, Attempt: attempt, ActiveDir: attemptCtx.activeDir, Worktree: attemptCtx.worktree, Err: err}
+		result, commits, err := runCodingRole(ctx, req.Config, attemptCtx.worktree, attemptCtx.paths, task, attemptCtx.branch, attempt, onEvent)
+		last = taskExecutionResult{Task: task, Result: result, Branch: attemptCtx.branch, Commits: commits, Attempt: attempt, ActiveDir: attemptCtx.activeDir, Worktree: attemptCtx.worktree, Err: err}
+		if err == nil && result.Status == "discarded" {
+			last.Discarded = true
+			last.DiscardReason = result.DiscardReason
+			return last
+		}
 		if err == nil && result.Status == "completed" {
 			return last
 		}
@@ -609,6 +717,10 @@ func runCodingTaskWithAttempts(ctx context.Context, req taskSetRequest, task wor
 	}
 	if last.Err == nil {
 		last.Err = fmt.Errorf("task %s did not complete after %d attempts", task.ID, attempts)
+	}
+	if last.Attempt >= attempts {
+		last.Discarded = true
+		last.DiscardReason = last.Err.Error()
 	}
 	return last
 }
@@ -714,7 +826,7 @@ func clearTaskAttemptState(paths pathSet) error {
 	if strings.TrimSpace(paths.TaskDir) == "" {
 		return nil
 	}
-	for _, name := range []string{"task-result.json", "task-merge.json", "task-result-source.json"} {
+	for _, name := range []string{"task-result.json", "task-merge.json", "task-result-source.json", "task-todo.json"} {
 		if err := os.Remove(filepath.Join(paths.TaskDir, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
@@ -734,33 +846,43 @@ func runPlannerRole(ctx context.Context, cfg config.Config, workDir string, path
 	return workflow.DecodeTaskTree([]byte(handoff.Payload))
 }
 
-func runCodingRole(ctx context.Context, cfg config.Config, workDir string, paths pathSet, task workflow.Task, branch string, attempt int, onEvent func(runstate.Event)) (workflow.TaskResult, gitx.Commit, error) {
+func runCodingRole(ctx context.Context, cfg config.Config, workDir string, paths pathSet, task workflow.Task, branch string, attempt int, onEvent func(runstate.Event)) (workflow.TaskResult, []gitx.Commit, error) {
 	promptText := buildRolePrompt("coding", paths, task, nil, nil, nil)
 	if err := runRoleAgent(ctx, cfg, workDir, paths, "coding", task.ID, promptText, onEvent); err != nil {
-		return workflow.TaskResult{}, gitx.Commit{}, err
+		return workflow.TaskResult{}, nil, err
 	}
 	handoff, err := artifactdb.ReadRoleHandoff(artifactdb.GlobalDBPathForIteration(paths.IterationDir), paths.RunID, paths.IterationID, "task-result", task.ID)
 	if err != nil {
-		return workflow.TaskResult{}, gitx.Commit{}, err
+		return workflow.TaskResult{}, nil, err
 	}
 	result, err := workflow.DecodeTaskResult([]byte(handoff.Payload))
 	if err != nil {
-		return workflow.TaskResult{}, gitx.Commit{}, err
+		return workflow.TaskResult{}, nil, err
 	}
 	resultData, _ := workflow.MarshalIndent(result)
 	if err := writeTaskResultAudit(paths.IterationDir, paths.TaskDir, task.ID, resultData); err != nil {
-		return workflow.TaskResult{}, gitx.Commit{}, err
+		return workflow.TaskResult{}, nil, err
+	}
+	if result.Status == "discarded" {
+		return result, nil, nil
+	}
+	if result.Status != "completed" {
+		return result, nil, fmt.Errorf("task %s ended with status %s", task.ID, result.Status)
 	}
 	mergeRecord, err := readTaskMergeAudit(paths.TaskDir, task.ID)
 	if err != nil {
-		return result, gitx.Commit{}, fmt.Errorf("task %s completed without `loop task merge`: %w", task.ID, err)
+		return result, nil, fmt.Errorf("task %s completed without `loop task merge`: %w", task.ID, err)
 	}
-	if mergeRecord.TaskCommit.SHA == "" {
-		return result, gitx.Commit{}, fmt.Errorf("task %s merge record did not include a task commit", task.ID)
+	if len(mergeRecord.TaskCommits) == 0 {
+		return result, nil, fmt.Errorf("task %s merge record did not include task commits", task.ID)
 	}
 	_ = attempt
 	_ = branch
-	return result, gitx.Commit{Hash: mergeRecord.TaskCommit.SHA, Subject: mergeRecord.TaskCommit.Subject}, nil
+	commits := make([]gitx.Commit, 0, len(mergeRecord.TaskCommits))
+	for _, commit := range mergeRecord.TaskCommits {
+		commits = append(commits, gitx.Commit{Hash: commit.SHA, Subject: commit.Subject})
+	}
+	return result, commits, nil
 }
 
 func runReviewRole(ctx context.Context, cfg config.Config, workDir string, paths pathSet, tree workflow.TaskTree, taskResults []workflow.TaskResult, validationResults []validation.CommandResult, onEvent func(runstate.Event)) (workflow.ReviewResult, error) {
@@ -812,6 +934,7 @@ func runRoleAgent(ctx context.Context, cfg config.Config, workDir string, paths 
 		"LOOP_INTEGRATION_MODE":          paths.IntegrationMode,
 		"LOOP_PULL_REQUEST_MODE":         strconv.FormatBool(paths.PullRequestMode),
 		"LOOP_PR_MODE":                   strconv.FormatBool(paths.PullRequestMode),
+		"LOOP_ROLE_ORCHESTRATED":         strconv.FormatBool(paths.RoleOrchestrated),
 	}
 	if strings.TrimSpace(paths.TaskDir) != "" {
 		env["LOOP_TASK_DIR"] = paths.TaskDir
@@ -832,189 +955,72 @@ func runRoleAgent(ctx context.Context, cfg config.Config, workDir string, paths 
 	return err
 }
 
+func plannerRevisionPrompt(tree workflow.TaskTree, completed []workflow.TaskResult, discarded discardedTask, revision int) string {
+	payload := map[string]any{
+		"revision":       revision,
+		"current_plan":   tree,
+		"completed":      completed,
+		"discarded_task": discarded.Task,
+		"discard_reason": discarded.Reason,
+	}
+	if discarded.Result.TaskID != "" {
+		payload["discarded_result"] = discarded.Result
+	}
+	data, _ := json.MarshalIndent(payload, "", "  ")
+	return "A coding task was discarded. Review the current plan, completed tasks, and discarded task details below. Decide whether to revise the failed task for another attempt or rewrite the remaining plan tree. Return a full replacement task-tree for the remaining work only.\n\n```json\n" + string(data) + "\n```"
+}
+
 func buildRolePrompt(role string, paths pathSet, task workflow.Task, tree any, taskResults []workflow.TaskResult, validationResults []validation.CommandResult) string {
 	base := prompt.Assemble(prompt.Request{PullRequestMode: paths.PullRequestMode})
 	var b strings.Builder
 	b.WriteString(base)
 	fmt.Fprintf(&b, "\n## Role\n\nYou are the %s agent in a CLI-orchestrated loop iteration.\n", role)
 	b.WriteString("Read runtime context with `loop iteration read runtime` and the instruction with `loop iteration read instruction`.\n")
-	b.WriteString("Do not create branches, commits, pull requests, or iteration closes directly; use loop-owned commands for required handoffs and task merges.\n")
+	b.WriteString("Do not run Git or GitHub commands directly; use loop-owned commands for commits, branch renames, pull requests, handoffs, and task merges.\n")
 	b.WriteString("Use `loop help agent handoff write` for the current handoff schema and command flags if needed.\n")
 	switch role {
 	case "planner":
 		b.WriteString("\nWrite one task-tree handoff:\n\n```bash\nloop handoff write task-tree --file task-tree.json\n```\n\n")
 		b.WriteString("Plan one AI sprint-sized PR: a coherent sprint goal that autonomous agents can complete in hours, not a small review-sized batch. Post-hoc review is outside planning and must not constrain scope.\n")
+		b.WriteString("Task entries describe task goals, implementation context, dependencies, conflicts, and acceptance criteria only. Do not include commit split messages or commit metadata.\n")
 		b.WriteString("The JSON must match this schema: " + taskTreeSchemaHelpText() + "\n")
-		b.WriteString("Minimal example:\n\n```json\n{\n  \"schema_version\": 1,\n  \"summary\": \"Implement the requested sprint goal.\",\n  \"goal_evaluation\": \"This iteration plans the work needed for the current goal.\",\n  \"tasks\": [\n    {\n      \"id\": \"implement-core\",\n      \"title\": \"Implement core behavior\",\n      \"description\": \"Update the relevant code paths for the requested behavior.\",\n      \"depends_on\": [],\n      \"conflicts_with\": [],\n      \"acceptance\": [\"Focused tests or validation cover the behavior.\"],\n      \"commit_type\": \"F\",\n      \"commit_message\": \"implement core behavior\"\n    }\n  ]\n}\n```\n")
+		b.WriteString("Minimal example:\n\n```json\n{\n  \"schema_version\": 1,\n  \"summary\": \"Implement the requested sprint goal.\",\n  \"goal_evaluation\": \"This iteration plans the work needed for the current goal.\",\n  \"tasks\": [\n    {\n      \"id\": \"implement-core\",\n      \"title\": \"Implement core behavior\",\n      \"description\": \"Update the relevant code paths for the requested behavior.\",\n      \"depends_on\": [],\n      \"conflicts_with\": [],\n      \"acceptance\": [\"Focused tests or validation cover the behavior.\"]\n    }\n  ]\n}\n```\n")
 	case "coding":
 		data, _ := workflow.MarshalIndent(task)
-		b.WriteString("\nComplete only this task, write a task-result handoff, then merge the task before exiting.\n\n")
+		b.WriteString("\nComplete only this task. Understand its objective and success criteria, explore the repository, then create the task TODO list before editing files.\n\n")
 		b.WriteString("```json\n" + string(data) + "```\n")
-		b.WriteString("\nWrite the handoff source outside repository changes, then merge the completed task:\n\n```bash\ncat > \"$LOOP_TASK_DIR/task-result.json\" <<'JSON'\n{...}\nJSON\nloop handoff write task-result --task \"" + task.ID + "\" --file \"$LOOP_TASK_DIR/task-result.json\"\nloop task merge\n```\n")
+		b.WriteString("\nCreate one TODO per task-branch commit before implementation:\n\n```bash\nloop task todo add --type F --title \"Implement behavior\" --acceptance \"Behavior is implemented and covered.\" implement behavior\nloop task todo list\n```\n")
+		b.WriteString("\nProcess TODOs serially. For each item, run `loop task todo start <n>`, make only that TODO's changes, then run `loop task todo complete <n>` so the CLI creates the commit. Do not proceed to the next TODO until the current one is completed.\n")
+		b.WriteString("\nAfter all TODOs are complete, write the handoff source outside repository changes, then merge the completed task:\n\n```bash\ncat > \"$LOOP_TASK_DIR/task-result.json\" <<'JSON'\n{...}\nJSON\nloop handoff write task-result --task \"" + task.ID + "\" --file \"$LOOP_TASK_DIR/task-result.json\"\nloop task merge --type F complete " + task.ID + "\n```\n")
+		b.WriteString("\nIf this task should be abandoned, run `loop task discard --reason <reason>` and exit without merging.\n")
 		b.WriteString("\nIf `loop task merge` reports conflicts, resolve them in the printed iteration worktree and run `loop task merge --continue`. Do not exit until the merge command succeeds.\n")
 		b.WriteString("\nThe JSON must match this schema: " + taskResultSchemaHelpText() + "\n")
 	case "review":
 		treeData, _ := workflow.MarshalIndent(tree)
 		resultsData, _ := workflow.MarshalIndent(taskResults)
-		b.WriteString("\nReview the iteration branch diff, task results, and validation evidence. Approve only if the tasks are complete and validation is acceptable.\n")
+		b.WriteString("\nReview the iteration branch diff, task results, and validation evidence. Approve only if the iteration task goals are complete, code quality is acceptable, and validation is acceptable.\n")
 		b.WriteString("\nTask tree:\n\n```json\n" + string(treeData) + "```\n")
 		b.WriteString("\nTask results:\n\n```json\n" + string(resultsData) + "```\n")
 		b.WriteString("\nValidation status: " + validation.StatusFromResults(validationResults) + "\n")
+		if paths.PullRequestMode {
+			b.WriteString("\nIn pull request mode, before writing an approved review-result you must rename the iteration branch with `loop branch rename`, read the template with `loop iteration read pr-template`, write `pr-title` and `pr-body`, run `loop pr create`, run `loop pr checks`, and run `loop pr merge`. If checks fail, inspect logs as needed and write `changes_requested` findings instead of approving.\n")
+		}
 		b.WriteString("\nWrite one review-result handoff:\n\n```bash\nloop handoff write review-result --file review-result.json\n```\n")
 		b.WriteString("\nThe JSON must match this schema: " + reviewResultSchemaHelpText() + "\n")
+	}
+	if strings.TrimSpace(paths.AgentPromptExtra) != "" {
+		b.WriteString("\n## Additional Context\n\n")
+		b.WriteString(strings.TrimSpace(paths.AgentPromptExtra) + "\n")
 	}
 	return strings.TrimRight(b.String(), "\n") + "\n"
 }
 
-func commitTaskChanges(ctx context.Context, workDir string, task workflow.Task) (gitx.Commit, error) {
-	runner := gitx.Runner{Dir: workDir}
-	dirty, err := runner.CheckClean(ctx, gitx.CleanOptions{IgnoreRuntime: true})
-	if err != nil {
-		return gitx.Commit{}, err
-	}
-	if dirty.Clean {
-		return gitx.Commit{}, nil
-	}
-	subject, err := buildLoopCommitSubject(task.CommitType, task.CommitMessage, loopCommitMessageMaxLength)
-	if err != nil {
-		return gitx.Commit{}, err
-	}
-	pathspecs := dirtyPathspecs(dirty.Dirty)
-	if len(pathspecs) == 0 {
-		return gitx.Commit{}, nil
-	}
-	addArgs := append([]string{"add", "-A", "--"}, pathspecs...)
-	if _, err := runner.Run(ctx, addArgs...); err != nil {
-		return gitx.Commit{}, err
-	}
-	unstageRuntimePaths(ctx, runner)
-	if _, err := runner.Run(ctx, "commit", "-m", subject); err != nil {
-		return gitx.Commit{}, err
-	}
-	sha, err := runner.Head(ctx)
-	if err != nil {
-		return gitx.Commit{}, err
-	}
-	return gitx.Commit{Hash: strings.TrimSpace(sha), Subject: subject}, nil
-}
-
-func integrateIterationPR(ctx context.Context, cfg config.Config, root, workDir, iterDir string, paths pathSet, branch, summary string, review workflow.ReviewResult, tree workflow.TaskTree, renderer *runRenderer) error {
-	title := firstNonEmpty(summary, tree.Summary, fallbackPRTitle(branch))
-	body := orchestratedPRBody(tree, review)
-	_ = artifactdb.Write(iterDir, "pr-title", title+"\n")
-	_ = artifactdb.Write(iterDir, "pr-body", body)
-	runner := prRunner(cfg, workDir)
-	if cfg.Git.Integration.PR.Push {
-		if _, err := runner.Push(ctx, branch); err != nil {
-			return err
-		}
-	}
-	prID := ""
-	if viewed, err := runner.View(ctx, branch); err == nil {
-		prID = strings.TrimSpace(viewed.Stdout)
-		if prID == "null" {
-			prID = ""
-		}
-	}
-	if prID == "" {
-		bodyFile, cleanup, err := materializePRBody(root, body)
-		if err != nil {
-			return err
-		}
-		defer cleanup()
-		created, err := runner.Create(ctx, pr.CreateOptions{Base: cfg.Git.BaseBranch, Head: branch, Title: title, BodyFile: bodyFile})
-		if err != nil {
-			return err
-		}
-		prID = strings.TrimSpace(created.Stdout)
-	}
-	if prID == "" {
-		prID = branch
-	}
-	state := prState{SchemaVersion: 1, Status: "created", PR: prID, Branch: branch, Base: cfg.Git.BaseBranch, Title: title, BodyArtifact: "pr-body", CreatedAt: time.Now().UTC().Format(time.RFC3339)}
-	if cfg.Git.Integration.PR.HumanReview {
-		state.Status = "pending_human_review"
-		if err := writePRState(iterDir, state); err != nil {
-			return err
-		}
-		return waitForHumanReviewMerge(ctx, cfg, root, workDir, iterDir, paths, runner, state, renderer)
-	}
-	if err := writePRState(iterDir, state); err != nil {
-		return err
-	}
-	if cfg.Git.Integration.PR.WaitChecks {
-		session := &prIntegrationSession{runner: runner, prID: prID}
-		checks, skipped, checksErr := waitForPRChecks(ctx, session, cfg)
-		status := "passed"
-		if skipped {
-			status = "skipped"
-		}
-		if checksErr != nil {
-			status = "failed"
-		}
-		_ = writePRChecks(iterDir, prChecksArtifact{SchemaVersion: 1, Status: status, PR: prID, Branch: branch, CheckedAt: time.Now().UTC().Format(time.RFC3339), ExitCode: checks.ExitCode, NoChecks: checks.NoChecks, Pending: checks.Pending, Error: prErrorString(checksErr), Stdout: checks.Stdout, Stderr: checks.Stderr})
-		if checksErr != nil {
-			return fmt.Errorf("pull request checks failed for %s; see pr-checks artifact", prID)
-		}
-	}
-	if err := validatePRBranchCommits(ctx, prCommandContext{workDir: workDir, base: cfg.Git.BaseBranch, branch: branch}); err != nil {
-		return err
-	}
-	bodyFile, cleanup, err := materializePRBody(root, body)
-	if err != nil {
-		return err
-	}
-	defer cleanup()
-	if _, err := runner.Merge(ctx, pr.MergeOptions{PR: prID, Subject: title, BodyFile: bodyFile}); err != nil {
-		return err
-	}
-	state.Status = "merged"
-	state.MergedAt = time.Now().UTC().Format(time.RFC3339)
-	if err := writePRState(iterDir, state); err != nil {
-		return err
-	}
-	if branch != "" && branch != cfg.Git.BaseBranch {
-		_ = deleteRemoteBranchAfterPRMerge(ctx, gitx.Runner{Dir: workDir}, branch)
-	}
-	return finalizeAgentOwnedPR(ctx, gitx.Runner{Dir: root}, &iterationCleanup{RootRunner: gitx.Runner{Dir: root}, BaseBranch: cfg.Git.BaseBranch}, workDir, root, cfg, branch)
-}
-
-func waitForHumanReviewMerge(ctx context.Context, cfg config.Config, root, workDir, iterDir string, paths pathSet, runner pr.Runner, state prState, renderer *runRenderer) error {
-	for {
-		record, err := memory.FetchPullRequest(ctx, memory.FetchOptions{WorkDir: workDir, RunsDir: filepath.Join(root, cfg.Logs.Dir), Ref: state.PR})
-		if err == nil && strings.ToLower(strings.TrimSpace(record.State)) == "merged" {
-			state.Status = "merged"
-			state.MergedAt = firstNonEmpty(record.MergedAt, time.Now().UTC().Format(time.RFC3339))
-			return writePRState(iterDir, state)
-		}
-		renderer.SleepWaitingForGitHub()
-		if err := githubSleepPoll(ctx, githubSleepPollInterval); err != nil {
-			return err
-		}
-		_ = runner
-		_ = paths
-	}
-}
-
-func orchestratedPRBody(tree workflow.TaskTree, review workflow.ReviewResult) string {
-	var b strings.Builder
-	b.WriteString("## Summary\n\n")
-	b.WriteString(strings.TrimSpace(tree.Summary) + "\n\n")
-	b.WriteString("## Review\n\n")
-	b.WriteString(strings.TrimSpace(review.Summary) + "\n\n")
-	b.WriteString("## Goal\n\n")
-	b.WriteString(strings.TrimSpace(review.GoalEvaluation) + "\n")
-	return b.String()
-}
-
 func validationRepairTask(cycle int) workflow.Task {
 	return workflow.Task{
-		ID:            fmt.Sprintf("repair-validation-%d", cycle),
-		Title:         "Repair validation failure",
-		Description:   "Inspect the validation artifact, fix only the failing behavior, and leave unrelated failures untouched.",
-		Acceptance:    []string{"Configured validation no longer fails for the selected iteration branch."},
-		CommitType:    "F",
-		CommitMessage: "repair validation failure",
+		ID:          fmt.Sprintf("repair-validation-%d", cycle),
+		Title:       "Repair validation failure",
+		Description: "Inspect the validation artifact, fix only the failing behavior, and leave unrelated failures untouched.",
+		Acceptance:  []string{"Configured validation no longer fails for the selected iteration branch."},
 	}
 }
 

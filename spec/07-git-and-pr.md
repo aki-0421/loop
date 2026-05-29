@@ -8,9 +8,9 @@ Before each iteration, the CLI updates the base branch when configured to pull a
 
 ## Branch And Task Worktrees
 
-Role-orchestrated runs create the iteration branch before planning and one task branch/worktree for each coding task. Coding agents edit their assigned task worktree during implementation. After writing a completed task handoff, the coding agent runs `loop task merge`, which stages changes, creates the task commit from task metadata, serializes access to the iteration branch, and squash-merges the task branch into the iteration branch. If the squash merge conflicts, the coding agent resolves conflicts in the iteration worktree and runs `loop task merge --continue`; the task is not complete until that command succeeds.
+Role-orchestrated runs create the iteration branch before planning and one task branch/worktree for each coding task. Coding agents create task-local TODOs before editing. Each TODO is started, implemented, and completed serially with `loop task todo complete`, which stages changes and creates one task-branch commit. After writing a completed task handoff, the coding agent runs `loop task merge --type <type> <summary>`, which serializes access to the iteration branch and squash-merges the task branch into the iteration branch. If the squash merge conflicts, the coding agent resolves conflicts in the iteration worktree and runs `loop task merge --continue`; the task is not complete until that command succeeds.
 
-When a coding task attempt exits before `loop task merge` succeeds, the CLI treats that attempt as unmerged work. It removes the attempt worktree, deletes the attempt branch, clears stale task-result and task-merge handoff files, and retries the task in a new branch/worktree when attempts remain. The CLI never performs the task merge on behalf of the coding agent.
+When a coding task attempt exits before `loop task merge` succeeds, the CLI treats that attempt as unmerged work. It removes the attempt worktree, deletes the attempt branch, clears stale task-result, task TODO, and task-merge files, and retries the task in a new branch/worktree when attempts remain. When attempts are exhausted, or the coding agent explicitly discards the task, the planner receives the discarded task context and writes a revised remaining task tree.
 
 Task branches are implementation details and are deleted after merge. The iteration branch is integrated through pull request mode or local merge mode.
 
@@ -62,7 +62,7 @@ Branch slugs:
 
 ## Commit Creation Through The CLI
 
-In role-orchestrated runs, coding agents use `loop task merge` to ask the CLI to create commits. The planner-provided task `commit_type` and `commit_message` produce the final subject.
+In role-orchestrated runs, coding agents use `loop task todo complete <n>` to ask the CLI to create commits. Planner tasks do not contain commit metadata. `loop task merge --type <type> <summary>` creates the iteration-branch squash commit for the completed task branch.
 
 Older single-agent workflows can request commits during the iteration by running:
 
@@ -94,7 +94,7 @@ Default prefixes:
 
 The CLI rejects commits that do not match the loop commit pattern.
 
-TODOs are sized so that one completed TODO corresponds to one `loop commit` invocation, except skip-merge confirmations. The agent marks a TODO complete only after the matching commit exists, unless the TODO required no repository change.
+Task TODOs are sized so that one completed TODO corresponds to one task-branch commit. A TODO cannot be marked complete unless `loop task todo complete` creates the matching commit.
 
 ## Local merge mode
 
@@ -111,16 +111,16 @@ After commit, the CLI deletes the iteration branch, removes the worktree, checks
 
 ## Pull Request Mode
 
-In role-orchestrated runs, pull request mode is driven by the CLI after validation and review pass:
+In role-orchestrated runs, pull request mode is driven by the review agent through loop-owned commands after validation passes:
 
-1. Generate PR title and body from task-tree and review context.
-2. Push the iteration branch.
-3. Create or reuse the pull request.
-4. Wait for checks when configured.
-5. If post-hoc review waiting is enabled, pause for external merge/review updates instead of auto-merging.
-6. Otherwise squash-merge through `gh`, refresh the base branch, and clean up local runtime resources.
+1. Review the iteration branch diff, task results, and validation evidence.
+2. Rename the iteration branch away from `wip/<iteration>` with `loop branch rename`.
+3. Read the PR template with `loop iteration read pr-template` and write `pr-title` and `pr-body`.
+4. Run `loop pr create`, `loop pr checks`, and `loop pr merge`.
+5. If checks fail, inspect logs when needed and write `changes_requested` findings instead of approval.
+6. After approval, the CLI verifies `pr-state.status=merged`, refreshes the base branch, and cleans up local runtime resources.
 
-The older `loop pr` commands are retained for compatibility with single-agent workflows:
+The older single-agent workflow also uses `loop pr` commands:
 
 1. Generate PR title and body through the agent.
 2. Run `loop pr create` to push the tracked branch and create or reuse the PR.
@@ -145,7 +145,7 @@ The implementation stores command outputs in the iteration directory.
 
 The agent reads pull request template text through `loop iteration read pr-template`, fills it, and writes the PR title and body artifacts in English by default. If a repository template exists, the command returns it. If no repository template exists, the command returns CLI-owned fallback text.
 
-If the agent does not write the `pr-body` artifact, the CLI fallback reads the repository template when present and appends a minimal English loop note.
+In role-orchestrated PR mode, `loop pr create` rejects missing `pr-title` or `pr-body` artifacts and rejects unrenamed `wip/<iteration>` branches. Fallback PR text is only available outside role-orchestrated PR mode.
 
 ## Check waiting
 
@@ -153,7 +153,8 @@ When pull request mode has `waitChecks=true`, `loop pr checks` and `loop pr merg
 
 - `loop pr checks` records full check output in the `pr-checks` artifact and writes only a concise pointer to `errors.log`.
 - The agent fetches detailed job logs with `loop pr logs <job-url-or-id>` when needed.
-- The agent fixes the failure in the same context, validates locally, commits through `loop commit`, and reruns `loop pr checks`.
+- In role-orchestrated mode, the review agent reports failed checks as `changes_requested` findings so repair tasks can be scheduled.
+- In older single-agent mode, the agent fixes the failure in the same context, validates locally, commits through `loop commit`, and reruns `loop pr checks`.
 
 `mergeWhenChecksPass` is retained for configuration compatibility, but PR-mode merge is now triggered by `loop pr merge`.
 

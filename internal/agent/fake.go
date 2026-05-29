@@ -75,26 +75,39 @@ func runFakeRoleAgent() int {
 			Summary:        "Run fake role workflow",
 			GoalEvaluation: "Fake planner selected one deterministic task.",
 			Tasks: []workflow.Task{{
-				ID:            "fake-task",
-				Title:         "Fake task",
-				Description:   "Create a deterministic fake workflow change.",
-				Acceptance:    []string{"The fake workflow marker file exists."},
-				CommitType:    "F",
-				CommitMessage: "run fake role workflow",
+				ID:          "fake-task",
+				Title:       "Fake task",
+				Description: "Create a deterministic fake workflow change.",
+				Acceptance:  []string{"The fake workflow marker file exists."},
 			}},
 		}
 		return writeFakeRoleHandoff("task-tree", "", tree)
 	case "coding":
 		taskID := getenv("LOOP_TASK_ID", "fake-task")
 		workDir := getenv("LOOP_WORKDIR", ".")
+		if err := loopTaskCommand(workDir, "task", "todo", "add", "--type", "F", "--title", "Run fake role workflow", "--acceptance", "The fake workflow marker file exists.", "run", "fake", "role", "workflow"); err != nil {
+			return 1
+		}
+		if err := loopTaskCommand(workDir, "task", "todo", "start", "1"); err != nil {
+			return 1
+		}
 		_ = os.WriteFile(filepath.Join(workDir, "loop-fake-role-change.txt"), []byte("fake role change at "+time.Now().UTC().Format(time.RFC3339Nano)+"\n"), 0o644)
+		if err := loopTaskCommand(workDir, "task", "todo", "complete", "1"); err != nil {
+			return 1
+		}
 		result := workflow.TaskResult{
 			SchemaVersion: workflow.SchemaVersion,
 			TaskID:        taskID,
 			Status:        "completed",
 			Summary:       "Fake coding agent completed " + taskID + ".",
 		}
-		return writeFakeRoleHandoff("task-result", taskID, result)
+		if code := writeFakeRoleHandoff("task-result", taskID, result); code != 0 {
+			return code
+		}
+		if err := loopTaskCommand(workDir, "task", "merge", "--type", "F", "complete", taskID); err != nil {
+			return 1
+		}
+		return 0
 	case "review":
 		result := workflow.ReviewResult{
 			SchemaVersion:  workflow.SchemaVersion,
@@ -172,11 +185,15 @@ func nextFakeInvocationIndex() int {
 }
 
 func loopBranchRename(dir, branch string) error {
+	return loopTaskCommand(dir, "branch", "rename", branch)
+}
+
+func loopTaskCommand(dir string, args ...string) error {
 	exe, err := os.Executable()
 	if err != nil {
 		return err
 	}
-	cmd := exec.Command(exe, "branch", "rename", branch)
+	cmd := exec.Command(exe, args...)
 	cmd.Dir = dir
 	cmd.Env = os.Environ()
 	return cmd.Run()

@@ -43,19 +43,19 @@ The built-in `loop` skill consolidates the planner, coding, and review role conv
 - Create important clarification Issues with `loop issue ask`.
 - Report concrete repository or harness improvement proposals with `loop issue report`; do not persist unsupported agent capability findings as Issues.
 - Planner role: write `task-tree` with `loop handoff write task-tree`.
-- Coding role: edit only the assigned task worktree, write `task-result` with `loop handoff write task-result --task "$LOOP_TASK_ID"`, and run `loop task merge` until the task is merged.
-- Review role: inspect the iteration diff and write `review-result` with `loop handoff write review-result`.
-- Avoid direct Git lifecycle commands, `loop commit`, `loop branch`, `loop pr`, and `loop iteration close`; the CLI owns those mechanics in role-orchestrated runs.
+- Coding role: edit only the assigned task worktree, create task-local TODOs before implementation, complete each TODO through `loop task todo complete`, write `task-result` with `loop handoff write task-result --task "$LOOP_TASK_ID"`, and run `loop task merge` until the task is merged.
+- Review role: inspect the iteration diff, rename the iteration branch, prepare PR text from `loop iteration read pr-template`, create/check/merge the PR through `loop pr`, and write `review-result` with `loop handoff write review-result`.
+- Avoid direct Git lifecycle commands, `loop commit`, and `loop iteration close`; use `loop branch`, `loop task`, and `loop pr` for the role-owned actions.
 
 The skill includes compact JSON shapes for `task-tree`, `task-result`, and `review-result`, and points agents to `loop help agent handoff write` for current command flags and schema details.
 
 The planner role treats one iteration as one AI sprint-sized PR: a coherent development goal that autonomous agents can complete in hours. It splits that sprint into coding-agent work packets for dependency ordering, conflict avoidance, validation, and parallel execution, not for review convenience.
 
-The default skill keeps role behavior concise. It does not expose cached memory lookup commands to agents; GitHub context caching remains a CLI-owned internal capability. Commit intent comes from planner task metadata; pull request titles, bodies, checks, and pull request merges are handled by the CLI.
+The default skill keeps role behavior concise. It does not expose cached memory lookup commands to agents; GitHub context caching remains a CLI-owned internal capability. Planner tasks describe goals and acceptance criteria only. Commit intent comes from coding-agent task TODOs, and pull request titles, bodies, checks, and pull request merges are handled by the review agent through loop commands.
 
 ## Pull request templates
 
-The CLI owns template lookup, fallback text, PR creation, check waiting, and merge behavior. Skills must not embed template bodies or run `gh` directly.
+The CLI owns template lookup and the underlying PR command implementation. Skills must instruct review agents to read templates through `loop iteration read pr-template`, write `pr-title` and `pr-body`, use `loop pr` commands, and never run `gh` directly.
 
 ## Skill sync
 
