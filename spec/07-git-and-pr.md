@@ -8,7 +8,7 @@ Before each iteration, the CLI updates the base branch when configured to pull a
 
 ## Branch And Task Worktrees
 
-Role-orchestrated runs create the iteration branch before planning and one task branch/worktree for each coding task. Coding agents edit only their assigned task worktree. After a task handoff is accepted, the CLI stages changes, creates the task commit from task metadata, removes the task worktree, and squash-merges the task branch into the iteration branch.
+Role-orchestrated runs create the iteration branch before planning and one task branch/worktree for each coding task. Coding agents edit their assigned task worktree during implementation. After writing a completed task handoff, the coding agent runs `loop task merge`, which stages changes, creates the task commit from task metadata, serializes access to the iteration branch, and squash-merges the task branch into the iteration branch. If the squash merge conflicts, the coding agent resolves conflicts in the iteration worktree and runs `loop task merge --continue`; the task is not complete until that command succeeds.
 
 Task branches are implementation details and are deleted after merge. The iteration branch is integrated through pull request mode or local merge mode.
 
@@ -60,7 +60,7 @@ Branch slugs:
 
 ## Commit Creation Through The CLI
 
-In role-orchestrated runs, the CLI creates commits after coding agents finish. The planner-provided task `commit_type` and `commit_message` produce the final subject.
+In role-orchestrated runs, coding agents use `loop task merge` to ask the CLI to create commits. The planner-provided task `commit_type` and `commit_message` produce the final subject.
 
 Older single-agent workflows can request commits during the iteration by running:
 

@@ -56,7 +56,7 @@ Environment controls:
 | `LOOP_FAKE_AGENT_MODE=issue_skip_merge` | Create a clarification Issue and write a skip-merge sleep close. |
 | `LOOP_FAKE_AGENT_MODE=validation_fix` | Commit a validation marker for validation tests. |
 | `LOOP_ROLE=planner` | Write a deterministic `task-tree` handoff. |
-| `LOOP_ROLE=coding` | Edit a marker file and write a `task-result` handoff. |
+| `LOOP_ROLE=coding` | Edit a marker file, write a `task-result` handoff, and complete `loop task merge`. |
 | `LOOP_ROLE=review` | Write an approved `review-result` handoff. |
 | `LOOP_FAKE_AGENT_SEQUENCE` | Comma-separated modes consumed by successive agent invocations. |
 | `LOOP_FAKE_AGENT_COUNT_FILE` | Counter file used with `LOOP_FAKE_AGENT_SEQUENCE` across process invocations. |

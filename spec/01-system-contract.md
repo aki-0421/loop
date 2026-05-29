@@ -8,7 +8,7 @@
 2. Load recent GitHub PR, Issue, and comment context from the local `.loop/loop.db` cache.
 3. Run the configured adapter as planner, coding, and review agents with compact role prompts.
 4. Validate the planner task tree, schedule coding tasks by dependency and conflict metadata, and run coding agents in CLI-created worktrees.
-5. Commit completed task work from task metadata, squash-merge task branches into the iteration branch, run validation, and request review.
+5. Require coding agents to complete `loop task merge`, which commits task work from task metadata, squash-merges task branches into the iteration branch, and lets the coding agent resolve conflicts before validation and review.
 6. Open, check, and merge the pull request, or perform local merge mode when configured.
 7. Repeat until role output reports `goal_complete=true` for a CLI-provided goal, the iteration limit is reached, or a terminal error is recorded.
 

@@ -43,7 +43,7 @@ The built-in `loop` skill consolidates the planner, coding, and review role conv
 - Create important clarification Issues with `loop issue ask`.
 - Report concrete repository or harness improvement proposals with `loop issue report`; do not persist unsupported agent capability findings as Issues.
 - Planner role: write `task-tree` with `loop handoff write task-tree`.
-- Coding role: edit only the assigned task worktree and write `task-result` with `loop handoff write task-result --task "$LOOP_TASK_ID"`.
+- Coding role: edit only the assigned task worktree, write `task-result` with `loop handoff write task-result --task "$LOOP_TASK_ID"`, and run `loop task merge` until the task is merged.
 - Review role: inspect the iteration diff and write `review-result` with `loop handoff write review-result`.
 - Avoid direct Git lifecycle commands, `loop commit`, `loop branch`, `loop pr`, and `loop iteration close`; the CLI owns those mechanics in role-orchestrated runs.
 
@@ -51,7 +51,7 @@ The skill includes compact JSON shapes for `task-tree`, `task-result`, and `revi
 
 The planner role treats one iteration as one AI sprint-sized PR: a coherent development goal that autonomous agents can complete in hours. It splits that sprint into coding-agent work packets for dependency ordering, conflict avoidance, validation, and parallel execution, not for review convenience.
 
-The default skill keeps role behavior concise. It does not expose cached memory lookup commands to agents; GitHub context caching remains a CLI-owned internal capability. Commit intent comes from planner task metadata; pull request titles, bodies, checks, and merges are handled by the CLI.
+The default skill keeps role behavior concise. It does not expose cached memory lookup commands to agents; GitHub context caching remains a CLI-owned internal capability. Commit intent comes from planner task metadata; pull request titles, bodies, checks, and pull request merges are handled by the CLI.
 
 ## Pull request templates
 

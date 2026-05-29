@@ -108,7 +108,7 @@ Runtime rules:
 - If `--goal` is empty, `--should-stop true` is invalid regardless of instruction, Issue, PR, or comment text.
 - The planner agent writes an AI sprint-level `task-tree` handoff for one coherent PR-sized development goal.
 - The CLI schedules non-conflicting ready tasks and runs coding agents in task worktrees.
-- Coding agents write `task-result` handoffs; the CLI commits from task metadata and squash-merges task branches into the iteration branch.
+- Coding agents write `task-result` handoffs, run `loop task merge`, and resolve conflicts before exiting; the command commits from task metadata and squash-merges task branches into the iteration branch.
 - The CLI runs validation, then the review agent writes a `review-result` handoff.
 - Validation failures and review findings become repair tasks until approval or the configured fix-cycle limit.
 - In PR mode, the CLI creates, checks, and merges the PR. With `--human-review`, the CLI creates the PR and pauses for external post-hoc review or merge updates.
@@ -226,6 +226,19 @@ loop handoff list [--kind <task-tree|task-result|review-result>]
 ```
 
 `task-tree` is written by the planner. `task-result` is written by coding agents and requires `--task`. `review-result` is written by the review agent. The CLI validates each JSON payload and rejects unknown fields before storing the handoff in `.loop/loop.db` and writing durable audit copies in the iteration directory.
+
+## `loop task`
+
+Complete coding-task integration actions through agent-facing CLI commands.
+
+```bash
+loop task merge [--iteration-dir <dir>|--run <run-id> --iteration <n>] [--task <id>]
+loop task merge --continue [--iteration-dir <dir>|--run <run-id> --iteration <n>] [--task <id>]
+```
+
+`loop task merge` is used by coding agents after a completed `task-result` handoff. It creates the task commit from the assigned task metadata, waits for exclusive access to the iteration branch, squash-merges the task branch into the iteration branch, writes `tasks/<n>/task-merge.json`, and exits non-zero if conflicts require agent resolution.
+
+When conflicts occur, the command leaves the iteration worktree in the conflicted state and prints that path. The coding agent resolves conflicts there, then runs `loop task merge --continue` to stage the resolution, commit the squash merge, write the merge audit, and release the merge lock.
 
 ## `loop branch`
 

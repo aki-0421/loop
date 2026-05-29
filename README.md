@@ -12,14 +12,14 @@
   <a href="https://pkg.go.dev/github.com/aki-0421/loop"><img alt="Go Reference" src="https://pkg.go.dev/badge/github.com/aki-0421/loop.svg"></a>
 </p>
 
-`loop` turns one Markdown instruction file into a controlled sequence of role-orchestrated agent runs. Each iteration is one AI sprint-sized pull request: the CLI creates the branch, asks a planner agent for a dependency-aware task tree, runs coding agents in isolated task worktrees, squash-merges completed tasks into the iteration branch, validates and reviews the result, then opens and manages the pull request.
+`loop` turns one Markdown instruction file into a controlled sequence of role-orchestrated agent runs. Each iteration is one AI sprint-sized pull request: the CLI creates the branch, asks a planner agent for a dependency-aware task tree, runs coding agents in isolated task worktrees, gives coding agents a loop-owned task merge command so they can resolve conflicts before exiting, validates and reviews the result, then opens and manages the pull request.
 
 It is built for repositories where AI work should leave behind the same things good human work does: small commits, clear branches, validation evidence, pull request context, and enough logs to explain what happened later.
 
 ## Features
 
 - **Repeatable iterations**: run until a CLI-provided goal is satisfied, an iteration limit is reached, or a terminal error stops the run.
-- **Git-native isolation**: every iteration and coding task runs in CLI-created branches and worktrees, then task branches are squash-merged into the iteration branch.
+- **Git-native isolation**: every iteration and coding task runs in CLI-created branches and worktrees, then coding agents use a loop-owned command to squash-merge completed task branches into the iteration branch.
 - **Role orchestration**: one configured adapter is reused as planner, coding, and review agent with role-specific prompts and environment.
 - **Dependency-aware task scheduling**: planner task trees include dependencies and conflicts so independent coding tasks can run in parallel.
 - **CLI-owned commits and pull requests**: the CLI stages, commits, pushes, checks, repairs, and merges from validated role handoffs.
@@ -110,7 +110,7 @@ loop run task.md \
 2. The CLI creates the iteration branch and worktree before any agent starts.
 3. The planner agent explores the repository and writes a strict AI sprint-level `task-tree` handoff with dependencies and conflicts.
 4. The CLI schedules ready tasks, creates one worktree per coding task, and runs non-conflicting coding agents in parallel.
-5. Each coding agent edits files and writes a `task-result`; the CLI commits the work from task metadata and squash-merges it into the iteration branch.
+5. Each coding agent edits files, writes a `task-result`, runs `loop task merge`, resolves merge conflicts when necessary, and exits only after the task is merged into the iteration branch.
 6. The CLI runs configured validation, then asks the review agent for a `review-result`.
 7. Validation failures or review findings become repair tasks until the review passes or the fix-cycle limit is reached.
 8. The CLI creates the PR, waits for checks, performs configured merge behavior, cleans up worktrees and branches, and starts the next iteration when needed.
@@ -198,7 +198,7 @@ Ignored runtime files:
 .loop/loop.db
 ```
 
-The durable iteration directory keeps audit files such as `prompt.md`, `effective-config.yaml`, `agent-events.jsonl`, `task-tree.json`, `tasks/<n>/task.json`, `tasks/<n>/task-result.json`, `tasks/<n>/agent-events.jsonl`, `review-result.json`, `errors.log`, `pr-state.json`, `pr-checks.json`, and `github-updates.md`. Disposable active-work artifacts such as runtime context, validation output, and prompt audits are accessed through CLI commands while the iteration is running.
+The durable iteration directory keeps audit files such as `prompt.md`, `effective-config.yaml`, `agent-events.jsonl`, `task-tree.json`, `tasks/<n>/task.json`, `tasks/<n>/task-result.json`, `tasks/<n>/task-merge.json`, `tasks/<n>/agent-events.jsonl`, `review-result.json`, `errors.log`, `pr-state.json`, `pr-checks.json`, and `github-updates.md`. Disposable active-work artifacts such as runtime context, validation output, and prompt audits are accessed through CLI commands while the iteration is running.
 
 ## Development
 

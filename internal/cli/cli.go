@@ -118,6 +118,8 @@ func Run(args []string) error {
 		return commandIteration(ctx, g, rest[1:])
 	case "handoff":
 		return commandHandoff(ctx, g, rest[1:])
+	case "task":
+		return commandTask(ctx, g, rest[1:])
 	case "skills":
 		return commandSkills(ctx, g, rest[1:])
 	case "doctor":
@@ -1688,20 +1690,21 @@ type pathSet struct {
 	PRBody          string
 	Errors          string
 
-	Goal             string
-	Language         string
-	RunID            string
-	IterationID      string
-	BaseBranch       string
-	InitialBranch    string
-	CurrentBranch    string
-	BranchRenamed    bool
-	IntegrationMode  string
-	PullRequestMode  bool
-	WorkDir          string
-	TaskID           string
-	TaskDir          string
-	AgentPromptExtra string
+	Goal              string
+	Language          string
+	RunID             string
+	IterationID       string
+	BaseBranch        string
+	InitialBranch     string
+	CurrentBranch     string
+	BranchRenamed     bool
+	IntegrationMode   string
+	PullRequestMode   bool
+	WorkDir           string
+	TaskID            string
+	TaskDir           string
+	IterationWorktree string
+	AgentPromptExtra  string
 }
 
 func promptPaths(iterDir string) pathSet {
@@ -1747,6 +1750,9 @@ func writeRuntimeArtifact(paths pathSet) error {
 		"integration_mode":  paths.IntegrationMode,
 		"pull_request_mode": paths.PullRequestMode,
 		"workdir":           paths.WorkDir,
+	}
+	if strings.TrimSpace(paths.IterationWorktree) != "" {
+		payload["iteration_worktree"] = paths.IterationWorktree
 	}
 	if strings.TrimSpace(paths.TaskID) != "" {
 		payload["task_id"] = paths.TaskID

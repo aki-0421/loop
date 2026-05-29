@@ -18,6 +18,8 @@
           tasks/
             0001/
               task.json
+              task-result.json
+              task-merge.json
               agent-events.jsonl
           errors.log        # only when an error occurs
   worktrees/
@@ -62,6 +64,7 @@ Every active iteration writes disposable runtime artifacts as files in a Go temp
 - `runtime`: JSON runtime context.
 - `task-tree`: planner task graph.
 - `task-result`: coding task result handoffs.
+- `task-merge`: coding task merge audit written after `loop task merge` succeeds.
 - `review-result`: review decision and repair findings.
 - `validation`: validation commands and results.
 - `pr-title` and `pr-body`: pull request text.
@@ -73,6 +76,7 @@ The durable iteration directory stores audit and replay files plus PR lifecycle 
 - `agent-events`: structured audit events for iteration-level agents such as planner and reviewer.
 - `tasks/<sequence>/task.json`: durable copy of the task assigned to one coding agent.
 - `tasks/<sequence>/task-result.json`: durable copy of that coding agent's result handoff.
+- `tasks/<sequence>/task-merge.json`: durable audit of the task commit and iteration squash-merge commit.
 - `tasks/<sequence>/agent-events.jsonl`: structured audit events for that coding agent only.
 - `errors`: process, result, validation, or sync warnings.
 - `task-tree` and `review-result`: durable iteration-level role handoff audit copies.

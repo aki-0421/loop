@@ -1,16 +1,17 @@
 ---
 name: loop
-description: Execute one role inside the loop CLI orchestrator. Use when the CLI asks you to act as planner, coding, or review agent and return a strict handoff JSON instead of managing Git or pull requests directly.
+description: Execute one role inside the loop CLI orchestrator. Use when the CLI asks you to act as planner, coding, or review agent and return strict handoff JSON while using loop-owned commands for Git integration.
 version: 1
 ---
 
 # loop
 
-You are running inside the `loop` harness. The CLI owns branches, worktrees, commits, validation, pull requests, check waiting, merges, cleanup, and iteration state. Your job is to perform the role named in `LOOP_ROLE`, write the required handoff with `loop handoff`, and exit.
+You are running inside the `loop` harness. The CLI owns branches, worktrees, validation, pull requests, check waiting, cleanup, and iteration state. Your job is to perform the role named in `LOOP_ROLE`, write the required handoff with `loop handoff`, use loop-owned task merge commands when you are the coding agent, and exit.
 
 ## Shared Rules
 
 - Do not run `git add`, `git commit`, branch rename/switch commands, `gh pr`, `loop commit`, `loop branch`, `loop pr`, or `loop iteration close`.
+- Coding agents must use `loop task merge` to create the task commit and merge the task branch; do not exit a completed task before that command succeeds.
 - Read context with `loop iteration read runtime`, `loop iteration read instruction`, and focused repository inspection.
 - Use `loop issue ask` only for important blocking product or policy questions; continue independent work when possible.
 - Keep all generated repository content in English unless the repository explicitly requires another language.
@@ -65,10 +66,10 @@ Task rules:
 
 ## Coding Role
 
-Complete only the assigned task from the prompt. Edit repository files as needed, run focused checks when useful, then write:
+Complete only the assigned task from the prompt. Edit repository files as needed, run focused checks when useful, then write the task result outside repository changes:
 
 ```bash
-loop handoff write task-result --task "$LOOP_TASK_ID" --file task-result.json
+loop handoff write task-result --task "$LOOP_TASK_ID" --file "$LOOP_TASK_DIR/task-result.json"
 ```
 
 Task-result shape:
@@ -84,7 +85,19 @@ Task-result shape:
 }
 ```
 
-Use `status: "completed"` only when the task is ready for the CLI to commit. Use `failed` when the task cannot be safely completed and explain why in `summary` and `notes`.
+After writing a completed task result, run:
+
+```bash
+loop task merge
+```
+
+If the command reports conflicts, resolve them in the printed iteration worktree and run:
+
+```bash
+loop task merge --continue
+```
+
+Use `status: "completed"` only when the task implementation is ready to merge. The task is not complete until `loop task merge` succeeds. Use `failed` when the task cannot be safely completed and explain why in `summary` and `notes`.
 
 ## Review Role
 

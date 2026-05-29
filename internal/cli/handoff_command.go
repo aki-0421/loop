@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/aki-0421/loop/internal/artifactdb"
+	"github.com/aki-0421/loop/internal/gitx"
 	"github.com/aki-0421/loop/internal/workflow"
 )
 
@@ -101,6 +102,7 @@ func commandHandoffWrite(ctx context.Context, g globals, args []string) error {
 	if err := writeRoleHandoffAudit(resolvedDir, kind, task, normalized); err != nil {
 		return codedError{1, err}
 	}
+	cleanupTransientHandoffSourceFile(ctx, *sourceFile, kind)
 	return printResult(g, map[string]any{"handoff": kind, "task": task}, fmt.Sprintf("wrote %s handoff\n", kind))
 }
 
@@ -317,4 +319,55 @@ func normalizeHandoffKind(kind string) string {
 	default:
 		return ""
 	}
+}
+
+func cleanupTransientHandoffSourceFile(ctx context.Context, sourceFile, kind string) {
+	sourceFile = strings.TrimSpace(sourceFile)
+	if sourceFile == "" || sourceFile == "-" {
+		return
+	}
+	if filepath.Base(sourceFile) != defaultHandoffFileName(kind) {
+		return
+	}
+	abs, err := filepath.Abs(sourceFile)
+	if err != nil {
+		return
+	}
+	cleanAbs := filepath.Clean(abs)
+	parts := strings.Split(filepath.ToSlash(cleanAbs), "/")
+	for i := 0; i < len(parts)-1; i++ {
+		if parts[i] == ".loop" && (parts[i+1] == "runs" || parts[i+1] == "tmp" || parts[i+1] == "locks") {
+			return
+		}
+	}
+	root, err := gitx.RepoRoot(ctx, ".")
+	if err != nil {
+		return
+	}
+	rel, err := filepath.Rel(root, cleanAbs)
+	if err != nil || rel == "." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) || filepath.IsAbs(rel) {
+		return
+	}
+	if gitPathIsTracked(ctx, root, rel) {
+		return
+	}
+	_ = os.Remove(cleanAbs)
+}
+
+func defaultHandoffFileName(kind string) string {
+	switch kind {
+	case "task-tree":
+		return "task-tree.json"
+	case "task-result":
+		return "task-result.json"
+	case "review-result":
+		return "review-result.json"
+	default:
+		return ""
+	}
+}
+
+func gitPathIsTracked(ctx context.Context, root, path string) bool {
+	_, err := (gitx.Runner{Dir: root}).Run(ctx, "ls-files", "--error-unmatch", "--", filepath.ToSlash(path))
+	return err == nil
 }

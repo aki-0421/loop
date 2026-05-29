@@ -62,6 +62,7 @@ func TestAgentHelpCommandShowsCompactList(t *testing.T) {
 		"cmd:loop handoff write task-tree|task-result|review-result",
 		"cmd:loop iteration read artifact",
 		"cmd:loop issue report",
+		"cmd:loop task merge",
 		"artifacts:",
 		"runtime:r:file",
 		"task-tree:r:file",

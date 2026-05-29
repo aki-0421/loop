@@ -63,6 +63,23 @@ Required fields:
 
 Each finding has `id`, optional `task_id`, `title`, `description`, `acceptance`, `commit_type`, and `commit_message`. Findings must be specific enough for the CLI to create repair tasks.
 
+## Task Merge Audit
+
+`loop task merge` writes `tasks/<sequence>/task-merge.json` after the completed task branch is incorporated into the iteration branch.
+
+Required fields:
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `schema_version` | integer | Current value is `1`. |
+| `task_id` | string | Completed task ID. |
+| `status` | enum | `merged`. |
+| `branch` | string | Task branch that was merged. |
+| `iteration_branch` | string | Iteration branch that received the squash merge. |
+| `task_commit` | object | The task branch commit as `sha` and `subject`. |
+| `merge_commit` | object | The iteration branch squash commit as `sha` and `subject`. |
+| `merged_at` | string | UTC timestamp when the merge completed. |
+
 ## Iteration Close
 
 The iteration close contract is retained for compatibility with older single-agent workflows. Role-orchestrated runs use role handoffs instead.
