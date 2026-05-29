@@ -99,4 +99,4 @@ Local merge mode remains available for local-only repositories and tests. It squ
 
 ## Cancellation Cleanup
 
-If the user cancels with Ctrl+C or the process receives SIGTERM, `loop` cancels running agents and removes unintegrated task and iteration worktrees. Already integrated or remotely merged work is preserved.
+If the user cancels with Ctrl+C, the process receives SIGTERM, or the CLI stops on an error before integration completes, `loop` removes unintegrated task and iteration worktrees, task branches, task merge locks, and disposable active-temp files. Already integrated or remotely merged work is preserved.

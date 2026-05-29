@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/aki-0421/loop/internal/gitx"
+	"github.com/aki-0421/loop/internal/runstate"
 )
 
 func TestIterationCleanupRemovesCancelledWorktreeAndBranch(t *testing.T) {
@@ -99,6 +101,56 @@ func TestIterationCleanupResetsUncommittedSquashMerge(t *testing.T) {
 		t.Fatalf("squash file should be removed, err=%v", err)
 	}
 	assertBranchMissing(t, repo, "wip/0001")
+}
+
+func TestIterationCleanupOnErrorRemovesTaskResourcesAndActiveTemp(t *testing.T) {
+	ctx := context.Background()
+	repo := newCleanupRepo(t)
+	runner := gitx.Runner{Dir: repo}
+	iterationWorktree := filepath.Join(repo, ".loop", "worktrees", "run", "0001", "iteration")
+	taskWorktree := filepath.Join(repo, ".loop", "worktrees", "run", "0001", "tasks", "retry-task", "attempt-1")
+	git(t, repo, "worktree", "add", "-b", "wip/0001", iterationWorktree, "develop")
+	git(t, repo, "worktree", "add", "-b", "task/0001-retry-task-attempt-1", taskWorktree, "develop")
+	activeDir := filepath.Join(t.TempDir(), "loop-active")
+	mustWrite(t, filepath.Join(activeDir, ".loop-active-temp"), "1\n")
+	mustWrite(t, filepath.Join(activeDir, "runtime.json"), "{}\n")
+	lockDir := filepath.Join(repo, ".loop", "locks", "run-0001-task-merge.lock")
+	mustWrite(t, filepath.Join(lockDir, "state.json"), "{}\n")
+	statePath := filepath.Join(repo, ".loop", "runs", "run", "run-state.json")
+	state := runstate.New("run", "", "develop", "fake")
+	state.Iterations = append(state.Iterations, runstate.IterationRecord{IterationID: "0001", BranchInitial: "wip/0001", Stage: string(runstate.StagePlanning)})
+	cleanup := iterationCleanup{
+		Active:            true,
+		RootRunner:        runner,
+		BaseBranch:        "develop",
+		Branch:            "wip/0001",
+		WorktreePath:      iterationWorktree,
+		TaskWorktreesRoot: filepath.Join(repo, ".loop", "worktrees", "run", "0001", "tasks"),
+		TaskBranchPrefix:  "task/0001-",
+		LockDir:           lockDir,
+		ActiveDir:         activeDir,
+		EventLogPath:      filepath.Join(repo, ".loop", "runs", "run", "iterations", "0001", "agent-events.jsonl"),
+	}
+	retErr := errors.New("planner failed")
+
+	cleanup.OnExit(ctx, statePath, &state, &retErr)
+
+	for _, path := range []string{iterationWorktree, taskWorktree, lockDir, activeDir} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("%s should be removed, err=%v", path, err)
+		}
+	}
+	assertBranchMissing(t, repo, "wip/0001")
+	assertBranchMissing(t, repo, "task/0001-retry-task-attempt-1")
+	if state.Stage != runstate.StageFailed || state.Iterations[0].Stage != string(runstate.StageFailed) {
+		t.Fatalf("state = %#v, want failed cleanup state", state)
+	}
+	events := readText(t, filepath.Join(repo, ".loop", "runs", "run", "iterations", "0001", "agent-events.jsonl"))
+	for _, want := range []string{"run.error_cleanup.started", "iteration.active_temp.cleanup.completed", "run.error_cleanup.completed"} {
+		if !strings.Contains(events, want) {
+			t.Fatalf("cleanup events missing %s:\n%s", want, events)
+		}
+	}
 }
 
 func TestRemoveWorktreeBeforePRIntegrationLeavesBranchDeletable(t *testing.T) {

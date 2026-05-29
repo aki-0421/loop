@@ -6,10 +6,10 @@
 | --- | --- | --- |
 | Config error | Invalid YAML, unknown enum | Stop before run creation |
 | Environment error | Missing Git repo, missing agent command | Stop before agent launch |
-| Agent contract error | Missing close handoff or invalid close JSON | Fail the iteration contract |
+| Agent contract error | Missing close handoff or invalid close JSON | Fail the iteration contract and clean local runtime resources |
 | Dirty merge close | Uncommitted changes before `--merge` | Reject the close command before handoff |
-| Validation error | Required validation failed | Do not integrate; clean up the branch and continue |
-| Integration error | Merge conflict, push failure, check failure | Record state and stop |
+| Validation error | Required validation failed | Do not integrate; clean local runtime resources, then stop or create a repair task when configured |
+| Integration error | Merge conflict, push failure, check failure | Record state, clean local runtime resources when integration did not complete, and stop |
 | State read error | Missing or invalid run-state file | Stop with diagnostic |
 
 ## Close Contract Errors
@@ -38,6 +38,8 @@ Sleep mode is entered only when the agent explicitly closes with `loop iteration
 - The CLI does not ask the user.
 
 ## Stored Run State
+
+When a role-orchestrated iteration stops on an error before integration completes, the CLI removes local task worktrees, task branches, task merge locks, the iteration worktree, the iteration branch, and disposable active-temp files. Cleanup failures are recorded in the iteration event log; durable audit files remain under `.loop/runs/`.
 
 `loop resume <run-id>` currently reports stored run state and does not relaunch a run stage. Stored stages still describe where a run stopped:
 

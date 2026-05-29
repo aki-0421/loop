@@ -220,7 +220,7 @@ type orchestrationRequest struct {
 	DryRun          bool
 }
 
-func runOrchestratedIteration(ctx context.Context, req orchestrationRequest) (iterationWorkflowResult, error) {
+func runOrchestratedIteration(ctx context.Context, req orchestrationRequest) (result iterationWorkflowResult, retErr error) {
 	cfg := req.Config
 	rootRunner := gitx.Runner{Dir: req.Root}
 	iterationID := runstate.IterationID(req.IterationNumber)
@@ -247,6 +247,16 @@ func runOrchestratedIteration(ctx context.Context, req orchestrationRequest) (it
 	paths.PullRequestMode = cfg.Git.Integration.Mode == "pr"
 	paths.WorkDir = iterationWorktree
 	paths.IterationWorktree = iterationWorktree
+	cleanupRegistered := false
+	if !req.DryRun {
+		defer func() {
+			if retErr != nil && !cleanupRegistered {
+				if issues := cleanupDisposableIterationFiles(activeDir, paths.Events); len(issues) > 0 {
+					appendErrorLog(paths.Errors, "iteration file cleanup failed: "+strings.Join(issues, "; "))
+				}
+			}
+		}()
+	}
 	req.Renderer.Iteration(iterationID)
 	req.Renderer.Branch(initialBranch)
 	req.State.CurrentIteration = iterationID
@@ -289,16 +299,21 @@ func runOrchestratedIteration(ctx context.Context, req orchestrationRequest) (it
 	}
 	_ = artifactdb.ClearRoleHandoffs(artifactdb.GlobalDBPathForIteration(iterDir), req.RunID, iterationID)
 	cleanup := &iterationCleanup{
-		RootRunner:   rootRunner,
-		BaseBranch:   cfg.Git.BaseBranch,
-		Branch:       initialBranch,
-		WorktreePath: iterationWorktree,
-		WorkDir:      iterationWorktree,
-		Active:       true,
-		EventLogPath: paths.Events,
-		OnEvent:      req.Renderer.AgentEvent,
+		RootRunner:        rootRunner,
+		BaseBranch:        cfg.Git.BaseBranch,
+		Branch:            initialBranch,
+		WorktreePath:      iterationWorktree,
+		WorkDir:           iterationWorktree,
+		TaskWorktreesRoot: filepath.Join(req.Root, ".loop", "worktrees", req.RunID, iterationID, "tasks"),
+		TaskBranchPrefix:  "task/" + iterationID + "-",
+		LockDir:           filepath.Join(req.Root, ".loop", "locks", sanitizeTempPart(req.RunID)+"-"+sanitizeTempPart(iterationID)+"-task-merge.lock"),
+		ActiveDir:         activeDir,
+		Active:            true,
+		EventLogPath:      paths.Events,
+		OnEvent:           req.Renderer.AgentEvent,
 	}
-	defer cleanup.OnCancel(ctx, req.StatePath, req.State)
+	cleanupRegistered = true
+	defer cleanup.OnExit(ctx, req.StatePath, req.State, &retErr)
 
 	req.State.Stage = runstate.StagePlanning
 	_ = runstate.Write(req.StatePath, *req.State)
@@ -321,6 +336,9 @@ func runOrchestratedIteration(ctx context.Context, req orchestrationRequest) (it
 		req.State.Iterations[len(req.State.Iterations)-1].SummarySentence = tree.Summary
 		_ = runstate.Write(req.StatePath, *req.State)
 		_ = cleanup.cleanup(ctx)
+		if issues := cleanupDisposableIterationFiles(paths.ActiveDir, paths.Events); len(issues) > 0 {
+			appendErrorLog(paths.Errors, "iteration file cleanup failed: "+strings.Join(issues, "; "))
+		}
 		cleanup.Active = false
 		return iterationWorkflowResult{Summary: tree.Summary, GoalComplete: goalComplete, GoalEvaluation: tree.GoalEvaluation}, nil
 	}

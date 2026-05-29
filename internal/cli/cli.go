@@ -792,31 +792,57 @@ type iterationCleanup struct {
 	Branch            string
 	WorkDir           string
 	WorktreePath      string
+	TaskWorktreesRoot string
+	TaskBranchPrefix  string
+	LockDir           string
+	ActiveDir         string
 	EventLogPath      string
 	OnEvent           func(runstate.Event)
 }
 
 func (c *iterationCleanup) OnCancel(parent context.Context, statePath string, state *runstate.State) {
-	if parent.Err() == nil || !c.Active || c.Integrated {
+	if parent.Err() == nil {
+		return
+	}
+	c.finishFailedCleanup(statePath, state, runstate.StageCancelled, "run.cancelled_cleanup")
+}
+
+func (c *iterationCleanup) OnExit(parent context.Context, statePath string, state *runstate.State, errp *error) {
+	if parent.Err() != nil {
+		c.finishFailedCleanup(statePath, state, runstate.StageCancelled, "run.cancelled_cleanup")
+		return
+	}
+	if errp == nil || *errp == nil {
+		return
+	}
+	c.finishFailedCleanup(statePath, state, runstate.StageFailed, "run.error_cleanup")
+}
+
+func (c *iterationCleanup) finishFailedCleanup(statePath string, state *runstate.State, stage runstate.Stage, eventPrefix string) {
+	if !c.Active || c.Integrated {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
 
-	c.appendEvent(runstate.Event{"type": "run.cancelled_cleanup.started", "branch": c.Branch, "worktree": c.WorktreePath})
+	c.appendEvent(runstate.Event{"type": eventPrefix + ".started", "branch": c.Branch, "worktree": c.WorktreePath})
 	issues := c.cleanup(ctx)
+	if activeIssues := cleanupDisposableIterationFiles(c.ActiveDir, c.EventLogPath); len(activeIssues) > 0 {
+		issues = append(issues, activeIssues...)
+	}
 	if state != nil {
-		state.Stage = runstate.StageCancelled
+		state.Stage = stage
 		if len(state.Iterations) > 0 {
-			state.Iterations[len(state.Iterations)-1].Stage = string(runstate.StageCancelled)
+			state.Iterations[len(state.Iterations)-1].Stage = string(stage)
 		}
 		_ = runstate.Write(statePath, *state)
 	}
-	event := runstate.Event{"type": "run.cancelled_cleanup.completed", "branch": c.Branch, "worktree": c.WorktreePath}
+	event := runstate.Event{"type": eventPrefix + ".completed", "branch": c.Branch, "worktree": c.WorktreePath}
 	if len(issues) > 0 {
 		event["issues"] = issues
 	}
 	c.appendEvent(event)
+	c.Active = false
 }
 
 func (c *iterationCleanup) appendEvent(event runstate.Event) {
@@ -836,6 +862,16 @@ func (c *iterationCleanup) cleanup(ctx context.Context) []string {
 		if err != nil {
 			issues = append(issues, action+": "+err.Error())
 		}
+	}
+
+	if c.LockDir != "" {
+		record("remove lock "+c.LockDir, os.RemoveAll(c.LockDir))
+	}
+	if c.TaskWorktreesRoot != "" {
+		c.cleanupTaskWorktrees(ctx, record)
+	}
+	if c.TaskBranchPrefix != "" {
+		c.cleanupTaskBranches(ctx, record)
 	}
 
 	if c.DirectIntegrating {
@@ -888,6 +924,59 @@ func (c *iterationCleanup) cleanup(ctx context.Context) []string {
 		record("delete branch "+c.Branch, c.RootRunner.DeleteBranch(ctx, c.Branch, true))
 	}
 	return issues
+}
+
+func (c *iterationCleanup) cleanupTaskWorktrees(ctx context.Context, record func(string, error)) {
+	root := strings.TrimSpace(c.TaskWorktreesRoot)
+	if root == "" {
+		return
+	}
+	if _, err := os.Stat(root); err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			record("stat task worktrees "+root, err)
+		}
+		return
+	}
+	_ = filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			record("walk task worktree "+path, err)
+			return nil
+		}
+		if !entry.IsDir() || path == root {
+			return nil
+		}
+		if _, err := os.Stat(filepath.Join(path, ".git")); err == nil {
+			record("remove task worktree "+path, c.RootRunner.RemoveWorktree(ctx, path, true))
+			return filepath.SkipDir
+		} else if !errors.Is(err, os.ErrNotExist) {
+			record("stat task worktree "+path, err)
+		}
+		return nil
+	})
+	record("remove task worktrees root "+root, os.RemoveAll(root))
+	_, _ = c.RootRunner.Run(ctx, "worktree", "prune")
+}
+
+func (c *iterationCleanup) cleanupTaskBranches(ctx context.Context, record func(string, error)) {
+	prefix := strings.TrimSpace(c.TaskBranchPrefix)
+	if prefix == "" {
+		return
+	}
+	out, err := c.RootRunner.Run(ctx, "for-each-ref", "--format=%(refname:short)", "refs/heads")
+	if err != nil {
+		record("list task branches "+prefix, err)
+		return
+	}
+	for _, line := range strings.Split(out, "\n") {
+		branch := strings.TrimSpace(line)
+		if branch == "" || !strings.HasPrefix(branch, prefix) {
+			continue
+		}
+		if branch == c.BaseBranch {
+			continue
+		}
+		record("delete branch "+branch, c.RootRunner.DeleteBranch(ctx, branch, true))
+	}
 }
 
 func removeEmptyDir(path string) {

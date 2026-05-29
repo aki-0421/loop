@@ -156,6 +156,62 @@ git:
 	assertBranchMissing(t, repo, "wip/0001")
 }
 
+func TestRoleOrchestratedCleansUpIterationOnPlannerError(t *testing.T) {
+	ctx := context.Background()
+	repo := newCleanupRepo(t)
+	mustWrite(t, filepath.Join(repo, "task.md"), "# Task\n\nFail during planning.\n")
+	agentCommand, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, filepath.Join(repo, ".loop", "config.yaml"), `version: 1
+
+agent:
+  default: rolefail
+  adapters:
+    rolefail:
+      command: `+yamlSingleQuote(agentCommand)+`
+      args: [-test.run=TestHelperProcessRoleAgent, --]
+      prompt: stdin
+      env:
+        LOOP_ROLE_TEST_AGENT: "1"
+        LOOP_ROLE_TEST_AGENT_MODE: "planner-error"
+
+run:
+  maxIterations: 1
+
+git:
+  baseBranch: develop
+  integration:
+    mode: local_merge
+`)
+	git(t, repo, "add", "task.md", ".loop/config.yaml")
+	git(t, repo, "commit", "-m", "T: add role planner error fixture")
+	withWorkingDir(t, repo)
+
+	if _, err := captureStdout(t, func() error {
+		return commandRun(ctx, globals{Agent: "rolefail", JSON: true, NoColor: true}, []string{"task.md"})
+	}); err == nil {
+		t.Fatal("loop run should fail when planner agent exits non-zero")
+	}
+
+	state := readLatestRunState(t, repo)
+	if state.Stage != runstate.StageFailed {
+		t.Fatalf("run stage = %s, want failed", state.Stage)
+	}
+	iterDir := filepath.Join(repo, ".loop", "runs", state.RunID, "iterations", "0001")
+	if got := countEventType(t, iterDir, "run.error_cleanup.completed"); got != 1 {
+		t.Fatalf("error cleanup events = %d, want 1", got)
+	}
+	if got := countEventType(t, iterDir, "iteration.active_temp.cleanup.completed"); got != 1 {
+		t.Fatalf("active temp cleanup events = %d, want 1", got)
+	}
+	if _, err := os.Stat(filepath.Join(repo, ".loop", "worktrees", state.RunID, "0001", "iteration")); !os.IsNotExist(err) {
+		t.Fatalf("iteration worktree should be removed, err=%v", err)
+	}
+	assertBranchMissing(t, repo, "wip/0001")
+}
+
 func TestRoleOrchestratedDiscardsUnmergedTaskAttemptBeforeRetry(t *testing.T) {
 	ctx := context.Background()
 	repo := newCleanupRepo(t)
@@ -234,6 +290,9 @@ func runRoleTestAgent() int {
 	switch role {
 	case "planner":
 		switch os.Getenv("LOOP_ROLE_TEST_AGENT_MODE") {
+		case "planner-error":
+			fmt.Fprintln(os.Stderr, "forced planner failure")
+			return 1
 		case "merge-conflict":
 			payload := `{
   "schema_version": 1,
