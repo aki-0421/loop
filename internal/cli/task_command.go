@@ -466,16 +466,31 @@ func appendTaskMergeEvent(mergeCtx taskMergeContext, event runstate.Event) {
 
 func cleanupPendingTaskMerge(ctx context.Context, paths pathSet) {
 	root := repoRootFromIterationDir(paths.IterationDir)
+	ownsLock := true
 	if root != "" && paths.RunID != "" && paths.IterationID != "" {
 		lockDir := filepath.Join(root, ".loop", "locks", sanitizeTempPart(paths.RunID)+"-"+sanitizeTempPart(paths.IterationID)+"-task-merge.lock")
-		_ = os.RemoveAll(lockDir)
+		if lock, err := readTaskMergeLock(lockDir); err == nil {
+			ownsLock = lock.TaskID == "" || lock.TaskID == paths.TaskID
+			if ownsLock && lock.Branch != "" && paths.CurrentBranch != "" {
+				ownsLock = lock.Branch == paths.CurrentBranch
+			}
+		}
+		if ownsLock {
+			_ = os.RemoveAll(lockDir)
+		}
 	}
 	if strings.TrimSpace(paths.IterationWorktree) == "" {
 		return
 	}
+	if !ownsLock {
+		return
+	}
 	runner := gitx.Runner{Dir: paths.IterationWorktree}
 	if len(unmergedPaths(ctx, runner)) == 0 {
-		return
+		dirty, err := runner.CheckClean(ctx, gitx.CleanOptions{IgnoreRuntime: true})
+		if err != nil || dirty.Clean {
+			return
+		}
 	}
 	_, _ = runner.Run(context.Background(), "reset", "--hard")
 	_, _ = runGitCleanPreservingLoopRuntime(context.Background(), runner)

@@ -10,6 +10,8 @@ Before each iteration, the CLI updates the base branch when configured to pull a
 
 Role-orchestrated runs create the iteration branch before planning and one task branch/worktree for each coding task. Coding agents edit their assigned task worktree during implementation. After writing a completed task handoff, the coding agent runs `loop task merge`, which stages changes, creates the task commit from task metadata, serializes access to the iteration branch, and squash-merges the task branch into the iteration branch. If the squash merge conflicts, the coding agent resolves conflicts in the iteration worktree and runs `loop task merge --continue`; the task is not complete until that command succeeds.
 
+When a coding task attempt exits before `loop task merge` succeeds, the CLI treats that attempt as unmerged work. It removes the attempt worktree, deletes the attempt branch, clears stale task-result and task-merge handoff files, and retries the task in a new branch/worktree when attempts remain. The CLI never performs the task merge on behalf of the coding agent.
+
 Task branches are implementation details and are deleted after merge. The iteration branch is integrated through pull request mode or local merge mode.
 
 ## Legacy Branch Names

@@ -110,7 +110,7 @@ loop run task.md \
 2. The CLI creates the iteration branch and worktree before any agent starts.
 3. The planner agent explores the repository and writes a strict AI sprint-level `task-tree` handoff with dependencies and conflicts.
 4. The CLI schedules ready tasks, creates one worktree per coding task, and runs non-conflicting coding agents in parallel.
-5. Each coding agent edits files, writes a `task-result`, runs `loop task merge`, resolves merge conflicts when necessary, and exits only after the task is merged into the iteration branch.
+5. Each coding agent edits files, writes a `task-result`, runs `loop task merge`, resolves merge conflicts when necessary, and exits only after the task is merged into the iteration branch. If an agent exits without completing the merge, the CLI discards that unmerged attempt branch/worktree and retries the task in a fresh branch/worktree when attempts remain.
 6. The CLI runs configured validation, then asks the review agent for a `review-result`.
 7. Validation failures or review findings become repair tasks until the review passes or the fix-cycle limit is reached.
 8. The CLI creates the PR, waits for checks, performs configured merge behavior, cleans up worktrees and branches, and starts the next iteration when needed.

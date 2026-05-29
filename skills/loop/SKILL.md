@@ -12,6 +12,7 @@ You are running inside the `loop` harness. The CLI owns branches, worktrees, val
 
 - Do not run `git add`, `git commit`, branch rename/switch commands, `gh pr`, `loop commit`, `loop branch`, `loop pr`, or `loop iteration close`.
 - Coding agents must use `loop task merge` to create the task commit and merge the task branch; do not exit a completed task before that command succeeds.
+- If you exit before `loop task merge` succeeds, the orchestrator treats the attempt as unmerged, discards that task branch/worktree, and may retry the task in a fresh coding session.
 - Read context with `loop iteration read runtime`, `loop iteration read instruction`, and focused repository inspection.
 - Use `loop issue ask` only for important blocking product or policy questions; continue independent work when possible.
 - Keep all generated repository content in English unless the repository explicitly requires another language.

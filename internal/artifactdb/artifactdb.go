@@ -544,6 +544,22 @@ func ClearRoleHandoffs(globalDBPath, runID, iterationID string) error {
 	return err
 }
 
+func ClearRoleHandoff(globalDBPath, runID, iterationID, kind, taskID string) error {
+	if runID == "" || iterationID == "" || kind == "" {
+		return nil
+	}
+	db, err := openGlobal(globalDBPath)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	if err := ensureGlobal(db); err != nil {
+		return err
+	}
+	_, err = db.Exec(`DELETE FROM role_handoffs WHERE run_id = ? AND iteration_id = ? AND kind = ? AND task_id = ?`, runID, iterationID, kind, taskID)
+	return err
+}
+
 func UpsertPRMemory(globalDBPath string, record PRMemoryRecord) error {
 	if record.Repo == "" || record.Number <= 0 {
 		return errors.New("repo and positive pull request number are required")

@@ -33,6 +33,7 @@ type taskExecutionResult struct {
 	Commit    gitx.Commit
 	Attempt   int
 	ActiveDir string
+	Worktree  string
 	Err       error
 }
 
@@ -505,12 +506,9 @@ func executeTaskSet(ctx context.Context, req taskSetRequest) ([]workflow.TaskRes
 }
 
 func executeTaskWave(ctx context.Context, req taskSetRequest, tasks []workflow.Task) ([]taskExecutionResult, error) {
-	rootRunner := gitx.Runner{Dir: req.Root}
 	type taskContext struct {
 		task       workflow.Task
-		branch     string
-		worktree   string
-		taskPaths  pathSet
+		taskDir    string
 		branchBase string
 	}
 	contexts := make([]taskContext, 0, len(tasks))
@@ -520,87 +518,190 @@ func executeTaskWave(ctx context.Context, req taskSetRequest, tasks []workflow.T
 			return nil, fmt.Errorf("task directory not allocated for task %s", task.ID)
 		}
 		branchBase := "task/" + req.IterationID + "-" + gitx.Slug(task.ID)
-		branch, err := rootRunner.UniqueBranchName(ctx, branchBase, "")
-		if err != nil {
-			return nil, err
-		}
-		worktree := filepath.Join(req.Root, ".loop", "worktrees", req.RunID, req.IterationID, "tasks", task.ID)
-		if err := os.MkdirAll(filepath.Dir(worktree), 0o755); err != nil {
-			return nil, err
-		}
-		if _, err := rootRunner.Run(ctx, "worktree", "add", "-b", branch, worktree, req.IterationBranch); err != nil {
-			return nil, err
-		}
-		activeDir, err := createIterationTempDir(req.RunID, req.IterationID+"-"+task.ID)
-		if err != nil {
-			return nil, err
-		}
-		taskPaths := req.Paths
-		taskPaths.ActiveDir = activeDir
-		taskPaths.WorkDir = worktree
-		taskPaths.IterationWorktree = req.IterationWorktree
-		taskPaths.CurrentBranch = branch
-		taskPaths.TaskID = task.ID
-		taskPaths.TaskDir = taskDir
-		taskPaths.Events = filepath.Join(taskDir, "agent-events.jsonl")
-		if err := writeRuntimeArtifact(taskPaths); err != nil {
-			return nil, err
-		}
-		contexts = append(contexts, taskContext{task: task, branch: branch, worktree: worktree, taskPaths: taskPaths, branchBase: branchBase})
+		contexts = append(contexts, taskContext{task: task, taskDir: taskDir, branchBase: branchBase})
 	}
 	out := make(chan taskExecutionResult, len(contexts))
 	var wg sync.WaitGroup
+	var gitMu sync.Mutex
 	for _, taskCtx := range contexts {
 		wg.Add(1)
 		go func(taskCtx taskContext) {
 			defer wg.Done()
 			req.Renderer.TaskStarted(taskCtx.task)
-			result := runCodingTaskWithAttempts(ctx, req.Config, taskCtx.worktree, taskCtx.taskPaths, taskCtx.task, taskCtx.branch, req.Renderer.AgentEvent)
+			result := runCodingTaskWithAttempts(ctx, req, taskCtx.task, taskCtx.taskDir, taskCtx.branchBase, &gitMu, req.Renderer.AgentEvent)
 			if result.Err != nil || result.Result.Status != "completed" {
 				req.Renderer.TaskFailed(taskCtx.task, result.Err)
 			} else {
 				req.Renderer.TaskCompleted(taskCtx.task)
 			}
-			result.ActiveDir = taskCtx.taskPaths.ActiveDir
 			out <- result
 		}(taskCtx)
 	}
 	wg.Wait()
 	close(out)
+	rootRunner := gitx.Runner{Dir: req.Root}
 	var results []taskExecutionResult
 	for item := range out {
 		results = append(results, item)
 		if item.Err != nil {
-			_ = rootRunner.RemoveWorktree(ctx, filepath.Join(req.Root, ".loop", "worktrees", req.RunID, req.IterationID, "tasks", item.Task.ID), true)
+			if item.Worktree != "" {
+				_ = rootRunner.RemoveWorktree(ctx, item.Worktree, true)
+			}
 			_ = os.RemoveAll(item.ActiveDir)
 			continue
 		}
-		_ = rootRunner.RemoveWorktree(ctx, filepath.Join(req.Root, ".loop", "worktrees", req.RunID, req.IterationID, "tasks", item.Task.ID), false)
+		if item.Worktree != "" {
+			_ = rootRunner.RemoveWorktree(ctx, item.Worktree, false)
+		}
 		_ = os.RemoveAll(item.ActiveDir)
 	}
 	return results, nil
 }
 
-func runCodingTaskWithAttempts(ctx context.Context, cfg config.Config, workDir string, paths pathSet, task workflow.Task, branch string, onEvent func(runstate.Event)) taskExecutionResult {
-	attempts := cfg.Run.MaxTaskAttempts
+type taskAttemptContext struct {
+	branch    string
+	worktree  string
+	activeDir string
+	paths     pathSet
+}
+
+func runCodingTaskWithAttempts(ctx context.Context, req taskSetRequest, task workflow.Task, taskDir, branchBase string, gitMu *sync.Mutex, onEvent func(runstate.Event)) taskExecutionResult {
+	attempts := req.Config.Run.MaxTaskAttempts
 	if attempts <= 0 {
 		attempts = 1
 	}
 	var last taskExecutionResult
 	for attempt := 1; attempt <= attempts; attempt++ {
-		result, commit, err := runCodingRole(ctx, cfg, workDir, paths, task, branch, attempt, onEvent)
-		last = taskExecutionResult{Task: task, Result: result, Branch: branch, Commit: commit, Attempt: attempt, Err: err}
+		attemptCtx, err := prepareCodingTaskAttempt(ctx, req, task, taskDir, branchBase, attempt, gitMu)
+		if err != nil {
+			last = taskExecutionResult{Task: task, Attempt: attempt, Err: err}
+			return last
+		}
+		result, commit, err := runCodingRole(ctx, req.Config, attemptCtx.worktree, attemptCtx.paths, task, attemptCtx.branch, attempt, onEvent)
+		last = taskExecutionResult{Task: task, Result: result, Branch: attemptCtx.branch, Commit: commit, Attempt: attempt, ActiveDir: attemptCtx.activeDir, Worktree: attemptCtx.worktree, Err: err}
 		if err == nil && result.Status == "completed" {
 			return last
 		}
+		discardTaskAttempt(ctx, req.Root, attemptCtx, task.ID, attempt, err, gitMu)
+		last.ActiveDir = ""
+		last.Worktree = ""
 		if attempt < attempts {
-			cleanupPendingTaskMerge(ctx, paths)
+			continue
 		}
 	}
 	if last.Err == nil {
 		last.Err = fmt.Errorf("task %s did not complete after %d attempts", task.ID, attempts)
 	}
 	return last
+}
+
+func prepareCodingTaskAttempt(ctx context.Context, req taskSetRequest, task workflow.Task, taskDir, branchBase string, attempt int, gitMu *sync.Mutex) (taskAttemptContext, error) {
+	rootRunner := gitx.Runner{Dir: req.Root}
+	attemptName := "attempt-" + strconv.Itoa(attempt)
+	branchStem := branchBase + "-" + attemptName
+	branch, err := uniqueBranchNameLocked(ctx, rootRunner, branchStem, gitMu)
+	if err != nil {
+		return taskAttemptContext{}, err
+	}
+	worktree := filepath.Join(req.Root, ".loop", "worktrees", req.RunID, req.IterationID, "tasks", task.ID, attemptName)
+	if err := os.MkdirAll(filepath.Dir(worktree), 0o755); err != nil {
+		return taskAttemptContext{}, err
+	}
+	if err := addTaskWorktreeLocked(ctx, rootRunner, branch, worktree, req.IterationBranch, gitMu); err != nil {
+		deleteBranchLocked(ctx, rootRunner, branch, gitMu)
+		return taskAttemptContext{}, err
+	}
+	activeDir, err := createIterationTempDir(req.RunID, req.IterationID+"-"+task.ID+"-"+attemptName)
+	if err != nil {
+		removeWorktreeAndBranchLocked(ctx, rootRunner, worktree, branch, true, gitMu)
+		return taskAttemptContext{}, err
+	}
+	taskPaths := req.Paths
+	taskPaths.ActiveDir = activeDir
+	taskPaths.WorkDir = worktree
+	taskPaths.IterationWorktree = req.IterationWorktree
+	taskPaths.CurrentBranch = branch
+	taskPaths.TaskID = task.ID
+	taskPaths.TaskDir = taskDir
+	taskPaths.Events = filepath.Join(taskDir, "agent-events.jsonl")
+	if err := clearTaskAttemptState(taskPaths); err != nil {
+		removeWorktreeAndBranchLocked(ctx, rootRunner, worktree, branch, true, gitMu)
+		_ = os.RemoveAll(activeDir)
+		return taskAttemptContext{}, err
+	}
+	if err := writeRuntimeArtifact(taskPaths); err != nil {
+		removeWorktreeAndBranchLocked(ctx, rootRunner, worktree, branch, true, gitMu)
+		_ = os.RemoveAll(activeDir)
+		return taskAttemptContext{}, err
+	}
+	return taskAttemptContext{branch: branch, worktree: worktree, activeDir: activeDir, paths: taskPaths}, nil
+}
+
+func uniqueBranchNameLocked(ctx context.Context, runner gitx.Runner, branchStem string, gitMu *sync.Mutex) (string, error) {
+	if gitMu != nil {
+		gitMu.Lock()
+		defer gitMu.Unlock()
+	}
+	return runner.UniqueBranchName(ctx, branchStem, "")
+}
+
+func addTaskWorktreeLocked(ctx context.Context, runner gitx.Runner, branch, worktree, startPoint string, gitMu *sync.Mutex) error {
+	if gitMu != nil {
+		gitMu.Lock()
+		defer gitMu.Unlock()
+	}
+	_, err := runner.Run(ctx, "worktree", "add", "-b", branch, worktree, startPoint)
+	return err
+}
+
+func removeWorktreeAndBranchLocked(ctx context.Context, runner gitx.Runner, worktree, branch string, force bool, gitMu *sync.Mutex) {
+	if gitMu != nil {
+		gitMu.Lock()
+		defer gitMu.Unlock()
+	}
+	if worktree != "" {
+		_ = runner.RemoveWorktree(ctx, worktree, force)
+	}
+	if branch != "" {
+		_ = runner.DeleteBranch(ctx, branch, true)
+	}
+}
+
+func deleteBranchLocked(ctx context.Context, runner gitx.Runner, branch string, gitMu *sync.Mutex) {
+	if gitMu != nil {
+		gitMu.Lock()
+		defer gitMu.Unlock()
+	}
+	if branch != "" {
+		_ = runner.DeleteBranch(ctx, branch, true)
+	}
+}
+
+func discardTaskAttempt(ctx context.Context, root string, attemptCtx taskAttemptContext, taskID string, attempt int, attemptErr error, gitMu *sync.Mutex) {
+	cleanupPendingTaskMerge(ctx, attemptCtx.paths)
+	_ = clearTaskAttemptState(attemptCtx.paths)
+	removeWorktreeAndBranchLocked(ctx, gitx.Runner{Dir: root}, attemptCtx.worktree, attemptCtx.branch, true, gitMu)
+	_ = os.RemoveAll(attemptCtx.activeDir)
+	event := runstate.Event{"type": "task.attempt.discarded", "task_id": taskID, "attempt": attempt, "branch": attemptCtx.branch, "worktree": attemptCtx.worktree}
+	if attemptErr != nil {
+		event["error"] = attemptErr.Error()
+	}
+	_ = runstate.AppendEvent(filepath.Join(attemptCtx.paths.TaskDir, "agent-events.jsonl"), event)
+}
+
+func clearTaskAttemptState(paths pathSet) error {
+	if err := artifactdb.ClearRoleHandoff(artifactdb.GlobalDBPathForIteration(paths.IterationDir), paths.RunID, paths.IterationID, "task-result", paths.TaskID); err != nil {
+		return err
+	}
+	if strings.TrimSpace(paths.TaskDir) == "" {
+		return nil
+	}
+	for _, name := range []string{"task-result.json", "task-merge.json", "task-result-source.json"} {
+		if err := os.Remove(filepath.Join(paths.TaskDir, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+	return nil
 }
 
 func runPlannerRole(ctx context.Context, cfg config.Config, workDir string, paths pathSet, onEvent func(runstate.Event)) (workflow.TaskTree, error) {

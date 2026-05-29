@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/aki-0421/loop/internal/gitx"
 	"github.com/aki-0421/loop/internal/runstate"
 )
 
@@ -155,6 +156,71 @@ git:
 	assertBranchMissing(t, repo, "wip/0001")
 }
 
+func TestRoleOrchestratedDiscardsUnmergedTaskAttemptBeforeRetry(t *testing.T) {
+	ctx := context.Background()
+	repo := newCleanupRepo(t)
+	mustWrite(t, filepath.Join(repo, "task.md"), "# Task\n\nRetry an unmerged coding attempt.\n")
+	agentCommand, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, filepath.Join(repo, ".loop", "config.yaml"), `version: 1
+
+agent:
+  default: roleretry
+  adapters:
+    roleretry:
+      command: `+yamlSingleQuote(agentCommand)+`
+      args: [-test.run=TestHelperProcessRoleAgent, --]
+      prompt: stdin
+      env:
+        LOOP_ROLE_TEST_AGENT: "1"
+        LOOP_ROLE_TEST_AGENT_MODE: "discard-unmerged-retry"
+
+run:
+  maxIterations: 1
+  maxTaskAttempts: 2
+
+git:
+  baseBranch: develop
+  integration:
+    mode: local_merge
+`)
+	git(t, repo, "add", "task.md", ".loop/config.yaml")
+	git(t, repo, "commit", "-m", "T: add role retry fixture")
+	withWorkingDir(t, repo)
+
+	if _, err := captureStdout(t, func() error {
+		return commandRun(ctx, globals{Agent: "roleretry", JSON: true, NoColor: true}, []string{"task.md"})
+	}); err != nil {
+		t.Fatalf("loop run should retry discarded task attempt: %v", err)
+	}
+
+	if data := readText(t, filepath.Join(repo, "retry.txt")); data != "second attempt\n" {
+		t.Fatalf("retry.txt = %q, want second attempt", data)
+	}
+	iterDir := latestIterationDir(t, repo, "0001")
+	taskDir := filepath.Join(iterDir, "tasks", "0001")
+	if got := countEventType(t, taskDir, "agent.started"); got != 2 {
+		t.Fatalf("task agent.started count = %d, want two attempts", got)
+	}
+	if got := countEventType(t, taskDir, "task.attempt.discarded"); got != 1 {
+		t.Fatalf("discarded attempt events = %d, want 1", got)
+	}
+	if got := countEventType(t, taskDir, "task.merge.completed"); got != 1 {
+		t.Fatalf("completed task merge events = %d, want 1", got)
+	}
+	if data := readText(t, filepath.Join(taskDir, "task-result.json")); !strings.Contains(data, "second attempt") {
+		t.Fatalf("task result should come from retry:\n%s", data)
+	}
+	if data := readText(t, filepath.Join(taskDir, "task-merge.json")); !strings.Contains(data, `task/0001-retry-task-attempt-2`) {
+		t.Fatalf("task merge should come from second attempt:\n%s", data)
+	}
+	assertBranchMissing(t, repo, "task/0001-retry-task-attempt-1")
+	assertBranchMissing(t, repo, "task/0001-retry-task-attempt-2")
+	assertBranchMissing(t, repo, "wip/0001")
+}
+
 func TestHelperProcessRoleAgent(t *testing.T) {
 	if os.Getenv("LOOP_ROLE_TEST_AGENT") != "1" {
 		return
@@ -167,7 +233,8 @@ func runRoleTestAgent() int {
 	role := strings.TrimSpace(os.Getenv("LOOP_ROLE"))
 	switch role {
 	case "planner":
-		if os.Getenv("LOOP_ROLE_TEST_AGENT_MODE") == "merge-conflict" {
+		switch os.Getenv("LOOP_ROLE_TEST_AGENT_MODE") {
+		case "merge-conflict":
 			payload := `{
   "schema_version": 1,
   "summary": "Run conflicting task merge workflow",
@@ -196,6 +263,25 @@ func runRoleTestAgent() int {
   ]
 }`
 			return exitCode(commandHandoff(ctx, globals{}, []string{"write", "task-tree", "--value", payload}))
+		case "discard-unmerged-retry":
+			payload := `{
+  "schema_version": 1,
+  "summary": "Retry one unmerged task attempt",
+  "goal_evaluation": "Fake planner selected one retry task.",
+  "tasks": [
+    {
+      "id": "retry-task",
+      "title": "Retry task",
+      "description": "Create a retry marker after one discarded attempt.",
+      "depends_on": [],
+      "conflicts_with": [],
+      "acceptance": ["retry.txt contains the second attempt value."],
+      "commit_type": "F",
+      "commit_message": "retry unmerged task attempt"
+    }
+  ]
+}`
+			return exitCode(commandHandoff(ctx, globals{}, []string{"write", "task-tree", "--value", payload}))
 		}
 		payload := `{
   "schema_version": 1,
@@ -218,7 +304,8 @@ func runRoleTestAgent() int {
 	case "coding":
 		taskID := os.Getenv("LOOP_TASK_ID")
 		workDir := os.Getenv("LOOP_WORKDIR")
-		if os.Getenv("LOOP_ROLE_TEST_AGENT_MODE") == "merge-conflict" {
+		switch os.Getenv("LOOP_ROLE_TEST_AGENT_MODE") {
+		case "merge-conflict":
 			value := "first\n"
 			if taskID == "second-task" {
 				value = "second\n"
@@ -240,6 +327,53 @@ func runRoleTestAgent() int {
 				return 1
 			}
 			return exitCode(commandTask(ctx, globals{}, []string{"merge", "--continue"}))
+		case "discard-unmerged-retry":
+			taskDir := os.Getenv("LOOP_TASK_DIR")
+			attemptFile := filepath.Join(taskDir, "attempt-count.txt")
+			if _, err := os.Stat(attemptFile); os.IsNotExist(err) {
+				if err := os.WriteFile(attemptFile, []byte("1\n"), 0o644); err != nil {
+					fmt.Fprintln(os.Stderr, err)
+					return 1
+				}
+				if err := os.WriteFile(filepath.Join(workDir, "retry.txt"), []byte("first attempt\n"), 0o644); err != nil {
+					fmt.Fprintln(os.Stderr, err)
+					return 1
+				}
+				if err := writeRoleTaskResult(ctx, taskID, "Fake coding agent stopped before merging the first attempt."); err != nil {
+					fmt.Fprintln(os.Stderr, err)
+					return 1
+				}
+				hookPath, err := (gitx.Runner{Dir: workDir}).Run(ctx, "rev-parse", "--git-path", "hooks/pre-commit")
+				if err != nil {
+					fmt.Fprintln(os.Stderr, err)
+					return 1
+				}
+				hookPath = strings.TrimSpace(hookPath)
+				if err := os.MkdirAll(filepath.Dir(hookPath), 0o755); err != nil {
+					fmt.Fprintln(os.Stderr, err)
+					return 1
+				}
+				if err := os.WriteFile(hookPath, []byte("#!/bin/sh\necho forced pre-commit failure >&2\nexit 1\n"), 0o755); err != nil {
+					fmt.Fprintln(os.Stderr, err)
+					return 1
+				}
+				mergeErr := commandTask(ctx, globals{}, []string{"merge"})
+				_ = os.Remove(hookPath)
+				if mergeErr == nil {
+					fmt.Fprintln(os.Stderr, "first attempt merge unexpectedly succeeded")
+					return 1
+				}
+				return 0
+			}
+			if err := os.WriteFile(filepath.Join(workDir, "retry.txt"), []byte("second attempt\n"), 0o644); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 1
+			}
+			if err := writeRoleTaskResult(ctx, taskID, "Fake coding agent completed the second attempt."); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 1
+			}
+			return exitCode(commandTask(ctx, globals{}, []string{"merge"}))
 		}
 		if err := os.WriteFile(filepath.Join(workDir, "loop-fake-role-change.txt"), []byte("fake role change\n"), 0o644); err != nil {
 			fmt.Fprintln(os.Stderr, err)

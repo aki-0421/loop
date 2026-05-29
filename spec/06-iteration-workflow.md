@@ -14,7 +14,7 @@ Each iteration is CLI-owned:
 2. Run the planner agent in the iteration worktree.
 3. Validate the planner's `task-tree` handoff.
 4. Schedule ready coding tasks by `depends_on` and `conflicts_with`, with at most `run.maxParallelTasks` active tasks.
-5. For each coding task, create a task branch and worktree from the current iteration branch, run the coding agent, validate its `task-result`, require the coding agent to run `loop task merge`, remove the task worktree, and continue only after the task branch has been squash-merged into the iteration branch.
+5. For each coding task attempt, create a task branch and worktree from the current iteration branch, run the coding agent, validate its `task-result`, require the coding agent to run `loop task merge`, remove the task worktree, and continue only after the task branch has been squash-merged into the iteration branch.
 6. Run configured validation commands from the iteration worktree.
 7. Run the review agent with the task tree, task results, validation status, and repository diff available.
 8. If validation fails or review returns `changes_requested`, create repair tasks and repeat coding, validation, and review until approval or `run.maxReviewFixCycles` is exhausted.
@@ -22,6 +22,8 @@ Each iteration is CLI-owned:
 10. Clean task and iteration worktrees and continue until `goal_complete=true`, the iteration limit is reached, or a terminal error occurs.
 
 Agents do not create branches, PRs, or iteration close handoffs in the role-orchestrated workflow. Coding agents do not run Git directly; they use `loop task merge` to create the task commit from task metadata, squash-merge into the iteration branch, and resolve conflicts before exiting.
+
+If a coding agent exits without completing `loop task merge`, the CLI does not merge or salvage that task branch. It discards the unmerged attempt branch and worktree, clears stale task handoff state, records a discard event, and starts the next attempt in a fresh branch and worktree until `run.maxTaskAttempts` is exhausted.
 
 ## Pull Request Scope
 
