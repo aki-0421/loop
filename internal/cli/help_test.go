@@ -49,9 +49,14 @@ func TestAgentHelpCommandShowsCompactList(t *testing.T) {
 	}
 	for _, want := range []string{
 		"agent-help-v1\n",
+		"cmd:loop branch rename",
 		"cmd:loop handoff write task-tree|task-result|review-result",
+		"cmd:loop iteration path|read|write",
 		"cmd:loop iteration read artifact",
+		"cmd:loop iteration write artifact",
 		"cmd:loop issue report",
+		"cmd:loop pr create",
+		"cmd:loop pr merge",
 		"cmd:loop task merge",
 		"artifacts:",
 		"runtime:r:file",
@@ -65,9 +70,52 @@ func TestAgentHelpCommandShowsCompactList(t *testing.T) {
 	if strings.Contains(out, "  ") || strings.Contains(out, "\n\n") {
 		t.Fatalf("agent help should avoid padding and blank lines:\n%s", out)
 	}
-	for _, notWant := range []string{"loop memory", "loop commit", "loop branch", "loop pr", "loop iteration todo", "loop iteration close", "todo:rw", "plan:rw"} {
+	for _, notWant := range []string{"loop memory", "loop commit", "loop iteration todo", "loop iteration close", "todo:rw", "plan:rw"} {
 		if strings.Contains(out, notWant) {
 			t.Fatalf("agent help should not expose %q:\n%s", notWant, out)
+		}
+	}
+}
+
+func TestAgentHelpCommandShowsReviewPRDetails(t *testing.T) {
+	for _, topic := range [][]string{
+		{"agent", "branch", "rename"},
+		{"agent", "pr", "create"},
+		{"agent", "pr", "checks"},
+		{"agent", "pr", "logs"},
+		{"agent", "pr", "merge"},
+		{"agent", "iteration", "write"},
+	} {
+		out, err := captureStdout(t, func() error {
+			return commandHelp(context.Background(), globals{}, topic)
+		})
+		if err != nil {
+			t.Fatalf("loop help %v: %v", topic, err)
+		}
+		if !strings.Contains(out, "cmd:loop "+strings.Join(topic[1:], " ")) {
+			t.Fatalf("help %v missing command detail:\n%s", topic, out)
+		}
+	}
+}
+
+func TestHumanHelpForAgentOnlyTopicsPointsToAgentHelp(t *testing.T) {
+	for _, topic := range [][]string{
+		{"branch"},
+		{"branch", "rename"},
+		{"iteration"},
+		{"pr", "create"},
+		{"pr", "checks"},
+		{"pr", "logs"},
+		{"pr", "merge"},
+		{"iteration", "write"},
+	} {
+		err := commandHelp(context.Background(), globals{}, topic)
+		if err == nil {
+			t.Fatalf("human help %v should reject agent-only topic", topic)
+		}
+		want := "loop help agent " + strings.Join(topic, " ")
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("human help %v should point to %q, got %v", topic, want, err)
 		}
 	}
 }

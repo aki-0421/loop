@@ -64,7 +64,7 @@ loop handoff write task-tree --file task-tree.json
 Coding agents write:
 
 ```bash
-loop task todo add --type F --title "Implement behavior" --acceptance "Behavior is implemented and covered." implement behavior
+loop task todo add --type F --title "Add publish review route" --acceptance "The route renders the review workflow and focused coverage passes." add publish review route
 loop task todo start 1
 loop task todo complete 1
 loop handoff write task-result --task "$LOOP_TASK_ID" --file "$LOOP_TASK_DIR/task-result.json"

@@ -71,6 +71,47 @@ func TestWriteRuntimeArtifact(t *testing.T) {
 	}
 }
 
+func TestResolveIterationDirUsesMatchingEnvDir(t *testing.T) {
+	iterDir := filepath.Join(t.TempDir(), ".loop", "runs", "run-1", "iterations", "0001")
+	t.Setenv("LOOP_ITERATION_DIR", iterDir)
+	t.Setenv("LOOP_RUN_ID", "run-1")
+	t.Setenv("LOOP_ITERATION_ID", "0001")
+
+	got, err := resolveIterationDir(context.Background(), globals{}, "", "run-1", "0001")
+	if err != nil {
+		t.Fatalf("resolveIterationDir: %v", err)
+	}
+	if got != iterDir {
+		t.Fatalf("resolved dir = %q, want %q", got, iterDir)
+	}
+}
+
+func TestIterationReadRuntimeUsesActiveEnvDir(t *testing.T) {
+	root := t.TempDir()
+	iterDir := filepath.Join(root, ".loop", "runs", "run-1", "iterations", "0001")
+	activeDir := filepath.Join(root, "active")
+	if err := os.MkdirAll(activeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(activeDir, "runtime.json"), []byte("{\"run_id\":\"run-1\"}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("LOOP_ITERATION_DIR", iterDir)
+	t.Setenv("LOOP_ACTIVE_ITERATION_DIR", activeDir)
+	t.Setenv("LOOP_RUN_ID", "run-1")
+	t.Setenv("LOOP_ITERATION_ID", "0001")
+
+	out, err := captureStdout(t, func() error {
+		return commandIteration(context.Background(), globals{}, []string{"read", "runtime"})
+	})
+	if err != nil {
+		t.Fatalf("read runtime: %v", err)
+	}
+	if out != "{\"run_id\":\"run-1\"}\n" {
+		t.Fatalf("runtime output = %q", out)
+	}
+}
+
 func TestIterationCommandRejectsReadOnlyArtifactWrites(t *testing.T) {
 	err := commandIteration(context.Background(), globals{}, []string{"write", "--iteration-dir", t.TempDir(), "validation", "--value", "nope"})
 	if err == nil {

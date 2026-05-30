@@ -229,6 +229,9 @@ func resolveIterationDir(ctx context.Context, g globals, iterationDir, runID, it
 	if strings.TrimSpace(iterationDir) != "" {
 		return iterationDir, nil
 	}
+	if envDir := matchingIterationDirFromEnv(runID, iteration); envDir != "" {
+		return envDir, nil
+	}
 	if strings.TrimSpace(runID) == "" {
 		return "", nil
 	}
@@ -248,6 +251,23 @@ func resolveIterationDir(ctx context.Context, g globals, iterationDir, runID, it
 		}
 	}
 	return filepath.Join(root, cfg.Logs.Dir, runID, "iterations", iter), nil
+}
+
+func matchingIterationDirFromEnv(runID, iteration string) string {
+	envDir := strings.TrimSpace(os.Getenv("LOOP_ITERATION_DIR"))
+	if envDir == "" {
+		return ""
+	}
+	envRun := strings.TrimSpace(os.Getenv("LOOP_RUN_ID"))
+	envIteration := strings.TrimSpace(os.Getenv("LOOP_ITERATION_ID"))
+	if requestedRun := strings.TrimSpace(runID); requestedRun != "" && envRun != "" && requestedRun != envRun {
+		return ""
+	}
+	requestedIteration := strings.TrimSpace(iteration)
+	if requestedIteration != "" && requestedIteration != "latest" && envIteration != "" && requestedIteration != envIteration {
+		return ""
+	}
+	return envDir
 }
 
 func defaultIterationEnv() string {

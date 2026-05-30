@@ -66,12 +66,12 @@ Task rules:
 
 ## Coding Role
 
-Complete only the assigned task from the prompt. Understand the task goal and success criteria, then inspect the repository before editing. Before implementation, create a task-local TODO list through `loop task todo add`; each TODO corresponds to exactly one task-branch commit.
+Complete only the assigned task from the prompt. Understand the task goal and success criteria, then inspect the repository before editing. Before implementation, create a task-local TODO list through `loop task todo add`; each TODO corresponds to exactly one task-branch commit. TODO titles and commit messages must be specific to the assigned task; do not use generic placeholder text such as "Implement behavior".
 
 Process TODOs serially:
 
 ```bash
-loop task todo add --type F --title "Implement behavior" --acceptance "Behavior works and is covered." implement behavior
+loop task todo add --type F --title "Add publish review route" --acceptance "The route renders the review workflow and focused coverage passes." add publish review route
 loop task todo list
 loop task todo start 1
 # edit files for TODO 1 only
@@ -115,7 +115,7 @@ Use `status: "completed"` only when the task implementation is ready to merge an
 
 ## Review Role
 
-Review the iteration branch after coding and validation. Inspect the diff, task tree, task results, and validation evidence. Write:
+Review the iteration branch after coding and validation. Inspect the diff, task tree, task results, and validation evidence. Focus on whether the integrated code matches the planner's task tree and acceptance criteria, whether the coding-agent results accurately describe the implemented work, and whether you can write an accurate PR title and body from that evidence. If CI or PR checks fail, request changes with concrete repair findings so the coding loop can fix them and return for review.
 
 ```bash
 loop handoff write review-result --file review-result.json

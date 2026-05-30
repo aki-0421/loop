@@ -505,6 +505,7 @@ func allHelpCommands() []helpCommand {
 			Usage:       "loop branch <rename> ...",
 			Summary:     "Manage the current iteration branch",
 			Description: "Agent-facing branch lifecycle commands.",
+			Agent:       true,
 			AgentOnly:   true,
 		},
 		{
@@ -515,6 +516,7 @@ func allHelpCommands() []helpCommand {
 			Flags: append(iterationLocatorFlags(),
 				helpFlag{Name: "--kind <kind>", Description: "branch kind for slug-only names"},
 			),
+			Agent:     true,
 			AgentOnly: true,
 		},
 		{
@@ -522,6 +524,7 @@ func allHelpCommands() []helpCommand {
 			Usage:       "loop pr <create|checks|logs|merge> ...",
 			Summary:     "Create, check, inspect, and merge the current iteration pull request",
 			Description: "Agent-facing PR lifecycle commands. In role-orchestrated PR mode, the review agent writes PR artifacts and uses these commands for creation, checks, logs, and merge.",
+			Agent:       true,
 			AgentOnly:   true,
 		},
 		{
@@ -530,6 +533,7 @@ func allHelpCommands() []helpCommand {
 			Summary:     "Push the tracked branch and create or reuse its pull request",
 			Description: "Reads pr-title and pr-body artifacts, pushes the tracked branch when configured, creates or reuses a PR, and writes pr-state.",
 			Flags:       iterationLocatorFlags(),
+			Agent:       true,
 			AgentOnly:   true,
 		},
 		{
@@ -538,6 +542,7 @@ func allHelpCommands() []helpCommand {
 			Summary:     "Push current commits and wait for pull request checks",
 			Description: "Writes pr-checks. Failed checks exit non-zero with concise errors; inspect pr-checks or fetch job logs before rerunning checks or writing changes_requested findings.",
 			Flags:       iterationLocatorFlags(),
+			Agent:       true,
 			AgentOnly:   true,
 		},
 		{
@@ -546,6 +551,7 @@ func allHelpCommands() []helpCommand {
 			Summary:     "Fetch a failed pull request check log",
 			Description: "Fetches GitHub Actions job logs through gh and writes pr-check-log.",
 			Flags:       iterationLocatorFlags(),
+			Agent:       true,
 			AgentOnly:   true,
 		},
 		{
@@ -554,6 +560,7 @@ func allHelpCommands() []helpCommand {
 			Summary:     "Validate, recheck, and squash-merge the pull request",
 			Description: "Runs configured validation, performs a final check wait, merges through gh, and records pr-state.status=merged.",
 			Flags:       iterationLocatorFlags(),
+			Agent:       true,
 			AgentOnly:   true,
 		},
 		{
@@ -616,9 +623,10 @@ func allHelpCommands() []helpCommand {
 		},
 		{
 			Path:        []string{"iteration"},
-			Usage:       "loop iteration <path|read|write|append|plan|todo|close> ...",
-			Summary:     "Read, write, and close named iteration artifacts",
+			Usage:       "loop iteration <path|read|write> ...",
+			Summary:     "Read and write named iteration artifacts",
 			Description: "If `--iteration-dir` is omitted, commands resolve the current agent iteration automatically.",
+			Agent:       true,
 			AgentOnly:   true,
 		},
 		{
@@ -648,6 +656,7 @@ func allHelpCommands() []helpCommand {
 				helpFlag{Name: "--file <path>", Description: "source file, or - for stdin"},
 				helpFlag{Name: "--value <text>", Description: "literal content"},
 			),
+			Agent:     true,
 			AgentOnly: true,
 		},
 		{

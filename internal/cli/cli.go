@@ -1856,7 +1856,17 @@ func writeRuntimeArtifact(paths pathSet) error {
 		return err
 	}
 	data = append(data, '\n')
-	return artifactdb.Write(filepath.Dir(paths.Runtime), "runtime", string(data))
+	return writeRuntimeFile(paths.Runtime, data)
+}
+
+func writeRuntimeFile(path string, data []byte) error {
+	if strings.TrimSpace(path) == "" {
+		return errors.New("runtime path is required")
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0o644)
 }
 
 func runAgent(ctx context.Context, cfg config.Config, root string, paths pathSet, onEvent func(runstate.Event)) error {

@@ -989,7 +989,7 @@ func buildRolePrompt(role string, paths pathSet, task workflow.Task, tree any, t
 		data, _ := workflow.MarshalIndent(task)
 		b.WriteString("\nComplete only this task. Understand its objective and success criteria, explore the repository, then create the task TODO list before editing files.\n\n")
 		b.WriteString("```json\n" + string(data) + "```\n")
-		b.WriteString("\nCreate one TODO per task-branch commit before implementation:\n\n```bash\nloop task todo add --type F --title \"Implement behavior\" --acceptance \"Behavior is implemented and covered.\" implement behavior\nloop task todo list\n```\n")
+		b.WriteString("\nCreate one TODO per task-branch commit before implementation. TODO titles and commit messages must be specific to this task; do not use generic placeholder text such as \"Implement behavior\".\n\n```bash\nloop task todo add --type F --title \"Add publish review route\" --acceptance \"The route renders the review workflow and focused coverage passes.\" add publish review route\nloop task todo list\n```\n")
 		b.WriteString("\nProcess TODOs serially. For each item, run `loop task todo start <n>`, make only that TODO's changes, then run `loop task todo complete <n>` so the CLI creates the commit. Do not proceed to the next TODO until the current one is completed.\n")
 		b.WriteString("\nAfter all TODOs are complete, write the handoff source outside repository changes, then merge the completed task:\n\n```bash\ncat > \"$LOOP_TASK_DIR/task-result.json\" <<'JSON'\n{...}\nJSON\nloop handoff write task-result --task \"" + task.ID + "\" --file \"$LOOP_TASK_DIR/task-result.json\"\nloop task merge --type F complete " + task.ID + "\n```\n")
 		b.WriteString("\nIf this task should be abandoned, run `loop task discard --reason <reason>` and exit without merging.\n")
@@ -998,7 +998,7 @@ func buildRolePrompt(role string, paths pathSet, task workflow.Task, tree any, t
 	case "review":
 		treeData, _ := workflow.MarshalIndent(tree)
 		resultsData, _ := workflow.MarshalIndent(taskResults)
-		b.WriteString("\nReview the iteration branch diff, task results, and validation evidence. Approve only if the iteration task goals are complete, code quality is acceptable, and validation is acceptable.\n")
+		b.WriteString("\nReview the iteration branch diff, task results, and validation evidence. Approve only if the integrated code matches the planner's task tree and acceptance criteria, the coding-agent results accurately describe the implemented work, code quality is acceptable, and validation is acceptable. Use the task results to write an accurate PR title and body. If CI or PR checks fail, write `changes_requested` findings with concrete repair acceptance so the coding loop can fix them and return for review.\n")
 		b.WriteString("\nTask tree:\n\n```json\n" + string(treeData) + "```\n")
 		b.WriteString("\nTask results:\n\n```json\n" + string(resultsData) + "```\n")
 		b.WriteString("\nValidation status: " + validation.StatusFromResults(validationResults) + "\n")
