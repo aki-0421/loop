@@ -52,7 +52,6 @@ type rendererSnapshot struct {
 
 type dashboardSymbols struct {
 	Done      string
-	Active    string
 	Pending   string
 	Blocked   string
 	Retrying  string
@@ -440,7 +439,7 @@ func styledTaskMarker(s rendererSnapshot, symbols dashboardSymbols, item taskIte
 }
 
 func styledTodoMarker(s rendererSnapshot, symbols dashboardSymbols, item taskTodoDisplay) string {
-	marker := taskTodoMarker(item, symbols)
+	marker := taskTodoMarker(s, item, symbols)
 	switch item.Status {
 	case "done":
 		return colorize(s, ansiGreen, marker)
@@ -621,12 +620,12 @@ func taskMarker(s rendererSnapshot, item taskItem, active bool, symbols dashboar
 	}
 }
 
-func taskTodoMarker(item taskTodoDisplay, symbols dashboardSymbols) string {
+func taskTodoMarker(s rendererSnapshot, item taskTodoDisplay, symbols dashboardSymbols) string {
 	switch item.Status {
 	case "done":
 		return symbols.Done
 	case "active":
-		return symbols.Active
+		return spinnerSymbol(s)
 	default:
 		return symbols.Pending
 	}
@@ -686,12 +685,12 @@ func iterationDisplay(s rendererSnapshot) string {
 func symbolsForEnvironment() dashboardSymbols {
 	if os.Getenv("LOOP_ASCII") == "1" || os.Getenv("TERM") == "dumb" {
 		return dashboardSymbols{
-			Done: "[x]", Active: "[>]", Pending: "[ ]", Blocked: "[!]", Retrying: "[~]",
+			Done: "[x]", Pending: "[ ]", Blocked: "[!]", Retrying: "[~]",
 			Bullet: "-", Sep: "|", BarFull: "#", BarEmpty: "-", Join: ">", FooterSep: " | ",
 		}
 	}
 	return dashboardSymbols{
-		Done: "✓", Active: "▶", Pending: "◦", Blocked: "!", Retrying: "↻",
+		Done: "✓", Pending: "◦", Blocked: "!", Retrying: "↻",
 		Bullet: "•", Sep: "·", BarFull: "█", BarEmpty: "░", Join: "›", FooterSep: " · ",
 	}
 }

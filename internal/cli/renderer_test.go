@@ -264,7 +264,8 @@ func TestRunRendererShowsRoleTasks(t *testing.T) {
 }
 
 func TestRunRendererShowsActiveTaskTodosIndented(t *testing.T) {
-	t.Setenv("LOOP_ASCII", "1")
+	t.Setenv("LOOP_ASCII", "")
+	t.Setenv("TERM", "xterm-256color")
 	now := time.Now()
 	lines := renderDashboard(rendererSnapshot{
 		Started: now.Add(-time.Minute),
@@ -284,10 +285,13 @@ func TestRunRendererShowsActiveTaskTodosIndented(t *testing.T) {
 		LatestMsg:    "Working task TODOs.",
 	}, 100, 24)
 	frame := stripANSISequences(strings.Join(lines, "\n"))
-	for _, want := range []string{"Add API route", "[>] F: add parser support", "[ ] T: cover invalid input", "[x] D: update workflow docs"} {
+	for _, want := range []string{"Add API route", "◐ F: add parser support", "◦ T: cover invalid input", "✓ D: update workflow docs"} {
 		if !strings.Contains(frame, want) {
 			t.Fatalf("task TODO frame missing %q:\n%s", want, frame)
 		}
+	}
+	if strings.Contains(frame, "▶ F: add parser support") {
+		t.Fatalf("task TODO frame should use spinner instead of triangle:\n%s", frame)
 	}
 	assertFrameBounds(t, lines, 100, 24)
 }
