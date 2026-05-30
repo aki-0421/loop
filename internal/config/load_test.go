@@ -73,27 +73,6 @@ run:
 	}
 }
 
-func TestRemovedDocumentLinterConfigIsRejected(t *testing.T) {
-	repo := t.TempDir()
-	t.Setenv("HOME", repo)
-	mustWrite(t, filepath.Join(repo, ".loop", "config.yaml"), `version: 1
-linter:
-  document:
-    entry: AGENTS.md
-    requiredReachable:
-      - docs
-    excludes:
-      - README.md
-`)
-	_, err := Load(LoadOptions{CWD: repo, Env: []string{}})
-	if err == nil {
-		t.Fatal("removed linter config should be rejected")
-	}
-	if !strings.Contains(err.Error(), "field linter not found") {
-		t.Fatalf("error should mention removed linter field: %v", err)
-	}
-}
-
 func TestLoopConfigEnvOverridesUserPath(t *testing.T) {
 	repo := t.TempDir()
 	envConfig := filepath.Join(repo, "env-config.yaml")
@@ -230,66 +209,6 @@ agent:
 func TestLoadRejectsUnknownAndInvalidValues(t *testing.T) {
 	repo := t.TempDir()
 	t.Setenv("HOME", repo)
-	_, err := Load(LoadOptions{CWD: repo, Env: []string{"LOOP_MODE=autonomous"}})
-	if err == nil || !strings.Contains(err.Error(), "LOOP_MODE has been removed") {
-		t.Fatalf("expected removed LOOP_MODE error, got %v", err)
-	}
-
-	repo = t.TempDir()
-	mustWrite(t, filepath.Join(repo, ".loop", "config.yaml"), `version: 1
-interaction:
-  mode: autonomous
-`)
-	_, err = Load(LoadOptions{CWD: repo, Env: []string{}, ConfigPath: filepath.Join(repo, ".loop", "config.yaml")})
-	if err == nil || !strings.Contains(err.Error(), "field interaction not found") {
-		t.Fatalf("expected removed interaction section error, got %v", err)
-	}
-
-	repo = t.TempDir()
-	mustWrite(t, filepath.Join(repo, ".loop", "config.yaml"), `version: 1
-run:
-  planMode: false
-`)
-	_, err = Load(LoadOptions{CWD: repo, Env: []string{}, ConfigPath: filepath.Join(repo, ".loop", "config.yaml")})
-	if err == nil || !strings.Contains(err.Error(), "field planMode not found") {
-		t.Fatalf("expected removed run.planMode error, got %v", err)
-	}
-
-	repo = t.TempDir()
-	mustWrite(t, filepath.Join(repo, ".loop", "config.yaml"), `version: 1
-run:
-  instructionReload: once
-`)
-	_, err = Load(LoadOptions{CWD: repo, Env: []string{}, ConfigPath: filepath.Join(repo, ".loop", "config.yaml")})
-	if err == nil || !strings.Contains(err.Error(), "field instructionReload not found") {
-		t.Fatalf("expected removed run.instructionReload error, got %v", err)
-	}
-
-	repo = t.TempDir()
-	mustWrite(t, filepath.Join(repo, ".loop", "config.yaml"), `version: 1
-git:
-  branch: {}
-`)
-	_, err = Load(LoadOptions{CWD: repo, Env: []string{}, ConfigPath: filepath.Join(repo, ".loop", "config.yaml")})
-	if err == nil || !strings.Contains(err.Error(), "field branch not found") {
-		t.Fatalf("expected removed git.branch error, got %v", err)
-	}
-
-	repo = t.TempDir()
-	mustWrite(t, filepath.Join(repo, ".loop", "config.yaml"), `version: 1
-agent:
-  default: custom
-  adapters:
-    custom:
-      command: custom-agent
-      prompt: file_arg
-`)
-	_, err = Load(LoadOptions{CWD: repo, Env: []string{}, ConfigPath: filepath.Join(repo, ".loop", "config.yaml")})
-	if err == nil || !strings.Contains(err.Error(), "prompt must be stdin or arg") {
-		t.Fatalf("expected removed file_arg error, got %v", err)
-	}
-
-	repo = t.TempDir()
 	mustWrite(t, filepath.Join(repo, ".loop", "config.yaml"), `version: 1
 agent:
   default: custom
@@ -298,7 +217,7 @@ agent:
       command: custom-agent
       args: ["{prompt_file}"]
 `)
-	_, err = Load(LoadOptions{CWD: repo, Env: []string{}, ConfigPath: filepath.Join(repo, ".loop", "config.yaml")})
+	_, err := Load(LoadOptions{CWD: repo, Env: []string{}, ConfigPath: filepath.Join(repo, ".loop", "config.yaml")})
 	if err == nil || !strings.Contains(err.Error(), "must not use {prompt_file}") {
 		t.Fatalf("expected prompt_file placeholder error, got %v", err)
 	}

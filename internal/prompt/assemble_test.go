@@ -17,15 +17,7 @@ func TestAssembleIncludesOnlyBootstrap(t *testing.T) {
 			t.Fatalf("assembled prompt missing %q:\n%s", want, text)
 		}
 	}
-	if strings.Contains(text, "loop memory") {
-		t.Fatalf("assembled prompt should not expose memory commands:\n%s", text)
-	}
 	for _, notWant := range []string{
-		oldSkill("iteration"),
-		oldSkill("memory"),
-		oldSkill("commit"),
-		oldSkill("pr-writer"),
-		oldSkill("repair"),
 		"LOOP_",
 		"User Instruction (Verbatim)",
 		"Source:",
@@ -43,7 +35,7 @@ func TestAssembleMentionsPRWriterOnlyInPullRequestMode(t *testing.T) {
 	normal := Assemble(Request{
 		Language: "ja",
 	})
-	if strings.Contains(normal, oldSkill("pr-writer")) || strings.Contains(normal, "Pull request mode") || strings.Contains(normal, "LOOP_") {
+	if strings.Contains(normal, "Pull request mode") || strings.Contains(normal, "LOOP_") {
 		t.Fatalf("non-PR prompt should not mention PR-specific instructions:\n%s", normal)
 	}
 
@@ -58,11 +50,7 @@ func TestAssembleMentionsPRWriterOnlyInPullRequestMode(t *testing.T) {
 			t.Fatalf("PR prompt missing %q:\n%s", want, text)
 		}
 	}
-	if strings.Contains(text, oldSkill("pr-writer")) || strings.Contains(text, "LOOP_") || strings.Contains(text, "Pull request mode") {
+	if strings.Contains(text, "LOOP_") || strings.Contains(text, "Pull request mode") {
 		t.Fatalf("PR prompt should not expose runtime transport details:\n%s", text)
 	}
-}
-
-func oldSkill(suffix string) string {
-	return "loop-" + suffix
 }

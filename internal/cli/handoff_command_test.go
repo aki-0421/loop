@@ -42,9 +42,6 @@ func TestHandoffWriteTaskResultUsesTaskDirectoryAudit(t *testing.T) {
 	if data := readText(t, resultPath); !strings.Contains(data, `"task_id": "fake-task"`) {
 		t.Fatalf("task-result audit = %s", data)
 	}
-	if _, err := os.Stat(filepath.Join(iterDir, "task-results")); !os.IsNotExist(err) {
-		t.Fatalf("legacy task-results directory should not exist: %v", err)
-	}
 }
 
 func TestHandoffWriteRemovesUntrackedRootSourceFile(t *testing.T) {

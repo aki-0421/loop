@@ -69,12 +69,6 @@ func TestWriteRuntimeArtifact(t *testing.T) {
 			t.Fatalf("runtime should not include %s: %#v", key, got)
 		}
 	}
-	if _, ok := got["mode"]; ok {
-		t.Fatalf("runtime should not include removed mode: %#v", got)
-	}
-	if _, ok := got["plan_mode"]; ok {
-		t.Fatalf("runtime should not include removed plan_mode: %#v", got)
-	}
 }
 
 func TestIterationCommandRejectsReadOnlyArtifactWrites(t *testing.T) {

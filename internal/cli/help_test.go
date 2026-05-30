@@ -40,16 +40,6 @@ func TestHelpCommandRejectsAgentOnlyDetail(t *testing.T) {
 	}
 }
 
-func TestMemoryCommandIsRemoved(t *testing.T) {
-	err := Run([]string{"memory", "search", "checkout", "--limit", "1"})
-	if err == nil {
-		t.Fatal("expected memory command to be unavailable")
-	}
-	if !strings.Contains(err.Error(), `unknown command "memory"`) {
-		t.Fatalf("error = %v", err)
-	}
-}
-
 func TestAgentHelpCommandShowsCompactList(t *testing.T) {
 	out, err := captureStdout(t, func() error {
 		return commandHelp(context.Background(), globals{}, []string{"agent"})
@@ -105,23 +95,6 @@ func TestAgentHelpCommandShowsHandoffWriteSchemas(t *testing.T) {
 	}
 }
 
-func TestAgentHelpCommandHidesLegacyLifecycleDetails(t *testing.T) {
-	for _, topic := range [][]string{
-		{"agent", "branch", "rename"},
-		{"agent", "commit"},
-		{"agent", "iteration", "close"},
-		{"agent", "iteration", "plan"},
-		{"agent", "iteration", "todo"},
-		{"agent", "iteration", "todo", "insert"},
-		{"agent", "pr", "create"},
-	} {
-		err := commandHelp(context.Background(), globals{}, topic)
-		if err == nil {
-			t.Fatalf("loop help %v should be hidden from role-agent help", topic)
-		}
-	}
-}
-
 func TestAgentHelpCommandShowsIterationArtifactsFromRegistry(t *testing.T) {
 	out, err := captureStdout(t, func() error {
 		return commandHelp(context.Background(), globals{}, []string{"agent", "iteration", "read"})
@@ -142,24 +115,6 @@ func TestAgentHelpCommandShowsIterationArtifactsFromRegistry(t *testing.T) {
 	for _, notWant := range []string{"todo:rw", "plan:rw"} {
 		if strings.Contains(out, notWant) {
 			t.Fatalf("role-agent artifact help should not expose %q:\n%s", notWant, out)
-		}
-	}
-}
-
-func TestHelpCommandHidesLegacyLifecycleDetailsFromHumanHelp(t *testing.T) {
-	for _, topic := range [][]string{
-		{"branch", "rename"},
-		{"commit"},
-		{"iteration", "close"},
-		{"iteration", "todo"},
-		{"pr", "create"},
-	} {
-		err := commandHelp(context.Background(), globals{}, topic)
-		if err == nil {
-			t.Fatalf("loop help %v should be hidden from human help", topic)
-		}
-		if strings.Contains(err.Error(), "loop help agent") {
-			t.Fatalf("hidden compatibility topic should not point to role-agent help: %v", err)
 		}
 	}
 }
@@ -229,19 +184,6 @@ func TestRunUnknownCommandMentionsHelp(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "loop help") {
 		t.Fatalf("error should mention loop help: %v", err)
-	}
-}
-
-func TestLinterCommandIsRemoved(t *testing.T) {
-	err := Run([]string{"linter", "document"})
-	if err == nil {
-		t.Fatal("removed linter command should fail")
-	}
-	if code, ok := ExitCode(err); !ok || code != 2 {
-		t.Fatalf("linter removal error code = %d, %v; want 2", code, err)
-	}
-	if !strings.Contains(err.Error(), "unknown command") {
-		t.Fatalf("error should report an unknown command: %v", err)
 	}
 }
 

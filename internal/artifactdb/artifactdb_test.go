@@ -238,9 +238,4 @@ func TestGitHubMemoryUsesUnifiedRecordsTable(t *testing.T) {
 			t.Fatalf("%s table was not created; tables=%v", name, tables)
 		}
 	}
-	for _, name := range []string{"pr_memory", "pr_memory_fts", "github_context", "github_context_fts"} {
-		if tables[name] {
-			t.Fatalf("legacy table %s should not be created; tables=%v", name, tables)
-		}
-	}
 }

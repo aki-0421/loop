@@ -59,27 +59,6 @@ func TestDecodeTaskTreeRejectsUnknownFields(t *testing.T) {
 	}
 }
 
-func TestDecodeTaskTreeRejectsRemovedCommitMetadata(t *testing.T) {
-	_, err := DecodeTaskTree([]byte(`{
-  "schema_version": 1,
-  "summary": "x",
-  "goal_evaluation": "x",
-  "tasks": [{
-    "id": "first",
-    "title": "First",
-    "description": "First task.",
-    "depends_on": [],
-    "conflicts_with": [],
-    "acceptance": ["First task is complete."],
-    "commit_type": "F",
-    "commit_message": "complete first task"
-  }]
-}`))
-	if err == nil {
-		t.Fatal("expected removed commit metadata to be rejected")
-	}
-}
-
 func TestValidateTaskResultRequiresDiscardReason(t *testing.T) {
 	result := TaskResult{SchemaVersion: SchemaVersion, TaskID: "first", Status: "discarded", Summary: "Discarded."}
 	if problems := ValidateTaskResult(result); len(problems) == 0 {

@@ -32,16 +32,15 @@ The Go implementation includes tests for:
 - Run-state reads and resume status reporting.
 - Fully automated run contract violations.
 - Value-critical run resilience:
-  - validating task-tree dependencies and conflicts while rejecting removed commit metadata;
+  - validating task-tree dependencies and conflicts;
   - scheduling non-conflicting tasks in parallel while serializing dependencies;
   - creating one task-branch commit per completed task TODO;
   - replanning after explicit discard or exhausted task attempts;
-  - creating, checking, and merging PRs through fake `gh`;
-  - retaining compatibility tests for older single-agent close handoffs.
+  - creating, checking, and merging PRs through fake `gh`.
 
 ## Fake agent
 
-A fake agent executable is used for end-to-end tests. In role-orchestrated mode it reads `LOOP_ROLE`, writes DB-backed role handoffs, and optionally edits the repository. Compatibility tests still exercise the older terminal close handoff.
+A fake agent executable is used for end-to-end tests. In role-orchestrated mode it reads `LOOP_ROLE`, writes DB-backed role handoffs, and optionally edits the repository.
 
 Environment controls:
 
