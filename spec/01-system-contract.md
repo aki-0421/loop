@@ -27,7 +27,7 @@ Runs are fully automated:
 
 ## Iteration Scope
 
-One iteration produces one AI sprint-sized pull request. The planner should choose a coherent development goal that autonomous agents can complete in hours, comparable to a traditional agile sprint compressed into an autonomous run. It should not split work only to fit a review session. Post-hoc review happens after the autonomous work and is not a scope constraint.
+One iteration produces one AI sprint-sized pull request. The planner should choose the largest coherent development goal suitable for an autonomous run while still producing an independently mergeable result, comparable to a traditional agile sprint compressed into an autonomous run. It splits that work for autonomous execution, dependency ordering, conflict avoidance, validation, and parallelism. Task nodes should be meaningful agent-owned work packets, not file-level, layer-only, or commit-sized microtasks.
 
 ## Language default
 

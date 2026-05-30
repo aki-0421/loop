@@ -27,7 +27,7 @@ If a coding agent exits without completing `loop task merge`, the CLI does not m
 
 ## Pull Request Scope
 
-One iteration maps to one AI sprint-sized pull request. The planner should select a coherent sprint goal that autonomous agents can complete in hours, then split that goal into task-tree nodes for parallel coding, dependency ordering, conflict avoidance, and validation. The planner must not reduce the PR to a small review-sized change; post-hoc review is outside the PR sizing decision.
+One iteration maps to one AI sprint-sized pull request. The planner should select the largest coherent sprint goal suitable for an autonomous run while still producing an independently mergeable result, then split that goal into task-tree nodes for parallel coding, dependency ordering, conflict avoidance, and validation. Task boundaries should follow autonomy, dependency, conflict, validation, and parallelism needs. Each task should own a meaningful vertical outcome or substantial subsystem slice, not a file-level, layer-only, or commit-sized microtask. Documentation and validation should stay with the behavior-owning task unless a final cross-cutting hardening task adds distinct value.
 
 ## Runtime Artifacts
 

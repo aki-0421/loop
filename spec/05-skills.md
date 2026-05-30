@@ -49,7 +49,7 @@ The built-in `loop` skill consolidates the planner, coding, and review role conv
 
 The skill includes compact JSON shapes for `task-tree`, `task-result`, and `review-result`, and points agents to `loop help agent handoff write` for current command flags and schema details.
 
-The planner role treats one iteration as one AI sprint-sized PR: a coherent development goal that autonomous agents can complete in hours. It splits that sprint into coding-agent work packets for dependency ordering, conflict avoidance, validation, and parallel execution, not for review convenience.
+The planner role treats one iteration as one AI sprint-sized PR: the largest coherent development goal suitable for an autonomous run while still producing an independently mergeable result. It splits that sprint into coding-agent work packets for dependency ordering, conflict avoidance, validation, and parallel execution. The default skill tells planners to prefer natural task boundaries, avoid layer-only splits, merge commit-sized microtasks into neighboring tasks, and keep documentation or validation with the behavior owner unless a cross-cutting hardening task adds distinct value.
 
 The default skill keeps role behavior concise. It does not expose cached memory lookup commands to agents; GitHub context caching remains a CLI-owned internal capability. Planner tasks describe goals and acceptance criteria only. Commit intent comes from coding-agent task TODOs, and pull request titles, bodies, checks, and pull request merges are handled by the review agent through loop commands.
 

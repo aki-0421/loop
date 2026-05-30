@@ -23,7 +23,7 @@ It is built for repositories where AI work should leave behind the same things g
 - **Role orchestration**: one configured adapter is reused as planner, coding, and review agent with role-specific prompts and environment.
 - **Dependency-aware task scheduling**: planner task trees include dependencies and conflicts so independent coding tasks can run in parallel.
 - **CLI-owned mechanics through agent commands**: agents use loop commands for task commits, task merges, branch renames, pull request creation, checks, and merges.
-- **AI sprint PRs**: planner output is scoped to a coherent autonomous development sprint, not a small review-sized batch.
+- **AI sprint PRs**: planner output is scoped to a coherent autonomous development sprint, with coding-agent tasks sized as meaningful work packets instead of layer-only microtasks.
 - **Auditable runtime state**: prompts, effective config, event logs, errors, PR state, check output, and run state are stored under `.loop/`.
 - **GitHub context cache**: recent PRs, Issues, and comments are cached in `.loop/loop.db` for CLI-owned synchronization and audit decisions.
 - **Skills instead of giant prompts**: `loop init` delegates default skill installation to `npx skills` while the CLI injects only a compact bootstrap into each agent run.
@@ -115,7 +115,7 @@ loop run task.md \
 7. Validation failures or review findings become repair tasks until the review passes or the fix-cycle limit is reached.
 8. In PR mode, the review agent renames `wip/<iteration>`, writes PR title/body artifacts from the repository template, creates the PR, waits for checks, and merges through `loop pr`; the CLI verifies the merged state, cleans up worktrees and branches, and starts the next iteration when needed.
 
-In automated PR mode, checks passing leads to a loop-owned squash merge initiated by the review agent through `loop pr merge`. Post-hoc review happens after or outside the autonomous development loop and is not a PR sizing constraint.
+In automated PR mode, checks passing leads to a loop-owned squash merge initiated by the review agent through `loop pr merge`.
 
 ## Commands
 

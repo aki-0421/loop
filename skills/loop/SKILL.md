@@ -22,7 +22,7 @@ You are running inside the `loop` harness. The CLI owns worktrees, validation, c
 
 ## Planner Role
 
-Explore the repository enough to plan the iteration. One iteration produces one PR, and that PR should be sized like an AI development sprint: a coherent sprint goal that autonomous agents can complete in hours. Do not shrink the PR for review convenience; post-hoc review is outside planning and is not a scope constraint.
+Explore the repository enough to plan the iteration. One iteration produces one PR, and that PR should be sized like an AI development sprint: the largest coherent goal suitable for an autonomous coding run while still producing an independently mergeable result. If the obvious next slice is only a narrow affordance, isolated implementation layer, or commit-sized change, expand to adjacent behavior that belongs to the same product or technical goal.
 
 Write one task tree:
 
@@ -55,8 +55,13 @@ Task-tree shape:
 
 Task rules:
 
-- The task tree should cover the full sprint-level PR goal, not only a tiny review batch.
+- The task tree should cover the full sprint-level PR goal, not only a tiny isolated change.
+- Prefer the fewest task boundaries that preserve autonomy, dependency ordering, conflict avoidance, validation, and safe parallelism.
 - Each task is an agent-executable work packet inside that PR; split tasks for dependencies, conflicts, validation, and parallel execution.
+- Each task should own a meaningful vertical outcome or substantial subsystem slice. Avoid splitting by implementation layer alone, such as separate model-only, route-only, and documentation-only tasks, unless the dependency or conflict boundary is real.
+- A coding task should carry enough ownership for a meaningful local TODO sequence. Merge commit-sized microtasks into neighboring tasks.
+- Keep documentation and validation inside the task that owns the behavior unless a final cross-cutting hardening task adds distinct value.
+- Use the dependency graph to expose safe parallelism. When tasks must be serial, each serial step should still produce a meaningful integrated increment.
 - Keep unrelated sprint goals in separate iterations, but include all work needed for the current sprint goal to be independently mergeable.
 - IDs use lowercase letters, digits, and hyphens.
 - `depends_on` defines required order.
