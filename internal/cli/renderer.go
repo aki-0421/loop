@@ -977,7 +977,7 @@ func truncateVisible(s string, width int, ellipsis bool) string {
 	visible := 0
 	hasANSI := false
 	runes := []rune(s)
-	for i := 0; i < len(runes) && visible < limit; i++ {
+	for i := 0; i < len(runes); i++ {
 		if runes[i] == '\x1b' && i+1 < len(runes) && runes[i+1] == '[' {
 			hasANSI = true
 			start := i
@@ -993,8 +993,12 @@ func truncateVisible(s string, width int, ellipsis bool) string {
 			}
 			continue
 		}
+		runeWidth := runeDisplayWidth(runes[i])
+		if runeWidth > 0 && visible+runeWidth > limit {
+			break
+		}
 		b.WriteRune(runes[i])
-		visible++
+		visible += runeWidth
 	}
 	if hasANSI {
 		b.WriteString(ansiReset)

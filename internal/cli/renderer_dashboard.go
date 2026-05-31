@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 	"time"
+	"unicode"
 )
 
 const (
@@ -122,7 +123,7 @@ func renderFocusedDashboard(s rendererSnapshot, symbols dashboardSymbols, width,
 	if latest == "" {
 		latest = "waiting for agent message..."
 	}
-	latest = ellipsize(latest, contentWidth)
+	latestLines := wrapDisplayLines(latest, contentWidth, 2)
 
 	lines := []string{}
 	for i := 0; i < logoTopPadding; i++ {
@@ -137,9 +138,11 @@ func renderFocusedDashboard(s rendererSnapshot, symbols dashboardSymbols, width,
 		"",
 		centerLine(metrics, width),
 		"",
-		centerLine(colorize(s, ansiDim, latest), width),
-		"",
 	)
+	for _, line := range latestLines {
+		lines = append(lines, centerLine(colorize(s, ansiDim, line), width))
+	}
+	lines = append(lines, "")
 
 	taskLimit := maxTaskRows(height, len(lines))
 	if total > 0 {
@@ -338,6 +341,65 @@ func ellipsize(text string, width int) string {
 		return text
 	}
 	return truncateVisible(text, width, true)
+}
+
+func wrapDisplayLines(text string, width, maxLines int) []string {
+	text = strings.Join(strings.Fields(text), " ")
+	if width <= 0 || maxLines <= 0 {
+		return nil
+	}
+	if text == "" {
+		return []string{""}
+	}
+	lines := make([]string, 0, maxLines)
+	remaining := text
+	for remaining != "" && len(lines) < maxLines {
+		if displayWidth(remaining) <= width {
+			lines = append(lines, remaining)
+			break
+		}
+		if len(lines) == maxLines-1 {
+			lines = append(lines, truncateVisible(remaining, width, true))
+			break
+		}
+		line, rest := splitDisplayLine(remaining, width)
+		line = strings.TrimSpace(line)
+		rest = strings.TrimSpace(rest)
+		if line == "" {
+			lines = append(lines, truncateVisible(remaining, width, true))
+			break
+		}
+		lines = append(lines, line)
+		remaining = rest
+	}
+	if len(lines) == 0 {
+		return []string{""}
+	}
+	return lines
+}
+
+func splitDisplayLine(text string, width int) (string, string) {
+	visible := 0
+	lastSpace := -1
+	afterLastSpace := -1
+	for i, r := range text {
+		if r == ' ' {
+			lastSpace = i
+			afterLastSpace = i + 1
+		}
+		runeWidth := runeDisplayWidth(r)
+		if runeWidth > 0 && visible+runeWidth > width {
+			if lastSpace > 0 {
+				return text[:lastSpace], text[afterLastSpace:]
+			}
+			if i == 0 {
+				return "", text
+			}
+			return text[:i], text[i:]
+		}
+		visible += runeWidth
+	}
+	return text, ""
 }
 
 func taskListBlock(s rendererSnapshot, symbols dashboardSymbols, screenWidth, blockWidth, limit int, items []taskItem) []string {
@@ -705,7 +767,40 @@ func padRightPreserve(text string, width int) string {
 }
 
 func displayWidth(text string) int {
-	return len([]rune(stripANSISequences(text)))
+	width := 0
+	for _, r := range stripANSISequences(text) {
+		width += runeDisplayWidth(r)
+	}
+	return width
+}
+
+func runeDisplayWidth(r rune) int {
+	switch {
+	case r == 0:
+		return 0
+	case r < 32 || (r >= 0x7f && r < 0xa0):
+		return 0
+	case unicode.Is(unicode.Mn, r), unicode.Is(unicode.Me, r), unicode.Is(unicode.Cf, r):
+		return 0
+	case isWideRune(r):
+		return 2
+	default:
+		return 1
+	}
+}
+
+func isWideRune(r rune) bool {
+	return r >= 0x1100 && (r <= 0x115f ||
+		r == 0x2329 ||
+		r == 0x232a ||
+		(r >= 0x2e80 && r <= 0xa4cf && r != 0x303f) ||
+		(r >= 0xac00 && r <= 0xd7a3) ||
+		(r >= 0xf900 && r <= 0xfaff) ||
+		(r >= 0xfe10 && r <= 0xfe19) ||
+		(r >= 0xfe30 && r <= 0xfe6f) ||
+		(r >= 0xff00 && r <= 0xff60) ||
+		(r >= 0xffe0 && r <= 0xffe6) ||
+		(r >= 0x1f300 && r <= 0x1faff))
 }
 
 func stripANSISequences(text string) string {

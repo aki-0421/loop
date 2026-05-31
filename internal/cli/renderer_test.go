@@ -346,6 +346,45 @@ func TestRunRendererPlannerShowsCompactStatusAndTruncatedCommand(t *testing.T) {
 	assertFrameBounds(t, frameLines, 90, 24)
 }
 
+func TestRunRendererDashboardWrapsWideLatestMessageWithinContentWidth(t *testing.T) {
+	t.Setenv("LOOP_ASCII", "1")
+	now := time.Now()
+	cjkWord := string([]rune{0x65e5, 0x672c, 0x8a9e})
+	message := strings.Repeat(cjkWord, 20)
+
+	lines := renderDashboard(rendererSnapshot{
+		Started:   now.Add(-time.Minute),
+		Now:       now,
+		LatestMsg: message,
+	}, 100, 24)
+
+	assertFrameBounds(t, lines, 100, 24)
+	latestRows := 0
+	for _, line := range lines {
+		plain := strings.TrimSpace(stripANSISequences(line))
+		if strings.Contains(plain, cjkWord) {
+			latestRows++
+			if displayWidth(plain) > 84 {
+				t.Fatalf("latest message row width = %d, want <= 84: %q", displayWidth(plain), plain)
+			}
+		}
+	}
+	if latestRows < 2 {
+		t.Fatalf("wide latest message should wrap inside the dashboard content width:\n%s", strings.Join(lines, "\n"))
+	}
+}
+
+func TestDisplayWidthCountsCJKRunesAsWide(t *testing.T) {
+	cjkWord := string([]rune{0x65e5, 0x672c, 0x8a9e})
+	if got, want := displayWidth("a"+cjkWord+"b"), 8; got != want {
+		t.Fatalf("displayWidth() = %d, want %d", got, want)
+	}
+	truncated := truncateVisible(cjkWord+cjkWord, 5, true)
+	if width := displayWidth(truncated); width > 5 {
+		t.Fatalf("truncateVisible() width = %d, want <= 5: %q", width, truncated)
+	}
+}
+
 func TestRunRendererAppliesTokenUsageEvents(t *testing.T) {
 	renderer := &runRenderer{
 		enabled:     true,
