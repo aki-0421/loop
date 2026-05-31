@@ -15,40 +15,41 @@ const (
 )
 
 type rendererSnapshot struct {
-	Started         time.Time
-	Now             time.Time
-	RunID           string
-	Agent           string
-	Repo            string
-	Instruction     string
-	Base            string
-	Branch          string
-	Goal            string
-	Logs            string
-	MaxIter         int
-	Color           bool
-	Stage           string
-	StageDetail     string
-	Iteration       string
-	AgentCommand    string
-	AgentExit       string
-	Current         string
-	RunningCommand  string
-	Tasks           []taskItem
-	Activity        []string
-	ActivityLog     []rendererLogLine
-	Events          []rendererEvent
-	CommitCount     int
-	MergeCount      int
-	MessageCount    int
-	InputTokens     int
-	OutputTokens    int
-	TokensEstimated bool
-	LatestMsg       string
-	Confirmation    *rendererConfirmation
-	Sleeping        bool
-	SleepSince      time.Time
-	SleepDetail     string
+	Started          time.Time
+	Now              time.Time
+	RunID            string
+	Agent            string
+	Repo             string
+	Instruction      string
+	Base             string
+	Branch           string
+	Goal             string
+	Logs             string
+	MaxIter          int
+	Color            bool
+	Stage            string
+	StageDetail      string
+	Iteration        string
+	AgentCommand     string
+	AgentExit        string
+	Current          string
+	RunningCommand   string
+	Tasks            []taskItem
+	Activity         []string
+	ActivityLog      []rendererLogLine
+	Events           []rendererEvent
+	CommitCount      int
+	MergeCount       int
+	MessageCount     int
+	InputTokens      int
+	OutputTokens     int
+	TokensEstimated  bool
+	LatestMsg        string
+	Confirmation     *rendererConfirmation
+	Sleeping         bool
+	SleepSince       time.Time
+	SleepDetail      string
+	GracefulShutdown bool
 }
 
 type dashboardSymbols struct {
@@ -181,6 +182,10 @@ func renderConfirmationDashboard(s rendererSnapshot, symbols dashboardSymbols, w
 	for _, line := range loopLogo(s) {
 		lines = append(lines, centerLine(line, width))
 	}
+	confirmHint := "Continuing in " + formatDuration(remaining) + ". Ctrl+C stops before starting."
+	if s.GracefulShutdown {
+		confirmHint = "Graceful shutdown requested. Press Ctrl+C again to exit immediately."
+	}
 	lines = append(lines,
 		"",
 		centerLine(colorize(s, ansiYellow+ansiBold, title), width),
@@ -188,7 +193,7 @@ func renderConfirmationDashboard(s rendererSnapshot, symbols dashboardSymbols, w
 		centerLine(ellipsize("Target branch: "+target, contentWidth), width),
 		centerLine(ellipsize("Main branch: "+main, contentWidth), width),
 		"",
-		centerLine(colorize(s, ansiDim, "Continuing in "+formatDuration(remaining)+". Press Ctrl+C to cancel."), width),
+		centerLine(colorize(s, ansiDim, confirmHint), width),
 	)
 	return fitCanvasLines(lines, colorize(s, ansiDim, footerText(s, symbols)), width, height)
 }
@@ -215,6 +220,10 @@ func renderSleepDashboard(s rendererSnapshot, symbols dashboardSymbols, width, h
 	for _, line := range loopLogo(s) {
 		lines = append(lines, centerLine(line, width))
 	}
+	sleepHint := "Polling every 5m. Press any key to fetch now. Ctrl+C starts graceful shutdown. Asleep for " + asleepFor + "."
+	if s.GracefulShutdown {
+		sleepHint = "Graceful shutdown requested. Press Ctrl+C again to exit immediately. Asleep for " + asleepFor + "."
+	}
 	lines = append(lines,
 		"",
 		centerLine(colorize(s, ansiCyan+ansiBold, "GitHub Sleep Mode"), width),
@@ -222,7 +231,7 @@ func renderSleepDashboard(s rendererSnapshot, symbols dashboardSymbols, width, h
 		centerLine(spinnerSymbol(s)+" Waiting for GitHub Issue/PR updates", width),
 		centerLine(colorize(s, ansiDim, ellipsize(detail, contentWidth)), width),
 		"",
-		centerLine(colorize(s, ansiDim, "Polling every 5m. Press any key to fetch now. Ctrl+C to cancel. Asleep for "+asleepFor+"."), width),
+		centerLine(colorize(s, ansiDim, sleepHint), width),
 	)
 	return fitCanvasLines(lines, colorize(s, ansiDim, footerText(s, symbols)), width, height)
 }
@@ -694,7 +703,10 @@ func taskTodoMarker(s rendererSnapshot, item taskTodoDisplay, symbols dashboardS
 }
 
 func footerText(s rendererSnapshot, symbols dashboardSymbols) string {
-	return "Ctrl+C cancel"
+	if s.GracefulShutdown {
+		return "Finishing current iteration before exit. Press Ctrl+C again to exit immediately."
+	}
+	return "Ctrl+C gracefully stops after this iteration"
 }
 
 func phaseLabel(stage string) string {

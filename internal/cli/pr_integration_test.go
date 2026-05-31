@@ -890,6 +890,16 @@ func runTestFakeAgent() int {
 		_ = gitForTestAgent(workDir, "commit", "-m", "F: add validation fixture")
 		writeTestFakeResult(iterDir, "merge", testFakeCommit(workDir))
 		return 0
+	case "merge_slow":
+		workDir := getenvForTestAgent("LOOP_WORKDIR", ".")
+		_ = commandBranch(context.Background(), globals{}, []string{"rename", "test/fake-agent"})
+		changePath := filepath.Join(workDir, "loop-fake-change.txt")
+		_ = os.WriteFile(changePath, []byte("fake agent slow merge close at "+time.Now().UTC().Format(time.RFC3339Nano)+"\n"), 0o644)
+		_ = gitForTestAgent(workDir, "add", "loop-fake-change.txt")
+		_ = gitForTestAgent(workDir, "commit", "-m", "F: run fake agent behavior")
+		writeTestFakeResult(iterDir, "merge", testFakeCommit(workDir))
+		time.Sleep(300 * time.Millisecond)
+		return 0
 	case "pr_owned_repair":
 		return runTestFakeAgentOwnedPR(iterDir, true, "", false, false)
 	case "pr_owned_simple":

@@ -78,7 +78,7 @@ Role-orchestrated agents write planner, task, and review handoffs with `loop han
 
 Older single-agent workflows can still write the master-DB terminal handoff with `loop iteration close --merge` or `loop iteration close --skip-merge`. The CLI validates it against the iteration close contract in `09-json-contracts.md`.
 
-After a valid terminal handoff is observed, the CLI records the handoff but does not signal or cancel the agent. It waits for the agent process to finish by itself and continues draining stdout/stderr until that natural exit, so final provider events, especially usage events, can be recorded. External cancellations such as Ctrl+C still terminate the process through the normal cancellation path.
+After a valid terminal handoff is observed, the CLI records the handoff but does not signal or cancel the agent. It waits for the agent process to finish by itself and continues draining stdout/stderr until that natural exit, so final provider events, especially usage events, can be recorded. Force cancellations such as a second Ctrl+C still terminate the process through the normal cancellation path.
 
 If the terminal handoff is missing or invalid, the run fails the iteration contract. The CLI does not relaunch the agent for correction.
 

@@ -18,6 +18,9 @@ func waitForGitHubSleepPoll(ctx context.Context, d time.Duration, renderer *runR
 	pressed, err := waitForSleepKeypress(ctx, d)
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			if state := runInterruptFromContext(ctx); state != nil && !state.GracefulRequested() {
+				state.RequestGraceful()
+			}
 			return err
 		}
 		return githubSleepPoll(ctx, d)

@@ -91,6 +91,15 @@ func Run(args []string) error {
 			return codedError{1, err}
 		}
 	}
+	if rest[0] == "run" {
+		ctx, stop := newSignalRunInterruptContext(context.Background(), os.Stderr)
+		defer stop()
+		err := commandRun(ctx, g, rest[1:])
+		if ctx.Err() != nil {
+			return interruptedError(err)
+		}
+		return err
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	switch rest[0] {
@@ -98,8 +107,6 @@ func Run(args []string) error {
 		return commandHelp(ctx, g, rest[1:])
 	case "init":
 		return commandInit(ctx, g, rest[1:])
-	case "run":
-		return commandRun(ctx, g, rest[1:])
 	case "resume":
 		return commandResume(ctx, g, rest[1:])
 	case "status":
@@ -343,6 +350,7 @@ func commandRunLegacy(ctx context.Context, g globals, args []string) error {
 	state := runstate.New(runID, *goal, cfg.Git.BaseBranch, cfg.Agent.Default)
 	renderer := newRunRenderer(g, runID, cfg.Agent.Default, filepath.Base(root), "", cfg.Git.BaseBranch, *goal, rel(root, runDir), cfg.Run.MaxIterations, *dryRun)
 	renderer.Start(ctx)
+	registerRunGracefulShutdownCallback(ctx, renderer.GracefulShutdownRequested)
 	defer func() {
 		renderer.Stop(state.Stage, "")
 	}()
@@ -350,9 +358,12 @@ func commandRunLegacy(ctx context.Context, g globals, args []string) error {
 		return codedError{1, err}
 	}
 	if shouldConfirmTargetBranch(cfg.Git.BaseBranch, mainBranch) {
-		if err := renderer.ConfirmTargetBranch(ctx, cfg.Git.BaseBranch, mainBranch, targetBranchConfirmationDuration); err != nil {
+		if err := renderer.ConfirmTargetBranch(runGracefulContext(ctx), cfg.Git.BaseBranch, mainBranch, targetBranchConfirmationDuration); err != nil {
 			state.Stage = runstate.StageCancelled
 			_ = runstate.Write(statePath, state)
+			if runGracefulShutdownRequested(ctx) {
+				return codedError{interruptExitCode, nil}
+			}
 			return codedError{1, err}
 		}
 	}
@@ -364,7 +375,12 @@ func commandRunLegacy(ctx context.Context, g globals, args []string) error {
 	var lastResult *validation.IterationResult
 	var pendingGitHubUpdates []memory.Record
 	mergedCount := 0
+	gracefulStop := false
 	for i := 1; cfg.Run.MaxIterations == 0 || i <= cfg.Run.MaxIterations; i++ {
+		if runGracefulShutdownRequested(ctx) {
+			gracefulStop = true
+			break
+		}
 		iterationID := runstate.IterationID(i)
 		renderer.Stage(runstate.StageBranchCreated, "starting iteration "+iterationID)
 		iterDir := filepath.Join(runDir, "iterations", iterationID)
@@ -474,7 +490,11 @@ func commandRunLegacy(ctx context.Context, g globals, args []string) error {
 				_ = runstate.Write(statePath, state)
 				return codedError{1, err}
 			}
-			if updates, slept, err := maybeSleepForGitHubUpdates(ctx, root, cfg, result, paths, renderer); err != nil {
+			if updates, slept, err := maybeSleepForGitHubUpdates(runGracefulContext(ctx), root, cfg, result, paths, renderer); err != nil {
+				if runGracefulShutdownRequested(ctx) {
+					gracefulStop = true
+					break
+				}
 				state.Stage = runstate.StageFailed
 				_ = runstate.Write(statePath, state)
 				return codedError{4, err}
@@ -485,6 +505,10 @@ func commandRunLegacy(ctx context.Context, g globals, args []string) error {
 			if result.ShouldFullyStop {
 				state.Stage = runstate.StageCompleted
 				_ = runstate.Write(statePath, state)
+				break
+			}
+			if runGracefulShutdownRequested(ctx) {
+				gracefulStop = true
 				break
 			}
 			continue
@@ -605,8 +629,15 @@ func commandRunLegacy(ctx context.Context, g globals, args []string) error {
 			_ = runstate.Write(statePath, state)
 			break
 		}
+		if runGracefulShutdownRequested(ctx) {
+			gracefulStop = true
+			break
+		}
 	}
-	if state.Stage != runstate.StageCompleted {
+	if gracefulStop {
+		state.Stage = runstate.StageCancelled
+		_ = runstate.Write(statePath, state)
+	} else if state.Stage != runstate.StageCompleted {
 		state.Stage = runstate.StageCompleted
 		_ = runstate.Write(statePath, state)
 	}
@@ -614,7 +645,13 @@ func commandRunLegacy(ctx context.Context, g globals, args []string) error {
 	if lastResult != nil {
 		summary = terminalSummary(lastResult)
 	}
-	return printResult(g, map[string]any{"run_id": runID, "status": state.Stage, "summary": summary, "logs": rel(root, runDir)}, fmt.Sprintf("Run: %s\nStatus: %s\nSummary: %s\nLogs: %s\n", runID, state.Stage, summary, rel(root, runDir)))
+	if err := printResult(g, map[string]any{"run_id": runID, "status": state.Stage, "summary": summary, "logs": rel(root, runDir)}, fmt.Sprintf("Run: %s\nStatus: %s\nSummary: %s\nLogs: %s\n", runID, state.Stage, summary, rel(root, runDir))); err != nil {
+		return err
+	}
+	if gracefulStop {
+		return codedError{interruptExitCode, nil}
+	}
+	return nil
 }
 
 func installDefaultSkillWithSkillsCLI(ctx context.Context, root string, cfg config.Config, agentName string, force bool, quiet bool) (string, error) {

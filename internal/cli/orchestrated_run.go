@@ -158,14 +158,18 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 	state := runstate.New(runID, *goal, cfg.Git.BaseBranch, cfg.Agent.Default)
 	renderer := newRunRenderer(g, runID, cfg.Agent.Default, filepath.Base(root), "", cfg.Git.BaseBranch, *goal, rel(root, runDir), cfg.Run.MaxIterations, *dryRun)
 	renderer.Start(ctx)
+	registerRunGracefulShutdownCallback(ctx, renderer.GracefulShutdownRequested)
 	defer func() { renderer.Stop(state.Stage, "") }()
 	if err := runstate.Write(statePath, state); err != nil {
 		return codedError{1, err}
 	}
 	if shouldConfirmTargetBranch(cfg.Git.BaseBranch, mainBranch) {
-		if err := renderer.ConfirmTargetBranch(ctx, cfg.Git.BaseBranch, mainBranch, targetBranchConfirmationDuration); err != nil {
+		if err := renderer.ConfirmTargetBranch(runGracefulContext(ctx), cfg.Git.BaseBranch, mainBranch, targetBranchConfirmationDuration); err != nil {
 			state.Stage = runstate.StageCancelled
 			_ = runstate.Write(statePath, state)
+			if runGracefulShutdownRequested(ctx) {
+				return codedError{interruptExitCode, nil}
+			}
 			return codedError{1, err}
 		}
 	}
@@ -177,7 +181,12 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 
 	var last iterationWorkflowResult
 	mergedCount := 0
+	gracefulStop := false
 	for i := 1; cfg.Run.MaxIterations == 0 || i <= cfg.Run.MaxIterations; i++ {
+		if runGracefulShutdownRequested(ctx) {
+			gracefulStop = true
+			break
+		}
 		result, err := runOrchestratedIteration(ctx, orchestrationRequest{
 			Globals:         g,
 			Config:          cfg,
@@ -210,12 +219,25 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 			_ = runstate.Write(statePath, state)
 			break
 		}
+		if runGracefulShutdownRequested(ctx) {
+			gracefulStop = true
+			break
+		}
 	}
-	if state.Stage != runstate.StageCompleted {
+	if gracefulStop {
+		state.Stage = runstate.StageCancelled
+		_ = runstate.Write(statePath, state)
+	} else if state.Stage != runstate.StageCompleted {
 		state.Stage = runstate.StageCompleted
 		_ = runstate.Write(statePath, state)
 	}
-	return printResult(g, map[string]any{"run_id": runID, "status": state.Stage, "summary": last.Summary, "logs": rel(root, runDir)}, fmt.Sprintf("Run: %s\nStatus: %s\nSummary: %s\nLogs: %s\n", runID, state.Stage, last.Summary, rel(root, runDir)))
+	if err := printResult(g, map[string]any{"run_id": runID, "status": state.Stage, "summary": last.Summary, "logs": rel(root, runDir)}, fmt.Sprintf("Run: %s\nStatus: %s\nSummary: %s\nLogs: %s\n", runID, state.Stage, last.Summary, rel(root, runDir))); err != nil {
+		return err
+	}
+	if gracefulStop {
+		return codedError{interruptExitCode, nil}
+	}
+	return nil
 }
 
 type orchestrationRequest struct {

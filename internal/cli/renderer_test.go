@@ -116,7 +116,7 @@ func TestRunRendererDashboardKeepsEssentialStateWithinBounds(t *testing.T) {
 
 	frameLines := renderer.frame(130, 32)
 	frame := strings.Join(frameLines, "\n")
-	for _, want := range []string{"╦   ╔═╗", "prompt.md", "2K in", "512 out", "2 merged", "1/2 tasks", "Add lazy loading", "Inspecting startup path", "Ctrl+C cancel"} {
+	for _, want := range []string{"╦   ╔═╗", "prompt.md", "2K in", "512 out", "2 merged", "1/2 tasks", "Add lazy loading", "Inspecting startup path", "Ctrl+C gracefully stops after this iteration"} {
 		if !strings.Contains(frame, want) {
 			t.Fatalf("frame missing %q:\n%s", want, frame)
 		}
@@ -237,13 +237,30 @@ func TestRunRendererDashboardListsMaximumTasksWithHiddenBelow(t *testing.T) {
 	frame := strings.Join(lines, "\n")
 
 	assertFrameBounds(t, lines, 100, 18)
-	for _, want := range []string{"2/8 tasks", "Task 1", "Task 2", "6 hidden below", "Ctrl+C cancel"} {
+	for _, want := range []string{"2/8 tasks", "Task 1", "Task 2", "6 hidden below", "Ctrl+C gracefully stops after this iteration"} {
 		if !strings.Contains(stripANSISequences(frame), want) {
 			t.Fatalf("frame missing %q:\n%s", want, frame)
 		}
 	}
 	if strings.Contains(frame, "Task 3") || strings.Contains(frame, "Task 8") {
 		t.Fatalf("hidden tasks should not be rendered when hidden-below row is needed:\n%s", frame)
+	}
+}
+
+func TestRunRendererShowsGracefulShutdownInstructions(t *testing.T) {
+	t.Setenv("LOOP_ASCII", "1")
+	now := time.Now()
+	lines := renderDashboard(rendererSnapshot{
+		Started:          now.Add(-time.Minute),
+		Now:              now,
+		LatestMsg:        "Working through the current task.",
+		GracefulShutdown: true,
+	}, 110, 20)
+	frame := stripANSISequences(strings.Join(lines, "\n"))
+	for _, want := range []string{"Working through the current task.", "Finishing current iteration before exit", "Press Ctrl+C again to exit immediately"} {
+		if !strings.Contains(frame, want) {
+			t.Fatalf("frame missing %q:\n%s", want, frame)
+		}
 	}
 }
 

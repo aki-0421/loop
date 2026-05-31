@@ -49,6 +49,47 @@ func TestRunContinuesAcrossIterationsUntilAgentStops(t *testing.T) {
 	assertBranchMissing(t, repo, "test/fake-agent")
 }
 
+func TestRunGracefulShutdownWaitsForCurrentIteration(t *testing.T) {
+	ctx, interrupt := newRunInterruptContext(context.Background())
+	repo := newCleanupRepo(t)
+	writeResilienceFixture(t, repo, resilienceOptions{
+		Sequence:      "merge_slow,merge",
+		MaxIterations: 3,
+	})
+	withWorkingDir(t, repo)
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- commandRun(ctx, globals{Agent: "resilience", JSON: true, NoColor: true}, []string{"task.md"})
+	}()
+	waitForLatestIterationEvent(t, repo, "0001", "agent.started")
+	interrupt.RequestGraceful()
+
+	var err error
+	select {
+	case err = <-errCh:
+	case <-time.After(10 * time.Second):
+		t.Fatal("loop run did not finish after graceful shutdown request")
+	}
+	if code, ok := ExitCode(err); !ok || code != interruptExitCode {
+		t.Fatalf("exit code = %d, %v, want %d; err=%v", code, ok, interruptExitCode, err)
+	}
+
+	state := readLatestRunState(t, repo)
+	if state.Stage != runstate.StageCancelled {
+		t.Fatalf("stage = %s, want cancelled", state.Stage)
+	}
+	if len(state.Iterations) != 1 {
+		t.Fatalf("iterations = %d, want only the completed current iteration: %#v", len(state.Iterations), state.Iterations)
+	}
+	if _, err := os.Stat(filepath.Join(repo, "loop-fake-change.txt")); err != nil {
+		t.Fatalf("current iteration should finish and integrate its change: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(repo, ".loop", "runs", state.RunID, "iterations", "0002")); !os.IsNotExist(err) {
+		t.Fatalf("second iteration should not start, stat err=%v", err)
+	}
+}
+
 func TestRunKeepsDisposableArtifactsInGoTempDir(t *testing.T) {
 	ctx := context.Background()
 	repo := newCleanupRepo(t)
@@ -389,6 +430,23 @@ func eventStringValue(t *testing.T, iterDir, eventType, key string) string {
 	}
 	t.Fatalf("event %q not found in:\n%s", eventType, events)
 	return ""
+}
+
+func waitForLatestIterationEvent(t *testing.T, repo, iteration, eventType string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		runID, err := latestRun(filepath.Join(repo, ".loop", "runs"))
+		if err == nil {
+			path := filepath.Join(repo, ".loop", "runs", runID, "iterations", iteration, "agent-events.jsonl")
+			data, readErr := os.ReadFile(path)
+			if readErr == nil && strings.Contains(string(data), `"type":"`+eventType+`"`) {
+				return
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("event %q did not appear in iteration %s", eventType, iteration)
 }
 
 func commitLoopRuntimeIgnore(t *testing.T, repo string) {

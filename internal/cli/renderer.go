@@ -55,6 +55,7 @@ type runRenderer struct {
 	sleeping              bool
 	sleepSince            time.Time
 	sleepDetail           string
+	gracefulShutdown      bool
 	done                  chan struct{}
 	ticker                *time.Ticker
 	titleEnabled          bool
@@ -313,6 +314,28 @@ func (r *runRenderer) Stage(stage runstate.Stage, detail string) {
 		r.line("stage", fmt.Sprintf("%s %s", stage, detail))
 	}
 	r.setTitle()
+}
+
+func (r *runRenderer) GracefulShutdownRequested() {
+	if !r.enabled {
+		return
+	}
+	detail := "finishing current iteration before exit"
+	r.mu.Lock()
+	r.gracefulShutdown = true
+	r.current = detail
+	r.latestMsg = "graceful shutdown requested; press Ctrl+C again to exit immediately"
+	r.addEventLocked(rendererEvent{
+		At:     time.Now(),
+		Status: "active",
+		Title:  "Graceful Shutdown",
+		Detail: detail,
+	})
+	r.mu.Unlock()
+	if !r.interactive {
+		r.line("shutdown", detail+"; press Ctrl+C again to exit immediately")
+	}
+	r.render()
 }
 
 func (r *runRenderer) AgentEvent(event runstate.Event) {
@@ -720,40 +743,41 @@ func (r *runRenderer) render() {
 func (r *runRenderer) frame(width, height int) []string {
 	r.mu.Lock()
 	snapshot := rendererSnapshot{
-		Started:         r.started,
-		RunID:           r.runID,
-		Agent:           r.agent,
-		Repo:            r.repo,
-		Instruction:     r.instruction,
-		Base:            r.base,
-		Branch:          r.branch,
-		Goal:            r.goal,
-		Logs:            r.logs,
-		MaxIter:         r.maxIter,
-		Color:           r.color,
-		Stage:           r.stage,
-		StageDetail:     r.stageDetail,
-		Iteration:       r.iteration,
-		AgentCommand:    r.agentCommand,
-		AgentExit:       r.agentExit,
-		Current:         r.current,
-		RunningCommand:  r.runningCommand,
-		Activity:        append([]string(nil), r.activity...),
-		ActivityLog:     append([]rendererLogLine(nil), r.activityLog...),
-		Events:          append([]rendererEvent(nil), r.events...),
-		CommitCount:     r.commitCount,
-		MergeCount:      r.mergeCount,
-		MessageCount:    r.messageCount,
-		InputTokens:     r.inputTokens,
-		OutputTokens:    r.outputTokens,
-		TokensEstimated: r.tokensEstimated,
-		LatestMsg:       r.latestMsg,
-		Tasks:           append([]taskItem(nil), r.tasks...),
-		Confirmation:    cloneRendererConfirmation(r.confirmation),
-		Sleeping:        r.sleeping,
-		SleepSince:      r.sleepSince,
-		SleepDetail:     r.sleepDetail,
-		Now:             time.Now(),
+		Started:          r.started,
+		RunID:            r.runID,
+		Agent:            r.agent,
+		Repo:             r.repo,
+		Instruction:      r.instruction,
+		Base:             r.base,
+		Branch:           r.branch,
+		Goal:             r.goal,
+		Logs:             r.logs,
+		MaxIter:          r.maxIter,
+		Color:            r.color,
+		Stage:            r.stage,
+		StageDetail:      r.stageDetail,
+		Iteration:        r.iteration,
+		AgentCommand:     r.agentCommand,
+		AgentExit:        r.agentExit,
+		Current:          r.current,
+		RunningCommand:   r.runningCommand,
+		Activity:         append([]string(nil), r.activity...),
+		ActivityLog:      append([]rendererLogLine(nil), r.activityLog...),
+		Events:           append([]rendererEvent(nil), r.events...),
+		CommitCount:      r.commitCount,
+		MergeCount:       r.mergeCount,
+		MessageCount:     r.messageCount,
+		InputTokens:      r.inputTokens,
+		OutputTokens:     r.outputTokens,
+		TokensEstimated:  r.tokensEstimated,
+		LatestMsg:        r.latestMsg,
+		Tasks:            append([]taskItem(nil), r.tasks...),
+		Confirmation:     cloneRendererConfirmation(r.confirmation),
+		Sleeping:         r.sleeping,
+		SleepSince:       r.sleepSince,
+		SleepDetail:      r.sleepDetail,
+		GracefulShutdown: r.gracefulShutdown,
+		Now:              time.Now(),
 	}
 	r.mu.Unlock()
 
