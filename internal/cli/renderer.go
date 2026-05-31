@@ -337,11 +337,14 @@ func (r *runRenderer) AgentEvent(event runstate.Event) {
 				r.line("usage", r.tokenUsageLine())
 			}
 		}
-	case "agent.stream":
+	case "agent.stream", "agent.message":
 		text, _ := event["text"].(string)
 		if text != "" {
 			r.setLatestMessage(text)
 			r.addActivity(text)
+			if typ == "agent.message" && !r.interactive {
+				r.line("message", text)
+			}
 		}
 	case "agent.command":
 		cmd, _ := event["command"].(string)

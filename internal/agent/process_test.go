@@ -15,7 +15,7 @@ import (
 	"github.com/aki-0421/loop/internal/runstate"
 )
 
-func TestProcessAdapterPersistsOnlyAuditEvents(t *testing.T) {
+func TestProcessAdapterPersistsAuditEventsAndFilteredMessages(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell command uses sh")
 	}
@@ -26,6 +26,7 @@ func TestProcessAdapterPersistsOnlyAuditEvents(t *testing.T) {
 		Args: []string{"-c", strings.Join([]string{
 			"cat >/dev/null",
 			"echo 'secret file line that must not persist'",
+			"printf '%s\\n' '{\"type\":\"agent_message\",\"message\":\"Inspecting repository shape before edits.\"}'",
 			"printf '%s\\n' '{\"cmd\":\"cat README.md\"}'",
 			"printf '%s\\n' '{\"type\":\"tool_call\",\"name\":\"read_file\",\"arguments\":{\"path\":\"internal/cli/renderer.go\"}}' >&2",
 		}, "; ")},
@@ -49,12 +50,15 @@ func TestProcessAdapterPersistsOnlyAuditEvents(t *testing.T) {
 		t.Fatalf("exit code = %d", result.ExitCode)
 	}
 	assertFileContains(t, filepath.Join(dir, "agent-events.jsonl"), "agent.started")
+	assertFileContains(t, filepath.Join(dir, "agent-events.jsonl"), "agent.message")
+	assertFileContains(t, filepath.Join(dir, "agent-events.jsonl"), "Inspecting repository shape before edits.")
 	assertFileContains(t, filepath.Join(dir, "agent-events.jsonl"), "agent.command")
 	assertFileContains(t, filepath.Join(dir, "agent-events.jsonl"), "agent.file_read")
 	assertFileContains(t, filepath.Join(dir, "agent-events.jsonl"), "agent.exited")
 	assertFileContains(t, filepath.Join(dir, "agent-events.jsonl"), `"agent_type":"coding"`)
 	assertFileContains(t, filepath.Join(dir, "agent-events.jsonl"), `"task_id":"unit-task"`)
 	assertFileNotContains(t, filepath.Join(dir, "agent-events.jsonl"), "secret file line")
+	assertFileNotContains(t, filepath.Join(dir, "agent-events.jsonl"), "agent.stream")
 	assertFileDoesNotExist(t, filepath.Join(dir, "agent.stdout.log"))
 	assertFileDoesNotExist(t, filepath.Join(dir, "agent.stderr.log"))
 	assertFileDoesNotExist(t, filepath.Join(dir, "agent-exit.json"))

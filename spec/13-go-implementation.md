@@ -75,10 +75,10 @@ Responsibilities:
 - Resolve agent command.
 - Prepare prompt delivery.
 - Launch process.
-- Capture stdout and stderr as sanitized audit events.
+- Capture stdout and stderr as sanitized audit events and filtered message snippets.
 - Normalize events.
 
-The built-in default adapter name is `codex`. It runs `codex exec --json` rather than the interactive Codex TUI because loop does not allocate a terminal to agent subprocesses and must avoid persisting raw agent transcripts.
+The built-in default adapter name is `codex`. It runs `codex exec --json` rather than the interactive Codex TUI because loop does not allocate a terminal to agent subprocesses and must avoid persisting raw agent transcripts or hidden reasoning.
 
 ### `internal/prompt`
 

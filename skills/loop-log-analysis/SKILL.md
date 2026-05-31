@@ -32,7 +32,7 @@ python3 skills/loop-log-analysis/scripts/analyze_loop_logs.py . --run <run-id> -
 
 ## Analysis Heuristics
 
-- Treat `agent-events.jsonl` as append-only audit data. Do not look for raw stdout, stderr, diffs, or agent thinking logs; loop intentionally does not persist them.
+- Treat `agent-events.jsonl` as append-only audit data. Use `agent.message` events for filtered agent progress messages. Do not look for raw stdout, stderr, diffs, or agent thinking logs; loop intentionally does not persist them.
 - In role-orchestrated runs, planner and reviewer events live in the iteration event log, while coding-agent events live under each task directory.
 - Prioritize event order by `ts`, but keep file-local order when timestamps are missing or equal.
 - For token usage, add `agent.usage` events with `delta=true`. For usage snapshots without `delta`, use the largest snapshot within that agent process window after `agent.started`. Mark summaries as estimated if any event has `estimated=true`.

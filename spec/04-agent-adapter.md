@@ -53,6 +53,7 @@ Iteration and task `agent-events.jsonl` files contain normalized events. Coding-
 
 ```json
 {"type":"agent.started","ts":"2026-05-17T00:00:00Z","agent_type":"planner","command":"codex"}
+{"type":"agent.message","ts":"2026-05-17T00:00:00Z","agent_type":"planner","text":"Inspecting the task contract before editing."}
 {"type":"agent.usage","ts":"2026-05-17T00:00:00Z","agent_type":"coding","task_id":"add-tests","input_tokens":1200,"output_tokens":45,"cache_read_tokens":300,"cache_creation_tokens":0,"delta":true}
 {"type":"agent.command","ts":"2026-05-17T00:00:01Z","agent_type":"coding","task_id":"add-tests","command":"make test"}
 {"type":"agent.file_read","ts":"2026-05-17T00:00:02Z","agent_type":"review","path":"internal/cli/renderer.go"}
@@ -67,7 +68,7 @@ The built-in process adapter recognizes these provider streams without reading p
 - Codex `token_count.info.total_token_usage` events as usage snapshots.
 - Claude Code `--output-format stream-json` `result.usage` events as final usage snapshots.
 
-Raw agent transcripts are not persisted. File contents, diffs, and thinking text may be shown transiently by the renderer after filtering, but must not be written to disk. `agent.stdout.log`, `agent.stderr.log`, and `agent-exit.json` are not created.
+`agent.message` records short, filtered assistant-visible message snippets so durable logs preserve agent progress context. Raw agent transcripts are not persisted. File contents, diffs, and thinking text may be shown transiently by the renderer after filtering, but must not be written to disk. `agent.stdout.log`, `agent.stderr.log`, and `agent-exit.json` are not created.
 
 ## Role Handoff Contract
 

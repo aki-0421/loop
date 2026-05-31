@@ -40,6 +40,7 @@ Some artifacts only exist when that phase happened. `errors.log`, PR artifacts, 
 - Required event fields are `type` and `ts`. Common metadata includes `iteration_id`, `agent_type`, `task_id`, and `task_dir`.
 - Important event types:
   - `agent.started`: adapter process launched; begins a usage snapshot window.
+  - `agent.message`: short, filtered assistant-visible progress message.
   - `agent.usage`: normalized token usage; `delta=true` means incremental usage.
   - `agent.command`: command requested by the agent.
   - `agent.file_read`: file read reported by the agent adapter.

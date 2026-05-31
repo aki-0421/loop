@@ -86,3 +86,46 @@ func TestSummarizeAgentOutputExtractsCommandLifecycle(t *testing.T) {
 		t.Fatalf("missing expected completed lifecycle/file_read events: %#v", completed.AuditEvents)
 	}
 }
+
+func TestSummarizeAgentOutputPersistsAssistantMessage(t *testing.T) {
+	summary := summarizeAgentOutput("stdout", `{"type":"agent_message","message":"Inspecting renderer behavior before editing."}`)
+
+	if len(summary.AuditEvents) != 1 {
+		t.Fatalf("events = %#v, want one message event", summary.AuditEvents)
+	}
+	event := summary.AuditEvents[0]
+	if event["type"] != "agent.message" || event["text"] != "Inspecting renderer behavior before editing." {
+		t.Fatalf("unexpected message event: %#v", event)
+	}
+	if summary.ScreenText != "" {
+		t.Fatalf("persisted messages should not also be screen-only text: %q", summary.ScreenText)
+	}
+}
+
+func TestSummarizeAgentOutputPersistsClaudeAssistantMessageOnce(t *testing.T) {
+	summary := summarizeAgentOutput("stdout", `{"type":"assistant","message":{"type":"message","role":"assistant","content":[{"type":"text","text":"I will run the focused tests next."}]}}`)
+
+	if len(summary.AuditEvents) != 1 {
+		t.Fatalf("events = %#v, want one deduped message event", summary.AuditEvents)
+	}
+	event := summary.AuditEvents[0]
+	if event["type"] != "agent.message" || event["text"] != "I will run the focused tests next." {
+		t.Fatalf("unexpected message event: %#v", event)
+	}
+}
+
+func TestSummarizeAgentOutputDoesNotPersistReasoningText(t *testing.T) {
+	summary := summarizeAgentOutput("stdout", `{"type":"agent_reasoning","text":"hidden chain of thought"}`)
+
+	if len(summary.AuditEvents) != 0 {
+		t.Fatalf("reasoning text should not be persisted: %#v", summary.AuditEvents)
+	}
+}
+
+func TestSummarizeAgentOutputDoesNotPersistRawMessageContent(t *testing.T) {
+	summary := summarizeAgentOutput("stdout", `{"type":"agent_message","message":"package main\n\nfunc main() {}"}`)
+
+	if len(summary.AuditEvents) != 0 {
+		t.Fatalf("raw code-like message content should not be persisted: %#v", summary.AuditEvents)
+	}
+}

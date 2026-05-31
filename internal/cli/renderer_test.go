@@ -25,6 +25,24 @@ func TestRunRendererLineModePrintsAuditCommand(t *testing.T) {
 	}
 }
 
+func TestRunRendererLineModePrintsAgentMessage(t *testing.T) {
+	var out bytes.Buffer
+	renderer := &runRenderer{
+		enabled:     true,
+		interactive: false,
+		writer:      &out,
+		started:     time.Now(),
+		done:        make(chan struct{}),
+	}
+	renderer.AgentEvent(runstate.Event{"type": "agent.message", "text": "Inspecting renderer behavior before editing."})
+	if !strings.Contains(out.String(), "Inspecting renderer behavior before editing.") {
+		t.Fatalf("line renderer should print agent message: %q", out.String())
+	}
+	if renderer.latestMsg != "Inspecting renderer behavior before editing." {
+		t.Fatalf("latest message = %q", renderer.latestMsg)
+	}
+}
+
 func TestRunRendererLineModePrintsTokenUsage(t *testing.T) {
 	var out bytes.Buffer
 	renderer := &runRenderer{

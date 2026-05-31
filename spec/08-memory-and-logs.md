@@ -147,6 +147,7 @@ Event examples:
 
 ```json
 {"type":"iteration.started","ts":"2026-05-17T00:00:00Z","iteration_id":"0001"}
+{"type":"agent.message","ts":"2026-05-17T00:00:00Z","agent_type":"planner","text":"Inspecting the task contract before editing."}
 {"type":"agent.command","ts":"2026-05-17T00:00:01Z","agent_type":"coding","task_id":"add-tests","command":"make test"}
 {"type":"agent.file_read","ts":"2026-05-17T00:00:02Z","agent_type":"planner","path":"internal/cli/renderer.go"}
 {"type":"agent.usage","ts":"2026-05-17T00:00:03Z","agent_type":"review","input_tokens":1200,"output_tokens":45,"cache_read_tokens":300,"cache_creation_tokens":0,"delta":true}
@@ -157,6 +158,8 @@ Event examples:
 ```
 
 Usage events are audit metadata, not raw transcripts. `agent.usage` records normalized model usage with `input_tokens` and `output_tokens` when known. Cache, reasoning, and total-token fields may be included when an adapter can source them. Events with `delta=true` are incremental. Events without `delta` are snapshots relative to the current agent process. Events with `estimated=true` are heuristic and must remain visibly marked in user-facing summaries.
+
+`agent.message` records short, filtered assistant-visible message snippets for durable progress context. It must not contain raw command output, file contents, diffs, or hidden reasoning text.
 
 `agent.stdout.log`, `agent.stderr.log`, and `agent-exit.json` are not written. `errors.log` is created only when an agent, process, or validation phase fails.
 

@@ -176,6 +176,9 @@ func auditEventsFromJSONObject(obj map[string]any, parentKey, ownerType string) 
 	if event, ok := usageEventFromJSONObject(obj, parentKey, ownerType); ok {
 		events = append(events, event)
 	}
+	if event, ok := messageEventFromJSONObject(obj, ownerType); ok {
+		events = append(events, event)
+	}
 	if cmd, args, ok := commandFromJSONObject(obj); ok {
 		events = append(events, commandEvent(cmd, args))
 		for _, path := range readPathsFromCommand(strings.Join(append([]string{cmd}, args...), " ")) {
@@ -272,6 +275,152 @@ func commandEvent(command string, args []string) runstate.Event {
 
 func fileReadEvent(path string) runstate.Event {
 	return runstate.Event{"type": "agent.file_read", "path": strings.TrimSpace(path)}
+}
+
+func messageEventFromJSONObject(obj map[string]any, ownerType string) (runstate.Event, bool) {
+	if !objectLooksPersistableAgentMessage(obj, ownerType) {
+		return nil, false
+	}
+	text, ok := sanitizeAgentMessageText(extractPersistableMessageText(obj))
+	if !ok {
+		return nil, false
+	}
+	return runstate.Event{"type": "agent.message", "text": text}, true
+}
+
+func objectLooksPersistableAgentMessage(obj map[string]any, ownerType string) bool {
+	if objectLooksLikeToolOutput(obj) || objectLooksLikeHiddenReasoning(obj, ownerType) {
+		return false
+	}
+	role, _ := stringField(obj, "role")
+	if strings.EqualFold(role, "assistant") {
+		return true
+	}
+	for _, key := range []string{"type", "name"} {
+		value, ok := stringField(obj, key)
+		if !ok {
+			continue
+		}
+		lower := strings.ToLower(value)
+		if lower == "assistant" ||
+			strings.Contains(lower, "agent_message") ||
+			strings.Contains(lower, "assistant_message") {
+			return true
+		}
+		if strings.Contains(lower, "message") && strings.EqualFold(role, "assistant") {
+			return true
+		}
+	}
+	return false
+}
+
+func objectLooksLikeHiddenReasoning(obj map[string]any, ownerType string) bool {
+	values := []string{ownerType}
+	for _, key := range []string{"type", "name"} {
+		if value, ok := stringField(obj, key); ok {
+			values = append(values, value)
+		}
+	}
+	for _, value := range values {
+		lower := strings.ToLower(value)
+		if strings.Contains(lower, "reasoning") ||
+			strings.Contains(lower, "thinking") ||
+			strings.Contains(lower, "thought") ||
+			strings.Contains(lower, "chain_of_thought") ||
+			lower == "analysis" {
+			return true
+		}
+	}
+	return false
+}
+
+func extractPersistableMessageText(v any) string {
+	switch typed := v.(type) {
+	case map[string]any:
+		for _, key := range []string{"message", "content", "text", "summary", "delta"} {
+			child, ok := typed[key]
+			if !ok {
+				continue
+			}
+			if text := extractPersistableMessageText(child); text != "" {
+				return text
+			}
+		}
+	case []any:
+		parts := make([]string, 0, len(typed))
+		for _, child := range typed {
+			if text := extractPersistableMessageText(child); text != "" {
+				parts = append(parts, text)
+			}
+		}
+		return strings.Join(parts, " ")
+	case string:
+		return typed
+	}
+	return ""
+}
+
+func sanitizeAgentMessageText(text string) (string, bool) {
+	text = strings.TrimSpace(stripANSI(text))
+	if text == "" || messageLooksUnsafeForAudit(text) {
+		return "", false
+	}
+	text = strings.Join(strings.Fields(text), " ")
+	if text == "" {
+		return "", false
+	}
+	return truncateDisplay(text, 500), true
+}
+
+func messageLooksUnsafeForAudit(text string) bool {
+	if strings.Contains(text, "\x00") || strings.Contains(text, "```") {
+		return true
+	}
+	if strings.Contains(strings.ToLower(text), "diff --git") {
+		return true
+	}
+	lines := strings.Split(text, "\n")
+	nonEmpty := 0
+	rawLines := 0
+	for _, line := range lines {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		nonEmpty++
+		if messageLineLooksLikeRawContent(line) {
+			rawLines++
+		}
+	}
+	return rawLines >= 2 || (nonEmpty == 1 && rawLines == 1)
+}
+
+func messageLineLooksLikeRawContent(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	if trimmed == "" {
+		return false
+	}
+	lower := strings.ToLower(trimmed)
+	if strings.HasPrefix(lower, "diff --git") ||
+		strings.HasPrefix(trimmed, "@@") ||
+		strings.HasPrefix(trimmed, "```") ||
+		strings.HasPrefix(trimmed, "--- ") ||
+		strings.HasPrefix(trimmed, "+++ ") ||
+		regexp.MustCompile(`^L?\d+[:|]\s`).MatchString(trimmed) {
+		return true
+	}
+	if len(trimmed) > 1 && (trimmed[0] == '+' || trimmed[0] == '-') && trimmed[1] != ' ' {
+		return true
+	}
+	codePrefixes := []string{
+		"package ", "import ", "func ", "type ", "const ", "var ", "class ", "def ",
+		"return ", "if ", "for ", "while ", "switch ", "case ", "</", "<div", "<span",
+	}
+	for _, prefix := range codePrefixes {
+		if strings.HasPrefix(lower, prefix) {
+			return true
+		}
+	}
+	return strings.HasPrefix(line, "  ") || strings.HasPrefix(line, "\t")
 }
 
 func usageEventFromJSONObject(obj map[string]any, parentKey, ownerType string) (runstate.Event, bool) {
@@ -434,7 +583,8 @@ func dedupeAuditEvents(events []runstate.Event) []runstate.Event {
 			"\x00" + fmt.Sprint(event["exit_code"]) + "\x00" + fmt.Sprint(event["input_tokens"]) + "\x00" + fmt.Sprint(event["output_tokens"]) +
 			"\x00" + fmt.Sprint(event["cache_read_tokens"]) + "\x00" + fmt.Sprint(event["cache_creation_tokens"]) +
 			"\x00" + fmt.Sprint(event["reasoning_output_tokens"]) + "\x00" + fmt.Sprint(event["total_tokens"]) +
-			"\x00" + fmt.Sprint(event["delta"]) + "\x00" + fmt.Sprint(event["estimated"])
+			"\x00" + fmt.Sprint(event["delta"]) + "\x00" + fmt.Sprint(event["estimated"]) +
+			"\x00" + fmt.Sprint(event["text"])
 		if seen[key] {
 			continue
 		}
