@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/aki-0421/loop/internal/artifactdb"
 	"github.com/aki-0421/loop/internal/gitx"
 	"github.com/aki-0421/loop/internal/runstate"
 )
@@ -376,6 +377,82 @@ git:
 	}
 }
 
+func TestRoleOrchestratedPRRepairAfterRenameUsesTrackedBranch(t *testing.T) {
+	ctx := context.Background()
+	repo := newCleanupRepo(t)
+	mustWrite(t, filepath.Join(repo, "task.md"), "# Task\n\nRepair a PR check after branch rename.\n")
+	agentCommand, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, filepath.Join(repo, ".loop", "config.yaml"), `version: 1
+
+agent:
+  default: roleprrepair
+  adapters:
+    roleprrepair:
+      command: `+yamlSingleQuote(agentCommand)+`
+      args: [-test.run=TestHelperProcessRoleAgent, --]
+      prompt: stdin
+      env:
+        LOOP_ROLE_TEST_AGENT: "1"
+        LOOP_ROLE_TEST_AGENT_MODE: "pr-rename-repair"
+
+run:
+  maxIterations: 1
+  maxReviewFixCycles: 2
+
+git:
+  baseBranch: develop
+  integration:
+    mode: pr
+    pr:
+      push: false
+      waitChecks: true
+      checksStartupDelaySeconds: 0
+      checksDiscoveryTimeoutSeconds: 0
+      checksPollIntervalSeconds: 1
+      checksWatchTimeoutSeconds: 5
+`)
+	git(t, repo, "add", "task.md", ".loop/config.yaml")
+	git(t, repo, "commit", "-m", "T: add role PR repair fixture")
+	addBareOrigin(t, repo)
+	ghDir := t.TempDir()
+	ghLog := filepath.Join(ghDir, "gh.log")
+	ghChecks := filepath.Join(ghDir, "checks.count")
+	writeFailOnceThenPassingFakeGH(t, ghDir, ghLog, ghChecks)
+	t.Setenv("PATH", ghDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	withWorkingDir(t, repo)
+
+	if _, err := captureStdout(t, func() error {
+		return commandRun(ctx, globals{Agent: "roleprrepair", JSON: true, NoColor: true}, []string{"task.md"})
+	}); err != nil {
+		t.Fatalf("loop run should repair PR checks after branch rename: %v", err)
+	}
+
+	state := readLatestRunState(t, repo)
+	if state.Stage != runstate.StageCompleted {
+		t.Fatalf("run stage = %s, want completed", state.Stage)
+	}
+	if got := state.Iterations[0].BranchCurrent; got != "feat/role-pr-repair" {
+		t.Fatalf("branch_current = %q, want renamed branch", got)
+	}
+	iterDir := filepath.Join(repo, ".loop", "runs", state.RunID, "iterations", "0001")
+	repairMerge := readText(t, filepath.Join(iterDir, "tasks", "0002", "task-merge.json"))
+	if !strings.Contains(repairMerge, `"iteration_branch": "feat/role-pr-repair"`) {
+		t.Fatalf("repair task should merge into renamed branch:\n%s", repairMerge)
+	}
+	if strings.Contains(repairMerge, `"iteration_branch": "wip/0001"`) {
+		t.Fatalf("repair task used stale initial branch:\n%s", repairMerge)
+	}
+	gh := readText(t, ghLog)
+	if !strings.Contains(gh, "pr create ") || !strings.Contains(gh, "pr merge 1 --squash") {
+		t.Fatalf("fake gh log missing PR create/merge:\n%s", gh)
+	}
+	assertBranchMissing(t, repo, "wip/0001")
+	assertBranchMissing(t, repo, "feat/role-pr-repair")
+}
+
 func TestHelperProcessRoleAgent(t *testing.T) {
 	if os.Getenv("LOOP_ROLE_TEST_AGENT") != "1" {
 		return
@@ -466,6 +543,23 @@ func runRoleTestAgent() int {
       "depends_on": [],
       "conflicts_with": [],
       "acceptance": ["max-exhaustion-replacement.txt contains the replacement value."]
+    }
+  ]
+}`
+			return exitCode(commandHandoff(ctx, globals{}, []string{"write", "task-tree", "--value", payload}))
+		case "pr-rename-repair":
+			payload := `{
+  "schema_version": 1,
+  "summary": "Run PR rename repair workflow",
+  "goal_evaluation": "Fake planner selected an initial task.",
+  "tasks": [
+    {
+      "id": "initial-pr-task",
+      "title": "Initial PR task",
+      "description": "Create the initial PR marker.",
+      "depends_on": [],
+      "conflicts_with": [],
+      "acceptance": ["initial-pr.txt contains the initial value."]
     }
   ]
 }`
@@ -660,6 +754,32 @@ func runRoleTestAgent() int {
 				return 1
 			}
 			return exitCode(commandTask(ctx, globals{}, []string{"merge", "--type", "F", "complete", taskID}))
+		case "pr-rename-repair":
+			filename := "initial-pr.txt"
+			message := "run initial PR task"
+			value := "initial\n"
+			if taskID == "repair-pr-check" {
+				filename = "repair-pr-check.txt"
+				message = "repair PR check"
+				value = "repair\n"
+			}
+			if err := startRoleTaskTodo(ctx, taskID, message); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 1
+			}
+			if err := os.WriteFile(filepath.Join(workDir, filename), []byte(value), 0o644); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 1
+			}
+			if err := completeRoleTaskTodo(ctx); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 1
+			}
+			if err := writeRoleTaskResult(ctx, taskID, "Fake coding agent completed "+taskID+"."); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 1
+			}
+			return exitCode(commandTask(ctx, globals{}, []string{"merge", "--type", "F", "complete", taskID}))
 		}
 		if err := startRoleTaskTodo(ctx, taskID, "run fake role workflow"); err != nil {
 			fmt.Fprintln(os.Stderr, err)
@@ -679,6 +799,9 @@ func runRoleTestAgent() int {
 		}
 		return exitCode(commandTask(ctx, globals{}, []string{"merge", "--type", "F", "complete", taskID}))
 	case "review":
+		if os.Getenv("LOOP_ROLE_TEST_AGENT_MODE") == "pr-rename-repair" {
+			return runPRRenameRepairReviewAgent(ctx)
+		}
 		payload := `{
   "schema_version": 1,
   "status": "approved",
@@ -717,6 +840,113 @@ func startRoleTaskTodo(ctx context.Context, taskID, message string) error {
 
 func completeRoleTaskTodo(ctx context.Context) error {
 	return commandTask(ctx, globals{}, []string{"todo", "complete", "1"})
+}
+
+func runPRRenameRepairReviewAgent(ctx context.Context) int {
+	iterDir := os.Getenv("LOOP_ITERATION_DIR")
+	reviewCount := filepath.Join(iterDir, "review-count.txt")
+	_, firstErr := os.Stat(reviewCount)
+	_ = os.WriteFile(reviewCount, []byte("seen\n"), 0o644)
+	if os.IsNotExist(firstErr) {
+		if err := commandBranch(ctx, globals{}, []string{"rename", "--kind", "feat", "role-pr-repair"}); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return exitCode(err)
+		}
+		if err := artifactdb.Write(iterDir, "pr-title", "Run role PR repair\n"); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		if err := artifactdb.Write(iterDir, "pr-body", "## Summary\n\nFake role PR repair.\n"); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		if err := commandPR(ctx, globals{}, []string{"create"}); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return exitCode(err)
+		}
+		if err := commandPR(ctx, globals{}, []string{"checks"}); err == nil {
+			fmt.Fprintln(os.Stderr, "first fake PR checks unexpectedly passed")
+			return 1
+		}
+		payload := `{
+  "schema_version": 1,
+  "status": "changes_requested",
+  "summary": "Fake review requested a PR check repair.",
+  "goal_evaluation": "The fake PR check failed after branch rename.",
+  "findings": [
+    {
+      "id": "repair-pr-check",
+      "task_id": "initial-pr-task",
+      "title": "Repair PR check",
+      "description": "Create a repair commit after the branch has been renamed.",
+      "acceptance": ["The repair task merges into the renamed iteration branch."]
+    }
+  ]
+}`
+		return exitCode(commandHandoff(ctx, globals{}, []string{"write", "review-result", "--value", payload}))
+	}
+	if err := commandPR(ctx, globals{}, []string{"checks"}); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return exitCode(err)
+	}
+	if err := commandPR(ctx, globals{}, []string{"merge"}); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return exitCode(err)
+	}
+	payload := `{
+  "schema_version": 1,
+  "status": "approved",
+  "summary": "Fake review approved the repaired PR.",
+  "goal_evaluation": "The renamed PR branch was repaired and merged.",
+  "goal_complete": true
+}`
+	return exitCode(commandHandoff(ctx, globals{}, []string{"write", "review-result", "--value", payload}))
+}
+
+func writeFailOnceThenPassingFakeGH(t *testing.T, dir, logPath, checksPath string) {
+	t.Helper()
+	path := filepath.Join(dir, "gh")
+	script := `#!/bin/sh
+echo "$@" >> ` + shellQuote(logPath) + `
+
+if [ "$1" = "--version" ]; then
+  echo "gh version fake"
+  exit 0
+fi
+
+if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
+  exit 1
+fi
+
+if [ "$1" = "pr" ] && [ "$2" = "create" ]; then
+  echo "1"
+  exit 0
+fi
+
+if [ "$1" = "pr" ] && [ "$2" = "checks" ]; then
+  count=0
+  if [ -f ` + shellQuote(checksPath) + ` ]; then
+    count=$(cat ` + shellQuote(checksPath) + `)
+  fi
+  count=$((count + 1))
+  echo "$count" > ` + shellQuote(checksPath) + `
+  if [ "$count" -eq 1 ]; then
+    echo "unit test failed after rename" >&2
+    exit 1
+  fi
+  echo "checks passed"
+  exit 0
+fi
+
+if [ "$1" = "pr" ] && [ "$2" = "merge" ]; then
+  exit 0
+fi
+
+exit 0
+`
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func exitCode(err error) int {

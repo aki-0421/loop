@@ -415,7 +415,12 @@ func resolveTaskMergeContext(ctx context.Context, g globals, iterDir, runID, ite
 	if taskBranch == "" && taskWorktree != "" {
 		taskBranch, _ = (gitx.Runner{Dir: taskWorktree}).CurrentBranch(ctx)
 	}
-	iterationBranch := firstNonEmpty(runtimeString(runtime, "initial_branch"), os.Getenv("LOOP_INITIAL_BRANCH"))
+	iterationBranch := firstNonEmpty(
+		runtimeString(runtime, "iteration_branch"),
+		os.Getenv("LOOP_ITERATION_BRANCH"),
+		runtimeString(runtime, "initial_branch"),
+		os.Getenv("LOOP_INITIAL_BRANCH"),
+	)
 	if iterationBranch == "" {
 		iterationBranch = gitx.InitialBranchName(iterationNumberFromID(iter))
 	}

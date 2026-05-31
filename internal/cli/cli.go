@@ -1785,6 +1785,7 @@ type pathSet struct {
 	IterationID       string
 	BaseBranch        string
 	InitialBranch     string
+	IterationBranch   string
 	CurrentBranch     string
 	BranchRenamed     bool
 	IntegrationMode   string
@@ -1824,6 +1825,7 @@ func promptPathsWithActive(iterDir, activeDir string) pathSet {
 
 func writeRuntimeArtifact(paths pathSet) error {
 	initialBranch := firstNonEmpty(paths.InitialBranch, paths.CurrentBranch)
+	iterationBranch := firstNonEmpty(paths.IterationBranch, paths.CurrentBranch, initialBranch)
 	branchRenamed := paths.BranchRenamed
 	if initialBranch != "" && paths.CurrentBranch != "" && initialBranch != paths.CurrentBranch {
 		branchRenamed = true
@@ -1835,6 +1837,7 @@ func writeRuntimeArtifact(paths pathSet) error {
 		"iteration_id":      paths.IterationID,
 		"base_branch":       paths.BaseBranch,
 		"initial_branch":    initialBranch,
+		"iteration_branch":  iterationBranch,
 		"current_branch":    paths.CurrentBranch,
 		"branch_renamed":    branchRenamed,
 		"integration_mode":  paths.IntegrationMode,
@@ -1901,6 +1904,7 @@ func runAgent(ctx context.Context, cfg config.Config, root string, paths pathSet
 		"LOOP_ITERATION_ID":              paths.IterationID,
 		"LOOP_BASE_BRANCH":               paths.BaseBranch,
 		"LOOP_INITIAL_BRANCH":            firstNonEmpty(paths.InitialBranch, paths.CurrentBranch),
+		"LOOP_ITERATION_BRANCH":          firstNonEmpty(paths.IterationBranch, paths.CurrentBranch),
 		"LOOP_CURRENT_BRANCH":            paths.CurrentBranch,
 		"LOOP_BRANCH_RENAMED":            strconv.FormatBool(paths.BranchRenamed),
 		"LOOP_INTEGRATION_MODE":          paths.IntegrationMode,

@@ -255,6 +255,7 @@ func runOrchestratedIteration(ctx context.Context, req orchestrationRequest) (re
 	paths.IterationID = iterationID
 	paths.BaseBranch = cfg.Git.BaseBranch
 	paths.InitialBranch = initialBranch
+	paths.IterationBranch = initialBranch
 	paths.CurrentBranch = initialBranch
 	paths.IntegrationMode = cfg.Git.Integration.Mode
 	paths.PullRequestMode = cfg.Git.Integration.Mode == "pr"
@@ -375,7 +376,7 @@ func runOrchestratedIteration(ctx context.Context, req orchestrationRequest) (re
 			Config:            cfg,
 			Root:              req.Root,
 			IterationWorktree: iterationWorktree,
-			IterationBranch:   initialBranch,
+			IterationBranch:   firstNonEmpty(paths.IterationBranch, paths.CurrentBranch, initialBranch),
 			IterationDir:      iterDir,
 			Paths:             paths,
 			RunID:             req.RunID,
@@ -433,6 +434,10 @@ func runOrchestratedIteration(ctx context.Context, req orchestrationRequest) (re
 		if err != nil {
 			return iterationWorkflowResult{}, codedError{4, err}
 		}
+		if err := refreshTrackedBranch(ctx, iterationWorktree, &paths); err != nil {
+			return iterationWorkflowResult{}, codedError{4, err}
+		}
+		updateOrchestratedBranchState(req, cleanup, paths.CurrentBranch)
 		if err := writeReviewAudit(iterDir, review); err != nil {
 			return iterationWorkflowResult{}, codedError{1, err}
 		}
@@ -456,7 +461,7 @@ func runOrchestratedIteration(ctx context.Context, req orchestrationRequest) (re
 	req.Renderer.Stage(runstate.StagePullRequest, "integrating iteration")
 	summary := firstNonEmpty(strings.TrimSpace(review.Summary), tree.Summary)
 	goalComplete := review.GoalComplete && strings.TrimSpace(req.Goal) != ""
-	finalBranch := initialBranch
+	finalBranch := firstNonEmpty(paths.IterationBranch, paths.CurrentBranch, initialBranch)
 	if cfg.Git.Integration.Mode == "pr" {
 		state, ok, err := readPRState(iterDir)
 		if err != nil {
@@ -479,11 +484,11 @@ func runOrchestratedIteration(ctx context.Context, req orchestrationRequest) (re
 		cleanup.DirectIntegrating = true
 		baseHead, _ := rootRunner.Run(context.Background(), "rev-parse", cfg.Git.BaseBranch)
 		cleanup.BaseHead = strings.TrimSpace(baseHead)
-		if err := rootRunner.SquashMerge(ctx, cfg.Git.BaseBranch, initialBranch, summary, false); err != nil {
+		if err := rootRunner.SquashMerge(ctx, cfg.Git.BaseBranch, finalBranch, summary, false); err != nil {
 			return iterationWorkflowResult{}, codedError{6, err}
 		}
 		cleanup.Integrated = true
-		_ = rootRunner.DeleteBranch(ctx, initialBranch, true)
+		_ = rootRunner.DeleteBranch(ctx, finalBranch, true)
 	}
 	if err := refreshTargetBranch(ctx, rootRunner, cfg.Git.BaseBranch); err != nil {
 		return iterationWorkflowResult{}, codedError{1, err}
@@ -591,6 +596,24 @@ func executeTaskSet(ctx context.Context, req taskSetRequest) (taskSetExecution, 
 		}
 	}
 	return taskSetExecution{Results: results, Commits: commits}, nil
+}
+
+func updateOrchestratedBranchState(req orchestrationRequest, cleanup *iterationCleanup, branch string) {
+	branch = strings.TrimSpace(branch)
+	if branch == "" {
+		return
+	}
+	if cleanup != nil {
+		cleanup.Branch = branch
+	}
+	if req.Renderer != nil {
+		req.Renderer.Branch(branch)
+	}
+	if req.State == nil || len(req.State.Iterations) == 0 {
+		return
+	}
+	req.State.Iterations[len(req.State.Iterations)-1].BranchCurrent = branch
+	_ = runstate.Write(req.StatePath, *req.State)
 }
 
 func writeDiscardedTaskResult(req taskSetRequest, task workflow.Task, existing workflow.TaskResult, reason string) (workflow.TaskResult, error) {
@@ -748,8 +771,15 @@ func prepareCodingTaskAttempt(ctx context.Context, req taskSetRequest, task work
 	}
 	taskPaths := req.Paths
 	taskPaths.ActiveDir = activeDir
+	taskPaths.Runtime = filepath.Join(activeDir, "runtime.json")
+	taskPaths.Plan = filepath.Join(activeDir, "plan.md")
+	taskPaths.Todo = filepath.Join(activeDir, "todo.md")
+	taskPaths.Validation = filepath.Join(activeDir, "validation.md")
+	taskPaths.PRTitle = filepath.Join(activeDir, "pr-title.txt")
+	taskPaths.PRBody = filepath.Join(activeDir, "pr-body.md")
 	taskPaths.WorkDir = worktree
 	taskPaths.IterationWorktree = req.IterationWorktree
+	taskPaths.IterationBranch = req.IterationBranch
 	taskPaths.CurrentBranch = branch
 	taskPaths.TaskID = task.ID
 	taskPaths.TaskDir = taskDir
@@ -929,6 +959,7 @@ func runRoleAgent(ctx context.Context, cfg config.Config, workDir string, paths 
 		"LOOP_ITERATION_ID":              paths.IterationID,
 		"LOOP_BASE_BRANCH":               paths.BaseBranch,
 		"LOOP_INITIAL_BRANCH":            paths.InitialBranch,
+		"LOOP_ITERATION_BRANCH":          firstNonEmpty(paths.IterationBranch, paths.CurrentBranch),
 		"LOOP_CURRENT_BRANCH":            paths.CurrentBranch,
 		"LOOP_ITERATION_WORKTREE":        paths.IterationWorktree,
 		"LOOP_INTEGRATION_MODE":          paths.IntegrationMode,

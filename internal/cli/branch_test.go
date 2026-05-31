@@ -29,7 +29,7 @@ func TestBranchRenameTracksRuntime(t *testing.T) {
 		t.Fatalf("current branch = %q", got)
 	}
 	runtime := readRuntimeForTest(t, iterDir)
-	if runtime["initial_branch"] != "wip/0001" || runtime["current_branch"] != "feat/add-user-profile" || runtime["branch_renamed"] != true {
+	if runtime["initial_branch"] != "wip/0001" || runtime["iteration_branch"] != "feat/add-user-profile" || runtime["current_branch"] != "feat/add-user-profile" || runtime["branch_renamed"] != true {
 		t.Fatalf("runtime = %#v", runtime)
 	}
 	state, err := runstate.Read(filepath.Join(repo, ".loop", "runs", "run-1", "run-state.json"))

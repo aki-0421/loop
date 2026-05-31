@@ -390,6 +390,7 @@ func loadPRCommandContext(ctx context.Context, g globals, subcommand string, arg
 	paths.IterationID = firstNonEmpty(runtime["iteration_id"], os.Getenv("LOOP_ITERATION_ID"))
 	paths.BaseBranch = base
 	paths.InitialBranch = firstNonEmpty(runtime["initial_branch"], os.Getenv("LOOP_INITIAL_BRANCH"))
+	paths.IterationBranch = firstNonEmpty(runtime["iteration_branch"], os.Getenv("LOOP_ITERATION_BRANCH"), branch)
 	paths.CurrentBranch = branch
 	paths.IntegrationMode = firstNonEmpty(runtime["integration_mode"], cfg.Git.Integration.Mode)
 	paths.PullRequestMode = paths.IntegrationMode == "pr"

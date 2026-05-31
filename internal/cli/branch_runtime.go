@@ -101,6 +101,7 @@ func updateTrackedBranch(iterationDir, newBranch string) (trackedBranchState, er
 	tracked.Current = strings.TrimSpace(newBranch)
 	tracked.Renamed = tracked.Initial != "" && tracked.Current != "" && tracked.Initial != tracked.Current
 	runtime["initial_branch"] = tracked.Initial
+	runtime["iteration_branch"] = tracked.Current
 	runtime["current_branch"] = tracked.Current
 	runtime["branch_renamed"] = tracked.Renamed
 	if err := writeRuntimeMap(iterationDir, runtime); err != nil {
@@ -130,6 +131,7 @@ func refreshTrackedBranch(ctx context.Context, workDir string, paths *pathSet) e
 	}
 	paths.InitialBranch = tracked.Initial
 	paths.CurrentBranch = tracked.Current
+	paths.IterationBranch = tracked.Current
 	paths.BranchRenamed = tracked.Renamed
 	return nil
 }
