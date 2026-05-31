@@ -64,7 +64,7 @@ Each finding has `id`, optional `task_id`, `title`, `description`, and `acceptan
 
 ## Task TODOs
 
-`loop task todo` writes `tasks/<sequence>/task-todo.json`. Coding agents must create TODOs before editing the task worktree. TODOs are processed serially; `loop task todo complete <n>` creates the task-branch commit and then marks the item done.
+`loop task todo` writes `tasks/<sequence>/task-todo.json`. Coding agents must create TODOs before editing the task worktree. Pending TODOs can be inserted or moved before work starts. TODOs are processed serially; `loop task todo complete <n>` creates the task-branch commit and then marks the item done.
 
 TODO file fields:
 

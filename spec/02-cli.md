@@ -232,8 +232,9 @@ loop handoff list [--kind <task-tree|task-result|review-result>]
 Complete coding-task integration actions through agent-facing CLI commands.
 
 ```bash
-loop task todo add --type <type> --title <title> --acceptance <text>... <commit-message>
+loop task todo add --type <type> --title <title> --acceptance <text>... [--after <n>] <commit-message>
 loop task todo list [--iteration-dir <dir>|--run <run-id> --iteration <n>] [--task <id>]
+loop task todo move <n> --after <n> [--iteration-dir <dir>|--run <run-id> --iteration <n>] [--task <id>]
 loop task todo start <n> [--iteration-dir <dir>|--run <run-id> --iteration <n>] [--task <id>]
 loop task todo complete <n> [--iteration-dir <dir>|--run <run-id> --iteration <n>] [--task <id>]
 loop task discard --reason <reason> [--iteration-dir <dir>|--run <run-id> --iteration <n>] [--task <id>]
@@ -241,7 +242,7 @@ loop task merge --type <type> <summary> [--iteration-dir <dir>|--run <run-id> --
 loop task merge --continue [--iteration-dir <dir>|--run <run-id> --iteration <n>] [--task <id>]
 ```
 
-Coding agents must create the task-local TODO list before implementation. `loop task todo add` is rejected after task work starts. `loop task todo start` enforces serial ordering. `loop task todo complete` stages current task worktree changes, creates the loop-formatted task-branch commit, records its SHA and subject in `tasks/<n>/task-todo.json`, and marks that TODO done. It rejects clean completions.
+Coding agents must create the task-local TODO list before implementation. `loop task todo add` accepts `--after <n>` for placement, with `--after 0` inserting at the top. `loop task todo move <n> --after <n>` can reorder pending TODOs before task work starts. `loop task todo add` and `move` are rejected after task work starts. `loop task todo start` enforces serial ordering. `loop task todo complete` stages current task worktree changes, creates the loop-formatted task-branch commit, records its SHA and subject in `tasks/<n>/task-todo.json`, and marks that TODO done. It rejects clean completions.
 
 `loop task discard` writes a discarded `task-result` with a required reason so the planner can revise or rewrite the remaining plan.
 

@@ -115,13 +115,15 @@ func (f *stringListFlag) Set(value string) error {
 
 func commandTaskTodo(ctx context.Context, g globals, args []string) error {
 	if len(args) == 0 {
-		return codedError{2, fmt.Errorf("usage: loop task todo <add|list|start|complete> ...")}
+		return codedError{2, fmt.Errorf("usage: loop task todo <add|list|move|start|complete> ...")}
 	}
 	switch args[0] {
 	case "add":
 		return commandTaskTodoAdd(ctx, g, args[1:])
 	case "list":
 		return commandTaskTodoList(ctx, g, args[1:])
+	case "move":
+		return commandTaskTodoMove(ctx, g, args[1:])
 	case "start":
 		return commandTaskTodoStart(ctx, g, args[1:])
 	case "complete":
@@ -141,11 +143,12 @@ func commandTaskTodoAdd(ctx context.Context, g globals, args []string) error {
 	taskID := fs.String("task", os.Getenv("LOOP_TASK_ID"), "task id")
 	kind := fs.String("type", "", "commit type")
 	title := fs.String("title", "", "TODO title")
+	after := fs.Int("after", -1, "insert after 1-based TODO index; 0 inserts at the top")
 	var acceptance stringListFlag
 	fs.Var(&acceptance, "acceptance", "acceptance criterion; repeatable")
 	args = flagsFirst(args, map[string]bool{
 		"iteration-dir": true, "dir": true, "run": true, "iteration": true,
-		"task": true, "type": true, "title": true, "acceptance": true,
+		"task": true, "type": true, "title": true, "after": true, "acceptance": true,
 	})
 	if err := fs.Parse(args); err != nil {
 		return codedError{2, err}
@@ -154,7 +157,7 @@ func commandTaskTodoAdd(ctx context.Context, g globals, args []string) error {
 		*iterDir = *dirAlias
 	}
 	if strings.TrimSpace(*kind) == "" || strings.TrimSpace(*title) == "" || len(acceptance) == 0 || fs.NArg() < 1 {
-		return codedError{2, fmt.Errorf("usage: loop task todo add --type <type> --title <title> --acceptance <text>... <commit-message>")}
+		return codedError{2, fmt.Errorf("usage: loop task todo add --type <type> --title <title> --acceptance <text>... [--after <n>] <commit-message>")}
 	}
 	mergeCtx, err := resolveTaskMergeContext(ctx, g, *iterDir, *runID, *iteration, *taskID)
 	if err != nil {
@@ -170,6 +173,13 @@ func commandTaskTodoAdd(ctx context.Context, g globals, args []string) error {
 	if taskTodoWorkStarted(todos.Items) {
 		return codedError{2, errors.New("cannot add task TODOs after task work has started")}
 	}
+	insertAfter := *after
+	if insertAfter == -1 {
+		insertAfter = len(todos.Items)
+	}
+	if insertAfter < 0 || insertAfter > len(todos.Items) {
+		return codedError{2, fmt.Errorf("--after index %d is out of range", *after)}
+	}
 	subject, err := buildLoopCommitSubject(*kind, strings.Join(fs.Args(), " "), loopCommitMessageMaxLength)
 	if err != nil {
 		return codedError{2, err}
@@ -182,11 +192,11 @@ func commandTaskTodoAdd(ctx context.Context, g globals, args []string) error {
 		Acceptance:    append([]string(nil), acceptance...),
 		CommitMessage: strings.Join(fs.Args(), " "),
 	}
-	todos.Items = append(todos.Items, item)
+	todos.Items = append(todos.Items[:insertAfter], append([]taskTodoItem{item}, todos.Items[insertAfter:]...)...)
 	if err := writeTaskTodoFile(mergeCtx, todos); err != nil {
 		return codedError{1, err}
 	}
-	index := len(todos.Items)
+	index := insertAfter + 1
 	appendTaskMergeEvent(mergeCtx, runstate.Event{"type": "task.todo.added", "task_id": mergeCtx.TaskID, "index": index, "title": item.Title, "commit_subject": subject})
 	return printResult(g, map[string]any{"task": mergeCtx.TaskID, "index": index, "todo": taskTodoJSONItem(index, item)}, fmt.Sprintf("added task todo %d\n", index))
 }
@@ -218,6 +228,54 @@ func commandTaskTodoList(ctx context.Context, g globals, args []string) error {
 		return codedError{1, err}
 	}
 	return printResult(g, map[string]any{"task": mergeCtx.TaskID, "items": taskTodoJSONItems(todos.Items)}, renderTaskTodoList(todos.Items))
+}
+
+func commandTaskTodoMove(ctx context.Context, g globals, args []string) error {
+	fs := flag.NewFlagSet("task todo move", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	iterDir := fs.String("iteration-dir", "", "iteration directory")
+	dirAlias := fs.String("dir", "", "iteration directory")
+	runID := fs.String("run", os.Getenv("LOOP_RUN_ID"), "run id")
+	iteration := fs.String("iteration", defaultIterationEnv(), "iteration id")
+	taskID := fs.String("task", os.Getenv("LOOP_TASK_ID"), "task id")
+	after := fs.Int("after", -1, "move after 1-based TODO index; 0 moves to the top")
+	args = flagsFirst(args, map[string]bool{"iteration-dir": true, "dir": true, "run": true, "iteration": true, "task": true, "after": true})
+	if err := fs.Parse(args); err != nil {
+		return codedError{2, err}
+	}
+	if *dirAlias != "" {
+		*iterDir = *dirAlias
+	}
+	if fs.NArg() != 1 || *after == -1 {
+		return codedError{2, fmt.Errorf("usage: loop task todo move <n> --after <n> [--task <id>] [--iteration-dir <dir>|--run <run-id> --iteration <n>]")}
+	}
+	index, err := parseTodoIndex(fs.Arg(0))
+	if err != nil {
+		return codedError{2, err}
+	}
+	mergeCtx, err := resolveTaskMergeContext(ctx, g, *iterDir, *runID, *iteration, *taskID)
+	if err != nil {
+		return codedError{2, err}
+	}
+	if err := requireCleanTaskWorktree(ctx, mergeCtx.TaskWorktree, "move task TODOs before editing"); err != nil {
+		return codedError{1, err}
+	}
+	todos, err := readTaskTodoFile(mergeCtx)
+	if err != nil {
+		return codedError{1, err}
+	}
+	if taskTodoWorkStarted(todos.Items) {
+		return codedError{2, errors.New("cannot move task TODOs after task work has started")}
+	}
+	newIndex, err := moveTaskTodoItem(&todos, index, *after)
+	if err != nil {
+		return codedError{2, err}
+	}
+	if err := writeTaskTodoFile(mergeCtx, todos); err != nil {
+		return codedError{1, err}
+	}
+	appendTaskMergeEvent(mergeCtx, runstate.Event{"type": "task.todo.moved", "task_id": mergeCtx.TaskID, "index": index, "after": *after, "new_index": newIndex})
+	return printResult(g, map[string]any{"task": mergeCtx.TaskID, "index": newIndex, "todo": taskTodoJSONItem(newIndex, todos.Items[newIndex-1])}, fmt.Sprintf("moved task todo %d to %d\n", index, newIndex))
 }
 
 func commandTaskTodoStart(ctx context.Context, g globals, args []string) error {
@@ -630,6 +688,34 @@ func taskTodoWorkStarted(items []taskTodoItem) bool {
 		}
 	}
 	return false
+}
+
+func moveTaskTodoItem(todos *taskTodoFile, index, after int) (int, error) {
+	if len(todos.Items) == 0 {
+		return 0, errors.New("task TODO list is empty")
+	}
+	if index < 1 || index > len(todos.Items) {
+		return 0, fmt.Errorf("todo index %d is out of range", index)
+	}
+	if after < 0 || after > len(todos.Items) {
+		return 0, fmt.Errorf("--after index %d is out of range", after)
+	}
+	if after == index {
+		return 0, fmt.Errorf("cannot move todo %d after itself", index)
+	}
+	if after == index-1 {
+		return index, nil
+	}
+	item := todos.Items[index-1]
+	items := append([]taskTodoItem{}, todos.Items[:index-1]...)
+	items = append(items, todos.Items[index:]...)
+	insertAt := after
+	if after > index {
+		insertAt = after - 1
+	}
+	items = append(items[:insertAt], append([]taskTodoItem{item}, items[insertAt:]...)...)
+	todos.Items = items
+	return insertAt + 1, nil
 }
 
 func requireCleanTaskWorktree(ctx context.Context, worktree, purpose string) error {

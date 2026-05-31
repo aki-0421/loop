@@ -54,6 +54,50 @@ func TestTaskTodoRejectsNoChangeComplete(t *testing.T) {
 	}
 }
 
+func TestTaskTodoAddAfterAndMoveReorderPendingTodos(t *testing.T) {
+	ctx := context.Background()
+	repo, iterDir, taskDir := setupTaskTodoIteration(t)
+	withWorkingDir(t, repo)
+
+	if err := commandTask(ctx, globals{}, []string{"todo", "add", "--iteration-dir", iterDir, "--task", "fake-task", "--type", "F", "--title", "Wire route", "--acceptance", "route delegates to the screen.", "wire", "route"}); err != nil {
+		t.Fatalf("todo add first: %v", err)
+	}
+	if err := commandTask(ctx, globals{}, []string{"todo", "add", "--iteration-dir", iterDir, "--task", "fake-task", "--after", "0", "--type", "T", "--title", "Add screen tests", "--acceptance", "screen tests cover the fixtures.", "add", "screen", "tests"}); err != nil {
+		t.Fatalf("todo add at top: %v", err)
+	}
+	if err := commandTask(ctx, globals{}, []string{"todo", "move", "2", "--iteration-dir", iterDir, "--task", "fake-task", "--after", "0"}); err != nil {
+		t.Fatalf("todo move: %v", err)
+	}
+
+	todos := readTaskTodoForTest(t, taskDir)
+	if len(todos.Items) != 2 {
+		t.Fatalf("task TODO count = %d, want 2", len(todos.Items))
+	}
+	if todos.Items[0].Title != "Wire route" || todos.Items[1].Title != "Add screen tests" {
+		t.Fatalf("task TODO order = %#v", todos.Items)
+	}
+}
+
+func TestTaskTodoMoveRejectsStartedWork(t *testing.T) {
+	ctx := context.Background()
+	repo, iterDir, _ := setupTaskTodoIteration(t)
+	withWorkingDir(t, repo)
+
+	if err := commandTask(ctx, globals{}, []string{"todo", "add", "--iteration-dir", iterDir, "--task", "fake-task", "--type", "F", "--title", "Add marker", "--acceptance", "marker.txt exists.", "add", "marker"}); err != nil {
+		t.Fatalf("todo add first: %v", err)
+	}
+	if err := commandTask(ctx, globals{}, []string{"todo", "add", "--iteration-dir", iterDir, "--task", "fake-task", "--type", "T", "--title", "Add marker tests", "--acceptance", "marker tests exist.", "add", "marker", "tests"}); err != nil {
+		t.Fatalf("todo add second: %v", err)
+	}
+	if err := commandTask(ctx, globals{}, []string{"todo", "start", "1", "--iteration-dir", iterDir, "--task", "fake-task"}); err != nil {
+		t.Fatalf("todo start: %v", err)
+	}
+	err := commandTask(ctx, globals{}, []string{"todo", "move", "2", "--iteration-dir", iterDir, "--task", "fake-task", "--after", "0"})
+	if err == nil || !strings.Contains(err.Error(), "cannot move task TODOs after task work has started") {
+		t.Fatalf("move after work started error = %v", err)
+	}
+}
+
 func TestTaskMergeRejectsIncompleteTodos(t *testing.T) {
 	ctx := context.Background()
 	repo, iterDir, _ := setupTaskTodoIteration(t)

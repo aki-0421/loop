@@ -71,7 +71,7 @@ Task rules:
 
 ## Coding Role
 
-Complete only the assigned task from the prompt. Understand the task goal and success criteria, then inspect the repository before editing. Before implementation, create a task-local TODO list through `loop task todo add`; each TODO corresponds to exactly one task-branch commit. TODO titles and commit messages must be specific to the assigned task; do not use generic placeholder text such as "Implement behavior".
+Complete only the assigned task from the prompt. Understand the task goal and success criteria, then inspect the repository before editing. Before implementation, create a task-local TODO list through `loop task todo add`; each TODO corresponds to exactly one task-branch commit. TODO titles and commit messages must be specific to the assigned task; do not use generic placeholder text such as "Implement behavior". Run task TODO mutation commands one at a time. If you need to adjust pending order before starting work, use `loop task todo add --after <n>` or `loop task todo move <n> --after <n>`; `--after 0` places an item at the top.
 
 Process TODOs serially:
 

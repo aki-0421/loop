@@ -71,6 +71,8 @@ loop handoff write task-result --task "$LOOP_TASK_ID" --file "$LOOP_TASK_DIR/tas
 loop task merge --type F complete "$LOOP_TASK_ID"
 ```
 
+Pending task TODOs can be placed or reordered before implementation with `loop task todo add --after <n>` and `loop task todo move <n> --after <n>`. `--after 0` places an item at the top.
+
 If `loop task merge` reports conflicts, the coding agent resolves the conflicts in the printed iteration worktree and completes the merge with `loop task merge --continue`.
 
 Review agents write:

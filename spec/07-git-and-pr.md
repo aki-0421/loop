@@ -94,7 +94,7 @@ Default prefixes:
 
 The CLI rejects commits that do not match the loop commit pattern.
 
-Task TODOs are sized so that one completed TODO corresponds to one task-branch commit. A TODO cannot be marked complete unless `loop task todo complete` creates the matching commit.
+Task TODOs are sized so that one completed TODO corresponds to one task-branch commit. Pending TODOs may be reordered before work starts, but a TODO cannot be marked complete unless `loop task todo complete` creates the matching commit.
 
 ## Local merge mode
 
