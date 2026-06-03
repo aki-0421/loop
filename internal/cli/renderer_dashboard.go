@@ -46,8 +46,11 @@ type rendererSnapshot struct {
 	TokensEstimated  bool
 	LatestMsg        string
 	Confirmation     *rendererConfirmation
+	PendingPRs       []rendererPendingPullRequest
 	Sleeping         bool
 	SleepSince       time.Time
+	SleepTitle       string
+	SleepStatus      string
 	SleepDetail      string
 	GracefulShutdown bool
 }
@@ -145,6 +148,11 @@ func renderFocusedDashboard(s rendererSnapshot, symbols dashboardSymbols, width,
 	}
 	lines = append(lines, "")
 
+	if pendingLines := pendingPullRequestBlock(s, symbols, width, contentWidth, minInt(4, maxTaskRows(height, len(lines)))); len(pendingLines) > 0 {
+		lines = append(lines, pendingLines...)
+		lines = append(lines, "")
+	}
+
 	taskLimit := maxTaskRows(height, len(lines))
 	if total > 0 {
 		lines = append(lines, taskListBlock(s, symbols, width, contentWidth, taskLimit, items)...)
@@ -203,9 +211,17 @@ func renderSleepDashboard(s rendererSnapshot, symbols dashboardSymbols, width, h
 	if contentWidth < 32 {
 		contentWidth = width - 2
 	}
+	title := strings.TrimSpace(s.SleepTitle)
+	if title == "" {
+		title = "GitHub Sleep Mode"
+	}
+	status := strings.TrimSpace(s.SleepStatus)
+	if status == "" {
+		status = "Waiting for GitHub Issue/PR updates"
+	}
 	detail := strings.TrimSpace(s.SleepDetail)
 	if detail == "" {
-		detail = "waiting for GitHub Issue/PR updates"
+		detail = status
 	}
 	detail = strings.TrimPrefix(detail, "sleeping; ")
 	sleepSince := s.SleepSince
@@ -226,13 +242,16 @@ func renderSleepDashboard(s rendererSnapshot, symbols dashboardSymbols, width, h
 	}
 	lines = append(lines,
 		"",
-		centerLine(colorize(s, ansiCyan+ansiBold, "GitHub Sleep Mode"), width),
+		centerLine(colorize(s, ansiCyan+ansiBold, title), width),
 		"",
-		centerLine(spinnerSymbol(s)+" Waiting for GitHub Issue/PR updates", width),
+		centerLine(spinnerSymbol(s)+" "+status, width),
 		centerLine(colorize(s, ansiDim, ellipsize(detail, contentWidth)), width),
-		"",
-		centerLine(colorize(s, ansiDim, sleepHint), width),
 	)
+	if pendingLines := pendingPullRequestBlock(s, symbols, width, contentWidth, minInt(5, maxTaskRows(height, len(lines)+2))); len(pendingLines) > 0 {
+		lines = append(lines, "")
+		lines = append(lines, pendingLines...)
+	}
+	lines = append(lines, "", centerLine(colorize(s, ansiDim, sleepHint), width))
 	return fitCanvasLines(lines, colorize(s, ansiDim, footerText(s, symbols)), width, height)
 }
 
@@ -493,6 +512,101 @@ func taskListBlock(s rendererSnapshot, symbols dashboardSymbols, screenWidth, bl
 	return lines
 }
 
+func pendingPullRequestBlock(s rendererSnapshot, symbols dashboardSymbols, screenWidth, blockWidth, limit int) []string {
+	if limit <= 1 || len(s.PendingPRs) == 0 {
+		return nil
+	}
+	maxBlockWidth := blockWidth
+	if maxBlockWidth > 72 {
+		maxBlockWidth = 72
+	}
+	rows := []string{colorize(s, ansiCyan+ansiBold, "Review Pending")}
+	visible := limit - 1
+	if visible > len(s.PendingPRs) {
+		visible = len(s.PendingPRs)
+	}
+	for i := 0; i < visible; i++ {
+		label := pendingPullRequestDisplayText(s.PendingPRs[i])
+		if label == "" {
+			continue
+		}
+		marker := colorize(s, ansiYellow+ansiBold, spinnerSymbol(s))
+		available := maxBlockWidth - displayWidth(marker) - 1
+		if available < 12 {
+			available = 12
+		}
+		rows = append(rows, marker+" "+ellipsize(label, available))
+	}
+	if hidden := len(s.PendingPRs) - visible; hidden > 0 && len(rows) < limit {
+		rows = append(rows, colorize(s, ansiDim, fmt.Sprintf("%d more pending", hidden)))
+	}
+	if len(rows) <= 1 {
+		return nil
+	}
+	width := 1
+	for _, row := range rows {
+		if w := displayWidth(row); w > width {
+			width = w
+		}
+	}
+	if width > maxBlockWidth {
+		width = maxBlockWidth
+	}
+	lines := make([]string, 0, len(rows))
+	for _, row := range rows {
+		lines = append(lines, centeredBlockLine(row, screenWidth, width))
+	}
+	return lines
+}
+
+func pendingPullRequestDisplayText(item rendererPendingPullRequest) string {
+	title := strings.TrimSpace(item.Title)
+	if title == "" {
+		title = strings.TrimSpace(item.Branch)
+	}
+	id := pullRequestDisplayID(item.PR)
+	switch {
+	case id != "" && title != "":
+		return id + " " + title
+	case id != "":
+		return id
+	case title != "":
+		return strings.TrimSpace(item.PR + " " + title)
+	default:
+		return strings.TrimSpace(item.PR)
+	}
+}
+
+func pullRequestDisplayID(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	if strings.HasPrefix(raw, "#") {
+		raw = strings.TrimSpace(strings.TrimPrefix(raw, "#"))
+	}
+	trimmed := strings.TrimRight(raw, "/")
+	if idx := strings.LastIndex(trimmed, "/"); idx >= 0 {
+		trimmed = trimmed[idx+1:]
+	}
+	if trimmed != "" && allDigits(trimmed) {
+		return "#" + trimmed
+	}
+	return raw
+}
+
+func allDigits(text string) bool {
+	if text == "" {
+		return false
+	}
+	for _, r := range text {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
 func styledTaskMarker(s rendererSnapshot, symbols dashboardSymbols, item taskItem, active bool) string {
 	marker := taskMarker(s, item, active, symbols)
 	switch {
@@ -608,11 +722,14 @@ func renderPlainStatusSnapshot(s rendererSnapshot, width, height int) []string {
 	if s.Sleeping {
 		current := strings.TrimSpace(s.SleepDetail)
 		if current == "" {
-			current = "waiting for GitHub Issue/PR updates"
+			current = firstNonEmpty(s.SleepStatus, "waiting for GitHub Issue/PR updates")
 		}
 		lines := []string{
 			fmt.Sprintf("loop sleeping iter=%s elapsed=%s", iterationDisplay(s), formatDuration(s.Now.Sub(s.Started))),
 			truncateDisplay(current, width),
+		}
+		if len(s.PendingPRs) > 0 && height > len(lines) {
+			lines = append(lines, truncateDisplay("pending PRs: "+rendererPendingPullRequestSummary(s.PendingPRs), width))
 		}
 		if height > 2 {
 			lines = append(lines, "polling GitHub every 5m")
@@ -633,6 +750,9 @@ func renderPlainStatusSnapshot(s rendererSnapshot, width, height int) []string {
 	lines := []string{
 		fmt.Sprintf("loop %s iter=%s elapsed=%s", s.Stage, iter, formatDuration(s.Now.Sub(s.Started))),
 		truncateDisplay(current, width),
+	}
+	if len(s.PendingPRs) > 0 && height > len(lines) {
+		lines = append(lines, truncateDisplay("pending PRs: "+rendererPendingPullRequestSummary(s.PendingPRs), width))
 	}
 	if height > 2 {
 		lines = append(lines, fmt.Sprintf("tokens: %s in, %s out", formatTokenCount(s.InputTokens, s.TokensEstimated), formatTokenCount(s.OutputTokens, s.TokensEstimated)))

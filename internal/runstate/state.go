@@ -30,14 +30,15 @@ const (
 )
 
 type State struct {
-	SchemaVersion    int               `json:"schema_version"`
-	RunID            string            `json:"run_id"`
-	Goal             string            `json:"goal,omitempty"`
-	BaseBranch       string            `json:"base_branch"`
-	Agent            string            `json:"agent"`
-	CurrentIteration string            `json:"current_iteration"`
-	Stage            Stage             `json:"stage"`
-	Iterations       []IterationRecord `json:"iterations"`
+	SchemaVersion       int                  `json:"schema_version"`
+	RunID               string               `json:"run_id"`
+	Goal                string               `json:"goal,omitempty"`
+	BaseBranch          string               `json:"base_branch"`
+	Agent               string               `json:"agent"`
+	CurrentIteration    string               `json:"current_iteration"`
+	Stage               Stage                `json:"stage"`
+	Iterations          []IterationRecord    `json:"iterations"`
+	PendingPullRequests []PendingPullRequest `json:"pending_pull_requests,omitempty"`
 }
 
 type IterationRecord struct {
@@ -49,6 +50,18 @@ type IterationRecord struct {
 	ResultPath      string `json:"result_path,omitempty"`
 	SummarySentence string `json:"summary_sentence,omitempty"`
 	ShouldFullyStop bool   `json:"should_fully_stop,omitempty"`
+}
+
+type PendingPullRequest struct {
+	PR           string   `json:"pr"`
+	Branch       string   `json:"branch"`
+	Base         string   `json:"base"`
+	Title        string   `json:"title,omitempty"`
+	RunID        string   `json:"run_id,omitempty"`
+	IterationID  string   `json:"iteration_id,omitempty"`
+	ChangedFiles []string `json:"changed_files,omitempty"`
+	CreatedAt    string   `json:"created_at,omitempty"`
+	Status       string   `json:"status"`
 }
 
 func New(runID, goal, baseBranch, agent string) State {

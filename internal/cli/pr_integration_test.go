@@ -652,6 +652,76 @@ git:
 	}
 }
 
+func TestPRChecksMarksHumanReviewPRWaiting(t *testing.T) {
+	ctx := context.Background()
+	repo := newCleanupRepo(t)
+	addBareOrigin(t, repo)
+	mustWrite(t, filepath.Join(repo, ".loop", "config.yaml"), `version: 1
+
+git:
+  baseBranch: develop
+  integration:
+    mode: pr
+    pr:
+      push: true
+      waitChecks: true
+      checksStartupDelaySeconds: 0
+      checksDiscoveryTimeoutSeconds: 0
+      checksPollIntervalSeconds: 1
+      reviewMode: parallel_human_review
+`)
+	git(t, repo, "add", ".loop/config.yaml")
+	git(t, repo, "commit", "-m", "T: add human review pr checks fixture")
+	git(t, repo, "push", "origin", "develop")
+	git(t, repo, "checkout", "-b", "test/human-review", "develop")
+	mustWrite(t, filepath.Join(repo, "human-review.txt"), "change\n")
+	git(t, repo, "add", "human-review.txt")
+	git(t, repo, "commit", "-m", "F: add human review fixture")
+
+	runDir := filepath.Join(repo, ".loop", "runs", "run", "iterations", "0001")
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mustWriteRuntimeArtifact(t, runDir, map[string]any{
+		"run_id":            "run",
+		"iteration_id":      "0001",
+		"base_branch":       "develop",
+		"initial_branch":    "wip/0001",
+		"current_branch":    "test/human-review",
+		"branch_renamed":    true,
+		"integration_mode":  "pr",
+		"pr_review_mode":    "parallel_human_review",
+		"pull_request_mode": true,
+		"role_orchestrated": true,
+		"workdir":           repo,
+	})
+	if err := writePRState(runDir, prState{SchemaVersion: 1, Status: "created", PR: "1", Branch: "test/human-review", Base: "develop"}); err != nil {
+		t.Fatal(err)
+	}
+
+	ghDir := t.TempDir()
+	ghLog := filepath.Join(ghDir, "gh.log")
+	writePassingFakeGH(t, ghDir, ghLog)
+	t.Setenv("PATH", ghDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	withWorkingDir(t, repo)
+
+	if _, err := captureStdout(t, func() error {
+		return commandPR(ctx, globals{JSON: true, NoColor: true}, []string{"checks", "--iteration-dir", runDir})
+	}); err != nil {
+		t.Fatalf("loop pr checks: %v", err)
+	}
+	state, ok, err := readPRState(runDir)
+	if err != nil || !ok {
+		t.Fatalf("read pr-state: ok=%v err=%v", ok, err)
+	}
+	if state.Status != "waiting_for_human" {
+		t.Fatalf("pr-state status = %q, want waiting_for_human", state.Status)
+	}
+	if err := commandPR(ctx, globals{JSON: true, NoColor: true}, []string{"merge", "--iteration-dir", runDir}); err == nil || !strings.Contains(err.Error(), "human review mode") {
+		t.Fatalf("loop pr merge error = %v, want human review rejection", err)
+	}
+}
+
 func TestPRMergeRejectsInvalidIterationCommitBeforeHostMerge(t *testing.T) {
 	ctx := context.Background()
 	repo := newCleanupRepo(t)

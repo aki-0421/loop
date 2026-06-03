@@ -55,13 +55,14 @@ type iterationWorkflowResult struct {
 	GoalComplete   bool
 	GoalEvaluation string
 	Commits        []gitx.Commit
+	Integrated     bool
 }
 
 func commandRun(ctx context.Context, g globals, args []string) error {
 	args = flagsFirst(args, map[string]bool{
 		"agent": true, "goal": true, "max-iterations": true, "base": true,
 		"resume": true, "from-iteration": true, "keep-branches": true, "keep-worktrees": true,
-		"human-review": true,
+		"human-review": true, "review-mode": true,
 	})
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -71,6 +72,7 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 	prFlag := fs.Bool("pr", false, "use pull request integration")
 	base := fs.String("base", "", "base branch")
 	humanReview := fs.Bool("human-review", false, "open pull requests and pause for external post-hoc review before merge")
+	reviewMode := fs.String("review-mode", "", "PR review mode: auto_merge, parallel_human_review, or serial_human_review")
 	resumeID := fs.String("resume", "", "accepted for older scripts; use loop resume")
 	fromIteration := fs.Int("from-iteration", 0, "accepted for older scripts; currently ignored")
 	keepBranches := fs.String("keep-branches", "", "accepted for older scripts; cleanup is automatic")
@@ -104,15 +106,24 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 	}
 
 	overrides := config.Overrides{Agent: *agentName, BaseBranch: *base, NoColor: g.NoColor}
+	humanReviewSet := false
+	reviewModeSet := false
 	fs.Visit(func(f *flag.Flag) {
 		switch f.Name {
 		case "max-iterations":
 			overrides.MaxIterations = maxIterations
 		case "human-review":
+			humanReviewSet = true
 			v := *humanReview
 			overrides.HumanReview = &v
+		case "review-mode":
+			reviewModeSet = true
+			overrides.ReviewMode = *reviewMode
 		}
 	})
+	if humanReviewSet && !reviewModeSet {
+		overrides.ReviewMode = config.ReviewModeSerialHumanReview
+	}
 	if *prFlag {
 		v := true
 		overrides.PRMode = &v
@@ -187,6 +198,8 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 			gracefulStop = true
 			break
 		}
+		refreshPendingPullRequests(ctx, root, cfg, &state, renderer)
+		_ = runstate.Write(statePath, state)
 		result, err := runOrchestratedIteration(ctx, orchestrationRequest{
 			Globals:         g,
 			Config:          cfg,
@@ -210,7 +223,7 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 		if *dryRun {
 			return printResult(g, map[string]any{"run_id": runID, "prompt": filepath.Join(rel(root, runDir), "iterations", "0001", "prompt.md")}, fmt.Sprintf("Dry run created prompt: %s\n", filepath.Join(rel(root, runDir), "iterations", "0001", "prompt.md")))
 		}
-		if len(result.Commits) > 0 {
+		if result.Integrated {
 			mergedCount++
 			renderer.Merged(mergedCount)
 		}
@@ -280,10 +293,12 @@ func runOrchestratedIteration(ctx context.Context, req orchestrationRequest) (re
 	paths.IterationBranch = initialBranch
 	paths.CurrentBranch = initialBranch
 	paths.IntegrationMode = cfg.Git.Integration.Mode
+	paths.PRReviewMode = cfg.Git.Integration.PR.ReviewMode
 	paths.PullRequestMode = cfg.Git.Integration.Mode == "pr"
 	paths.RoleOrchestrated = true
 	paths.WorkDir = iterationWorktree
 	paths.IterationWorktree = iterationWorktree
+	paths.PendingPRs = append([]runstate.PendingPullRequest(nil), req.State.PendingPullRequests...)
 	cleanupRegistered := false
 	if !req.DryRun {
 		defer func() {
@@ -372,6 +387,32 @@ func runOrchestratedIteration(ctx context.Context, req orchestrationRequest) (re
 		req.State.Iterations[len(req.State.Iterations)-1].ShouldFullyStop = goalComplete
 		req.State.Iterations[len(req.State.Iterations)-1].SummarySentence = tree.Summary
 		_ = runstate.Write(req.StatePath, *req.State)
+		if tree.WaitForPendingPRs {
+			if cfg.Git.Integration.Mode != "pr" || cfg.Git.Integration.PR.ReviewMode != config.ReviewModeParallelHumanReview {
+				return iterationWorkflowResult{}, codedError{4, errors.New("wait_for_pending_prs requires parallel_human_review PR mode")}
+			}
+			if len(req.State.PendingPullRequests) == 0 {
+				return iterationWorkflowResult{}, codedError{4, errors.New("wait_for_pending_prs requires at least one pending pull request")}
+			}
+			req.State.Iterations[len(req.State.Iterations)-1].ShouldFullyStop = false
+			req.State.Stage = runstate.StagePullRequest
+			_ = runstate.Write(req.StatePath, *req.State)
+			issues := cleanup.cleanup(ctx)
+			if activeIssues := cleanupDisposableIterationFiles(paths.ActiveDir, paths.Events); len(activeIssues) > 0 {
+				issues = append(issues, activeIssues...)
+			}
+			if len(issues) > 0 {
+				appendErrorLog(paths.Errors, "pending PR wait cleanup failed: "+strings.Join(issues, "; "))
+			}
+			cleanup.Active = false
+			if err := waitForPendingPullRequestUpdate(runGracefulContext(ctx), req.Root, cfg, req.State, req.StatePath, paths, req.Renderer); err != nil {
+				if runGracefulShutdownRequested(ctx) {
+					return iterationWorkflowResult{}, codedError{interruptExitCode, nil}
+				}
+				return iterationWorkflowResult{}, codedError{6, err}
+			}
+			return iterationWorkflowResult{Summary: tree.Summary, GoalComplete: false, GoalEvaluation: tree.GoalEvaluation}, nil
+		}
 		_ = cleanup.cleanup(ctx)
 		if issues := cleanupDisposableIterationFiles(paths.ActiveDir, paths.Events); len(issues) > 0 {
 			appendErrorLog(paths.Errors, "iteration file cleanup failed: "+strings.Join(issues, "; "))
@@ -484,20 +525,75 @@ func runOrchestratedIteration(ctx context.Context, req orchestrationRequest) (re
 	summary := firstNonEmpty(strings.TrimSpace(review.Summary), tree.Summary)
 	goalComplete := review.GoalComplete && strings.TrimSpace(req.Goal) != ""
 	finalBranch := firstNonEmpty(paths.IterationBranch, paths.CurrentBranch, initialBranch)
+	integrated := false
+	pendingPR := false
 	if cfg.Git.Integration.Mode == "pr" {
 		state, ok, err := readPRState(iterDir)
 		if err != nil {
 			return iterationWorkflowResult{}, codedError{6, err}
 		}
-		if !ok || state.Status != "merged" {
-			return iterationWorkflowResult{}, codedError{6, errors.New("approved PR-mode review must merge the pull request with `loop pr merge` before approval")}
+		if !ok {
+			return iterationWorkflowResult{}, codedError{6, errors.New("approved PR-mode review must create the pull request before approval")}
 		}
 		finalBranch = firstNonEmpty(state.Branch, initialBranch)
 		cleanup.Branch = finalBranch
-		if err := finalizeAgentOwnedPR(ctx, rootRunner, cleanup, iterationWorktree, req.Root, cfg, finalBranch); err != nil {
-			return iterationWorkflowResult{}, codedError{6, err}
+		switch cfg.Git.Integration.PR.ReviewMode {
+		case config.ReviewModeAutoMerge:
+			if state.Status != "merged" {
+				return iterationWorkflowResult{}, codedError{6, errors.New("approved PR-mode review must merge the pull request with `loop pr merge` before approval")}
+			}
+			if err := finalizeAgentOwnedPR(ctx, rootRunner, cleanup, iterationWorktree, req.Root, cfg, finalBranch); err != nil {
+				return iterationWorkflowResult{}, codedError{6, err}
+			}
+			cleanup.Integrated = true
+			integrated = true
+		case config.ReviewModeParallelHumanReview:
+			if state.Status == "merged" {
+				removePendingPullRequest(req.State, state.PR)
+				if err := finalizeAgentOwnedPR(ctx, rootRunner, cleanup, iterationWorktree, req.Root, cfg, finalBranch); err != nil {
+					return iterationWorkflowResult{}, codedError{6, err}
+				}
+				cleanup.Integrated = true
+				integrated = true
+				break
+			}
+			if state.Status != "waiting_for_human" {
+				return iterationWorkflowResult{}, codedError{6, errors.New("approved human-review PR must run `loop pr checks` and leave pr-state.status=waiting_for_human")}
+			}
+			changedFiles, _ := changedFilesForBranch(ctx, gitx.Runner{Dir: iterationWorktree}, cfg.Git.BaseBranch, finalBranch)
+			upsertPendingPullRequest(req.State, pendingPullRequestFromState(req.RunID, iterationID, state, changedFiles))
+			req.Renderer.PendingPullRequests(req.State.PendingPullRequests)
+			if err := finalizePendingHumanPR(ctx, rootRunner, cleanup, iterationWorktree, req.Root, cfg, finalBranch); err != nil {
+				return iterationWorkflowResult{}, codedError{6, err}
+			}
+			pendingPR = true
+			goalComplete = false
+		case config.ReviewModeSerialHumanReview:
+			if state.Status != "merged" {
+				if state.Status != "waiting_for_human" {
+					return iterationWorkflowResult{}, codedError{6, errors.New("approved human-review PR must run `loop pr checks` and leave pr-state.status=waiting_for_human")}
+				}
+				req.State.Stage = runstate.StagePullRequest
+				_ = runstate.Write(req.StatePath, *req.State)
+				req.Renderer.Stage(runstate.StagePullRequest, "waiting for human PR merge")
+				mergedState, err := waitForHumanPRMerge(runGracefulContext(ctx), iterationWorktree, iterDir, cfg, paths, state, req.Renderer)
+				if err != nil {
+					if runGracefulShutdownRequested(ctx) {
+						return iterationWorkflowResult{}, codedError{interruptExitCode, nil}
+					}
+					return iterationWorkflowResult{}, codedError{6, err}
+				}
+				state = mergedState
+			}
+			removePendingPullRequest(req.State, state.PR)
+			if err := finalizeAgentOwnedPR(ctx, rootRunner, cleanup, iterationWorktree, req.Root, cfg, finalBranch); err != nil {
+				return iterationWorkflowResult{}, codedError{6, err}
+			}
+			cleanup.Integrated = true
+			integrated = true
+		default:
+			return iterationWorkflowResult{}, codedError{3, fmt.Errorf("unsupported PR review mode %q", cfg.Git.Integration.PR.ReviewMode)}
 		}
-		cleanup.Integrated = true
 	} else {
 		if err := rootRunner.RemoveWorktree(ctx, iterationWorktree, false); err != nil {
 			return iterationWorkflowResult{}, codedError{6, err}
@@ -511,9 +607,12 @@ func runOrchestratedIteration(ctx context.Context, req orchestrationRequest) (re
 		}
 		cleanup.Integrated = true
 		_ = rootRunner.DeleteBranch(ctx, finalBranch, true)
+		integrated = true
 	}
-	if err := refreshTargetBranch(ctx, rootRunner, cfg.Git.BaseBranch); err != nil {
-		return iterationWorkflowResult{}, codedError{1, err}
+	if integrated || pendingPR {
+		if err := refreshTargetBranch(ctx, rootRunner, cfg.Git.BaseBranch); err != nil {
+			return iterationWorkflowResult{}, codedError{1, err}
+		}
 	}
 	if issues := cleanupDisposableIterationFiles(paths.ActiveDir, paths.Events); len(issues) > 0 {
 		appendErrorLog(paths.Errors, "iteration file cleanup failed: "+strings.Join(issues, "; "))
@@ -523,7 +622,7 @@ func runOrchestratedIteration(ctx context.Context, req orchestrationRequest) (re
 	req.State.Iterations[len(req.State.Iterations)-1].SummarySentence = summary
 	req.State.Iterations[len(req.State.Iterations)-1].ShouldFullyStop = goalComplete
 	_ = runstate.Write(req.StatePath, *req.State)
-	return iterationWorkflowResult{Summary: summary, GoalComplete: goalComplete, GoalEvaluation: review.GoalEvaluation, Commits: allCommits}, nil
+	return iterationWorkflowResult{Summary: summary, GoalComplete: goalComplete, GoalEvaluation: review.GoalEvaluation, Commits: allCommits, Integrated: integrated}, nil
 }
 
 type taskSetRequest struct {
@@ -636,6 +735,214 @@ func updateOrchestratedBranchState(req orchestrationRequest, cleanup *iterationC
 	}
 	req.State.Iterations[len(req.State.Iterations)-1].BranchCurrent = branch
 	_ = runstate.Write(req.StatePath, *req.State)
+}
+
+func pendingPullRequestFromState(runID, iterationID string, state prState, changedFiles []string) runstate.PendingPullRequest {
+	return runstate.PendingPullRequest{
+		PR:           state.PR,
+		Branch:       state.Branch,
+		Base:         state.Base,
+		Title:        state.Title,
+		RunID:        runID,
+		IterationID:  iterationID,
+		ChangedFiles: changedFiles,
+		CreatedAt:    state.CreatedAt,
+		Status:       "waiting_for_human",
+	}
+}
+
+func upsertPendingPullRequest(state *runstate.State, pending runstate.PendingPullRequest) {
+	if state == nil || strings.TrimSpace(pending.PR) == "" {
+		return
+	}
+	pending.Status = firstNonEmpty(pending.Status, "waiting_for_human")
+	for i := range state.PendingPullRequests {
+		if state.PendingPullRequests[i].PR == pending.PR {
+			state.PendingPullRequests[i] = pending
+			return
+		}
+	}
+	state.PendingPullRequests = append(state.PendingPullRequests, pending)
+}
+
+func removePendingPullRequest(state *runstate.State, prID string) {
+	if state == nil || strings.TrimSpace(prID) == "" {
+		return
+	}
+	out := state.PendingPullRequests[:0]
+	for _, pending := range state.PendingPullRequests {
+		if pending.PR == prID {
+			continue
+		}
+		out = append(out, pending)
+	}
+	if len(out) == 0 {
+		state.PendingPullRequests = nil
+		return
+	}
+	state.PendingPullRequests = out
+}
+
+func refreshPendingPullRequests(ctx context.Context, root string, cfg config.Config, state *runstate.State, renderer *runRenderer) bool {
+	if state == nil {
+		return false
+	}
+	if cfg.Git.Integration.Mode != "pr" {
+		if len(state.PendingPullRequests) > 0 {
+			state.PendingPullRequests = nil
+			if renderer != nil {
+				renderer.PendingPullRequests(nil)
+			}
+			return true
+		}
+		if renderer != nil {
+			renderer.PendingPullRequests(nil)
+		}
+		return false
+	}
+	if len(state.PendingPullRequests) == 0 {
+		if renderer != nil {
+			renderer.PendingPullRequests(nil)
+		}
+		return false
+	}
+	if renderer != nil {
+		renderer.PendingPullRequests(state.PendingPullRequests)
+	}
+	runner := prRunner(cfg, root)
+	changed := false
+	out := state.PendingPullRequests[:0]
+	for _, pending := range state.PendingPullRequests {
+		if strings.TrimSpace(pending.PR) == "" {
+			changed = true
+			continue
+		}
+		current, _, err := runner.ViewState(ctx, pending.PR)
+		if err != nil {
+			out = append(out, pending)
+			continue
+		}
+		switch strings.ToLower(strings.TrimSpace(current.State)) {
+		case "merged":
+			if renderer != nil {
+				renderer.Stage(runstate.StagePullRequest, "observed merged pending PR "+pending.PR)
+			}
+			_ = refreshTargetBranch(ctx, gitx.Runner{Dir: root}, cfg.Git.BaseBranch)
+			changed = true
+			continue
+		case "closed":
+			changed = true
+			continue
+		default:
+			pending.Status = "waiting_for_human"
+			out = append(out, pending)
+		}
+	}
+	if len(out) == 0 {
+		state.PendingPullRequests = nil
+		if renderer != nil {
+			renderer.PendingPullRequests(nil)
+		}
+		return true
+	}
+	if len(out) != len(state.PendingPullRequests) {
+		changed = true
+	}
+	state.PendingPullRequests = out
+	if renderer != nil {
+		renderer.PendingPullRequests(state.PendingPullRequests)
+	}
+	return changed
+}
+
+func waitForHumanPRMerge(ctx context.Context, workDir, iterDir string, cfg config.Config, paths pathSet, state prState, renderer *runRenderer) (prState, error) {
+	if strings.TrimSpace(state.PR) == "" {
+		return state, errors.New("pull request identifier is required while waiting for human review")
+	}
+	runner := prRunner(cfg, workDir)
+	for {
+		current, _, err := runner.ViewState(ctx, state.PR)
+		if err == nil {
+			switch strings.ToLower(strings.TrimSpace(current.State)) {
+			case "merged":
+				state.Status = "merged"
+				state.MergedAt = firstNonEmpty(current.MergedAt, time.Now().UTC().Format(time.RFC3339))
+				if err := writePRState(iterDir, state); err != nil {
+					return state, err
+				}
+				_ = runstate.AppendEvent(paths.Events, runstate.Event{"type": "pr.human_review.merged", "pr": state.PR})
+				return state, nil
+			case "closed":
+				return state, fmt.Errorf("pull request %s was closed before merge", state.PR)
+			}
+		} else {
+			_ = runstate.AppendEvent(paths.Events, runstate.Event{"type": "pr.human_review.poll_failed", "pr": state.PR, "error": err.Error()})
+		}
+		_ = runstate.AppendEvent(paths.Events, runstate.Event{"type": "pr.human_review.waiting", "pr": state.PR})
+		if renderer != nil {
+			renderer.SleepWaitingForPullRequests([]runstate.PendingPullRequest{pendingPullRequestFromState("", "", state, nil)})
+		}
+		if err := waitForGitHubSleepPoll(ctx, githubSleepPollInterval, renderer); err != nil {
+			return state, err
+		}
+	}
+}
+
+func waitForPendingPullRequestUpdate(ctx context.Context, root string, cfg config.Config, state *runstate.State, statePath string, paths pathSet, renderer *runRenderer) error {
+	if state == nil || len(state.PendingPullRequests) == 0 {
+		return nil
+	}
+	for {
+		if renderer != nil {
+			renderer.SleepWaitingForPullRequests(state.PendingPullRequests)
+		}
+		_ = runstate.AppendEvent(paths.Events, runstate.Event{
+			"type":          "pr.human_review.pending_waiting",
+			"pending_count": len(state.PendingPullRequests),
+		})
+		if err := waitForGitHubSleepPoll(ctx, githubSleepPollInterval, renderer); err != nil {
+			return err
+		}
+		changed := refreshPendingPullRequests(ctx, root, cfg, state, renderer)
+		if statePath != "" {
+			_ = runstate.Write(statePath, *state)
+		}
+		if changed || len(state.PendingPullRequests) == 0 {
+			_ = runstate.AppendEvent(paths.Events, runstate.Event{
+				"type":          "pr.human_review.pending_updated",
+				"pending_count": len(state.PendingPullRequests),
+			})
+			return nil
+		}
+	}
+}
+
+func changedFilesForBranch(ctx context.Context, runner gitx.Runner, base, branch string) ([]string, error) {
+	base = strings.TrimSpace(base)
+	branch = strings.TrimSpace(branch)
+	if branch == "" {
+		return nil, nil
+	}
+	revision := branch
+	if base != "" {
+		revision = base + ".." + branch
+	}
+	out, err := runner.Run(ctx, "diff", "--name-only", revision)
+	if err != nil {
+		return nil, err
+	}
+	var files []string
+	seen := map[string]bool{}
+	for _, line := range strings.Split(out, "\n") {
+		file := strings.TrimSpace(line)
+		if file == "" || seen[file] {
+			continue
+		}
+		seen[file] = true
+		files = append(files, file)
+	}
+	sort.Strings(files)
+	return files, nil
 }
 
 func writeDiscardedTaskResult(req taskSetRequest, task workflow.Task, existing workflow.TaskResult, reason string) (workflow.TaskResult, error) {
@@ -985,6 +1292,7 @@ func runRoleAgent(ctx context.Context, cfg config.Config, workDir string, paths 
 		"LOOP_CURRENT_BRANCH":            paths.CurrentBranch,
 		"LOOP_ITERATION_WORKTREE":        paths.IterationWorktree,
 		"LOOP_INTEGRATION_MODE":          paths.IntegrationMode,
+		"LOOP_PR_REVIEW_MODE":            paths.PRReviewMode,
 		"LOOP_PULL_REQUEST_MODE":         strconv.FormatBool(paths.PullRequestMode),
 		"LOOP_PR_MODE":                   strconv.FormatBool(paths.PullRequestMode),
 		"LOOP_ROLE_ORCHESTRATED":         strconv.FormatBool(paths.RoleOrchestrated),
@@ -1031,6 +1339,12 @@ func buildRolePrompt(role string, paths pathSet, task workflow.Task, tree any, t
 	b.WriteString("Read runtime context with `loop iteration read runtime` and the instruction with `loop iteration read instruction`.\n")
 	b.WriteString("Do not run Git or GitHub commands directly; use loop-owned commands for commits, branch renames, pull requests, handoffs, and task merges.\n")
 	b.WriteString("Use `loop help agent handoff write` for the current handoff schema and command flags if needed.\n")
+	if len(paths.PendingPRs) > 0 {
+		data, _ := json.MarshalIndent(paths.PendingPRs, "", "  ")
+		b.WriteString("Runtime includes review-pending pull requests. Treat their changed_files as reserved work and avoid planning tasks that are likely to overlap, conflict with, or depend on those changes until the PRs merge.\n")
+		b.WriteString("If every safe implementation area is blocked by review-pending PRs, write an empty task tree with `wait_for_pending_prs: true` so the CLI enters PR review wait mode instead of inventing overlapping work.\n")
+		b.WriteString("\nReview-pending pull requests:\n\n```json\n" + string(data) + "\n```\n")
+	}
 	switch role {
 	case "planner":
 		b.WriteString("\nWrite one task-tree handoff:\n\n```bash\nloop handoff write task-tree --file task-tree.json\n```\n\n")
@@ -1057,7 +1371,12 @@ func buildRolePrompt(role string, paths pathSet, task workflow.Task, tree any, t
 		b.WriteString("\nTask results:\n\n```json\n" + string(resultsData) + "```\n")
 		b.WriteString("\nValidation status: " + validation.StatusFromResults(validationResults) + "\n")
 		if paths.PullRequestMode {
-			b.WriteString("\nIn pull request mode, before writing an approved review-result you must rename the iteration branch with `loop branch rename`, read the template with `loop iteration read pr-template`, write `pr-title` and `pr-body`, run `loop pr create`, run `loop pr checks`, and run `loop pr merge`. If checks fail, inspect logs as needed and write `changes_requested` findings instead of approving.\n")
+			switch paths.PRReviewMode {
+			case config.ReviewModeParallelHumanReview, config.ReviewModeSerialHumanReview:
+				b.WriteString("\nIn human-review pull request mode, before writing an approved review-result you must rename the iteration branch with `loop branch rename`, read the template with `loop iteration read pr-template`, write `pr-title` and `pr-body`, run `loop pr create`, and run `loop pr checks`. Do not run `loop pr merge`; after checks pass, `pr-state.status` must be `waiting_for_human` so a human can review and merge externally. If checks fail, inspect logs as needed and write `changes_requested` findings instead of approving.\n")
+			default:
+				b.WriteString("\nIn pull request mode, before writing an approved review-result you must rename the iteration branch with `loop branch rename`, read the template with `loop iteration read pr-template`, write `pr-title` and `pr-body`, run `loop pr create`, run `loop pr checks`, and run `loop pr merge`. If checks fail, inspect logs as needed and write `changes_requested` findings instead of approving.\n")
+			}
 		}
 		b.WriteString("\nWrite one review-result handoff:\n\n```bash\nloop handoff write review-result --file review-result.json\n```\n")
 		b.WriteString("\nThe JSON must match this schema: " + reviewResultSchemaHelpText() + "\n")

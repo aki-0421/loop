@@ -269,6 +269,7 @@ func commandRunLegacy(ctx context.Context, g globals, args []string) error {
 	args = flagsFirst(args, map[string]bool{
 		"agent": true, "goal": true, "max-iterations": true, "base": true,
 		"resume": true, "from-iteration": true, "keep-branches": true, "keep-worktrees": true,
+		"human-review": true, "review-mode": true,
 	})
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -277,6 +278,8 @@ func commandRunLegacy(ctx context.Context, g globals, args []string) error {
 	maxIterations := fs.Int("max-iterations", 0, "maximum iterations, 0 for unlimited")
 	prFlag := fs.Bool("pr", false, "use pull request integration")
 	base := fs.String("base", "", "base branch")
+	humanReview := fs.Bool("human-review", false, "open pull requests and pause for external post-hoc review before merge")
+	reviewMode := fs.String("review-mode", "", "PR review mode: auto_merge, parallel_human_review, or serial_human_review")
 	resumeID := fs.String("resume", "", "resume run id")
 	fromIteration := fs.Int("from-iteration", 0, "resume from iteration")
 	keepBranches := fs.String("keep-branches", "", "branch cleanup mode")
@@ -305,11 +308,24 @@ func commandRunLegacy(ctx context.Context, g globals, args []string) error {
 		return codedError{2, fmt.Errorf("invalid instruction file: %w", err)}
 	}
 	overrides := config.Overrides{Agent: *agentName, BaseBranch: *base, NoColor: g.NoColor}
+	humanReviewSet := false
+	reviewModeSet := false
 	fs.Visit(func(f *flag.Flag) {
-		if f.Name == "max-iterations" {
+		switch f.Name {
+		case "max-iterations":
 			overrides.MaxIterations = maxIterations
+		case "human-review":
+			humanReviewSet = true
+			v := *humanReview
+			overrides.HumanReview = &v
+		case "review-mode":
+			reviewModeSet = true
+			overrides.ReviewMode = *reviewMode
 		}
 	})
+	if humanReviewSet && !reviewModeSet {
+		overrides.ReviewMode = config.ReviewModeSerialHumanReview
+	}
 	if *prFlag {
 		v := true
 		overrides.PRMode = &v
@@ -433,6 +449,7 @@ func commandRunLegacy(ctx context.Context, g globals, args []string) error {
 		paths.InitialBranch = initialBranch
 		paths.CurrentBranch = initialBranch
 		paths.IntegrationMode = cfg.Git.Integration.Mode
+		paths.PRReviewMode = cfg.Git.Integration.PR.ReviewMode
 		paths.PullRequestMode = cfg.Git.Integration.Mode == "pr"
 		paths.WorkDir = workDir
 		cleanup.EventLogPath = paths.Events
@@ -1826,12 +1843,14 @@ type pathSet struct {
 	CurrentBranch     string
 	BranchRenamed     bool
 	IntegrationMode   string
+	PRReviewMode      string
 	PullRequestMode   bool
 	RoleOrchestrated  bool
 	WorkDir           string
 	TaskID            string
 	TaskDir           string
 	IterationWorktree string
+	PendingPRs        []runstate.PendingPullRequest
 	AgentPromptExtra  string
 }
 
@@ -1878,9 +1897,13 @@ func writeRuntimeArtifact(paths pathSet) error {
 		"current_branch":    paths.CurrentBranch,
 		"branch_renamed":    branchRenamed,
 		"integration_mode":  paths.IntegrationMode,
+		"pr_review_mode":    paths.PRReviewMode,
 		"pull_request_mode": paths.PullRequestMode,
 		"role_orchestrated": paths.RoleOrchestrated,
 		"workdir":           paths.WorkDir,
+	}
+	if len(paths.PendingPRs) > 0 {
+		payload["pending_pull_requests"] = paths.PendingPRs
 	}
 	if strings.TrimSpace(paths.IterationWorktree) != "" {
 		payload["iteration_worktree"] = paths.IterationWorktree
@@ -1945,6 +1968,7 @@ func runAgent(ctx context.Context, cfg config.Config, root string, paths pathSet
 		"LOOP_CURRENT_BRANCH":            paths.CurrentBranch,
 		"LOOP_BRANCH_RENAMED":            strconv.FormatBool(paths.BranchRenamed),
 		"LOOP_INTEGRATION_MODE":          paths.IntegrationMode,
+		"LOOP_PR_REVIEW_MODE":            paths.PRReviewMode,
 		"LOOP_PULL_REQUEST_MODE":         strconv.FormatBool(paths.PullRequestMode),
 		"LOOP_PR_MODE":                   strconv.FormatBool(paths.PullRequestMode),
 	}

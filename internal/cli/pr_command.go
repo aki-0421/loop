@@ -193,6 +193,13 @@ func commandPRChecks(ctx context.Context, g globals, args []string) error {
 		appendErrorLog(prCtx.paths.Errors, fmt.Sprintf("pull request checks failed for %s; see pr-checks artifact", state.PR))
 		return codedError{6, fmt.Errorf("pull request checks failed for %s; see `loop iteration read pr-checks`", state.PR)}
 	}
+	if prReviewMode(prCtx) != config.ReviewModeAutoMerge {
+		state.Status = "waiting_for_human"
+		if err := writePRState(prCtx.iterDir, state); err != nil {
+			return codedError{1, err}
+		}
+		return printResult(g, map[string]any{"pr": state.PR, "status": state.Status}, fmt.Sprintf("PR: %s\nStatus: %s\n", state.PR, state.Status))
+	}
 	return printResult(g, map[string]any{"pr": state.PR, "status": status}, fmt.Sprintf("PR checks: %s\n", status))
 }
 
@@ -224,6 +231,9 @@ func commandPRMerge(ctx context.Context, g globals, args []string) error {
 	}
 	if err := ensurePRMode(prCtx); err != nil {
 		return codedError{2, err}
+	}
+	if prReviewMode(prCtx) != config.ReviewModeAutoMerge {
+		return codedError{2, errors.New("human review mode waits for an external PR merge; do not run `loop pr merge`")}
 	}
 	state, err := requirePRState(prCtx.iterDir)
 	if err != nil {
@@ -393,6 +403,7 @@ func loadPRCommandContext(ctx context.Context, g globals, subcommand string, arg
 	paths.IterationBranch = firstNonEmpty(runtime["iteration_branch"], os.Getenv("LOOP_ITERATION_BRANCH"), branch)
 	paths.CurrentBranch = branch
 	paths.IntegrationMode = firstNonEmpty(runtime["integration_mode"], cfg.Git.Integration.Mode)
+	paths.PRReviewMode = firstNonEmpty(runtime["pr_review_mode"], cfg.Git.Integration.PR.ReviewMode)
 	paths.PullRequestMode = paths.IntegrationMode == "pr"
 	paths.RoleOrchestrated = strings.EqualFold(strings.TrimSpace(runtime["role_orchestrated"]), "true")
 	paths.WorkDir = workDir
@@ -453,6 +464,17 @@ func prRunner(cfg config.Config, dir string) pr.Runner {
 		ChecksIntervalSeconds: prChecksPollIntervalSeconds(cfg),
 		ChecksRequiredOnly:    cfg.Git.Integration.PR.ChecksRequiredOnly,
 	}
+}
+
+func prReviewMode(prCtx prCommandContext) string {
+	mode := strings.TrimSpace(prCtx.paths.PRReviewMode)
+	if mode == "" {
+		mode = strings.TrimSpace(prCtx.cfg.Git.Integration.PR.ReviewMode)
+	}
+	if mode == "" {
+		return config.ReviewModeAutoMerge
+	}
+	return mode
 }
 
 func validatePRBranchCommits(ctx context.Context, prCtx prCommandContext) error {
@@ -540,6 +562,31 @@ func finalizeAgentOwnedPR(ctx context.Context, runner gitx.Runner, cleanup *iter
 		if err := runner.DeleteBranch(ctx, branch, true); err != nil && localBranchExists(ctx, runner, branch) {
 			return err
 		}
+	}
+	return nil
+}
+
+func finalizePendingHumanPR(ctx context.Context, runner gitx.Runner, cleanup *iterationCleanup, worktreePath, root string, cfg config.Config, branch string) error {
+	if err := removeWorktreeBeforePRIntegration(ctx, runner, cleanup, worktreePath, root); err != nil {
+		return err
+	}
+	if cfg.Git.BaseBranch != "" {
+		if _, err := runner.Run(ctx, "checkout", cfg.Git.BaseBranch); err != nil {
+			return err
+		}
+		if _, err := runner.Run(ctx, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"); err == nil {
+			if _, err := runner.Run(ctx, "pull", "--ff-only"); err != nil {
+				return err
+			}
+		}
+	}
+	if branch != "" && branch != cfg.Git.BaseBranch {
+		if err := runner.DeleteBranch(ctx, branch, true); err != nil && localBranchExists(ctx, runner, branch) {
+			return err
+		}
+	}
+	if cleanup != nil {
+		cleanup.WorkDir = root
 	}
 	return nil
 }

@@ -1,12 +1,12 @@
 <h1 align="center">loop</h1>
 
-<p align="center">AI エージェントに、リポジトリを読み、実装し、PR まで進めてもらうための Git ネイティブな開発ハーネス。</p>
+<p align="center">A Git-native harness for autonomous AI coding sprints.</p>
 
 <p align="center">
-  <a href="#quick-start">はじめる</a> |
-  <a href="#model">仕組み</a> |
-  <a href="#docs">ドキュメント</a> |
-  <a href="README.en.md">English</a>
+  <a href="#quick-start">Quick Start</a> |
+  <a href="#the-model">The Model</a> |
+  <a href="#project-docs">Docs</a> |
+  <a href="#development">Development</a>
 </p>
 
 <p align="center">
@@ -17,48 +17,47 @@
   <img src="assets/loop.png" alt="loop cover" width="800">
 </p>
 
-`loop` は、AI エージェントを「次に何をすべきか」から任せて走らせるための CLI です。
+`loop` is for repositories where you want an AI agent to keep moving.
 
-チャットで一手ずつ指示する道具ではありません。1 つの Markdown ファイルを起点に、計画、実装、レビューの役割を分けてエージェントを走らせます。1 回のイテレーションは、1 つのレビュー可能でマージ可能な PR です。`loop` が branch と worktree を作り、計画役が依存関係つきの作業ツリーを出し、実装役が分離された worktree で変更を作り、検証を通し、レビュー役が PR 作成、チェック待ち、merge までを `loop` のコマンド経由で進めます。
+It is not a chat wrapper that asks for permission at every uncertain edge. It is a controlled autonomous development harness: one Markdown instruction file becomes a sequence of planner, coding, and review agent runs. Each iteration is an AI sprint-sized pull request. The CLI creates branches and worktrees, asks the planner to choose a coherent mergeable sprint, schedules coding tasks, validates the result, has the review agent create/check/merge the PR through loop-owned commands, records the evidence, and then starts the next iteration when the run should continue.
 
-大事にしているのは、**自走させること** と **管理できる形で残すこと** の両立です。AI には止まらず進んでほしい。一方で、Git 操作、commit、PR、検証、cleanup、監査ログはハーネス側で揃えます。重要な不明点は GitHub Issue に残し、それ以外の進められる作業は止めません。
+The philosophy is autonomy with rails. Agents are expected to read the repository, make explicit local assumptions, use GitHub Issues for important blocking questions, and leave behind the same things good human work leaves behind: small commits, clear branches, validation evidence, pull request context, and durable logs.
 
-## どんな人に向いているか
+## Who It Is For
 
-`loop` は、次のような開発スタイルに向いています。
+`loop` is a good fit when:
 
-- AI に単発の差分ではなく、リポジトリの文脈を読んで継続的に前進してほしい。
-- 自走の単位を、あとから読める PR として残したい。
-- 実装だけでなく、検証、PR checks、merge まで任せたい。
-- 重要な曖昧さは GitHub Issue に残しつつ、止めずに進めたい。
-- 後から「何を読んで、何を計画し、何を変更し、何を検証したか」を追えるようにしたい。
+- You want an agent to advance a repository from its existing source of truth instead of waiting for step-by-step instructions.
+- You are comfortable with automated pull request creation, check waiting, and merge when configured.
+- You want each autonomous increment to be independently reviewable as a real PR.
+- You prefer major ambiguities to become GitHub Issues while unrelated safe work continues.
+- You need an audit trail that explains what the agent planned, changed, validated, reviewed, and merged.
 
-逆に、対話しながら一緒にコードを書く用途や、1 回だけ小さなパッチを作る用途には少し大きい道具です。
+It is not optimized for one-shot patch generation or highly interactive pair-programming sessions.
 
-<a id="quick-start"></a>
-## はじめる
+## Quick Start
 
-必要なもの:
+Prerequisites:
 
-- 初期化済みの Git リポジトリ
-- Go 1.25 以上
-- `npx` が使える Node.js/npm 環境
-- 対応しているエージェント CLI。既定では `codex exec --json` を使います。
-- 既定の PR ワークフロー、GitHub Issues、GitHub を使ったメモリ同期を使う場合は、認証済みの `gh`
+- An initialized Git repository.
+- Go 1.25 or newer.
+- Node.js/npm with `npx` available for default skill installation.
+- A supported agent CLI on `PATH`; the default adapter runs `codex exec --json`.
+- GitHub CLI (`gh`) authenticated when using the default pull request workflow, GitHub Issues, and GitHub-backed memory sync.
 
-インストールします。
+Install `loop`:
 
 ```sh
 go install github.com/aki-0421/loop/cmd/loop@latest
 ```
 
-リポジトリで初期化します。
+Initialize the repository:
 
 ```sh
 loop init
 ```
 
-次に、エージェントへ渡す指示ファイルを書きます。細かな作業手順を書き尽くすよりも、エージェントが読むべき信頼できる情報源を示すのが基本です。
+Write an instruction file that points the agent at the repository's source of truth:
 
 ```md
 # Instructions
@@ -83,21 +82,36 @@ Advance the product according to the repository source of truth.
 - Avoid unrelated refactors.
 ```
 
-最初は 1 イテレーションだけ、人間レビューありで試すのがおすすめです。
+Run one inspected sprint first:
 
 ```sh
 loop run task.md --pr --human-review --max-iterations 1
 ```
 
-その後、自走させます。
+Then run autonomously:
 
 ```sh
 loop run task.md --pr
 ```
 
-既定では `run.maxIterations` は `0` です。これはイテレーション数に上限を置かないという意味です。`--goal` を指定しない場合、`loop` はエラー、割り込み、または明示的な上限に達するまで、次のまとまった実装スプリントを選び続けます。
+Choose the review policy that matches how much you trust the harness:
 
-停止条件を明示したい場合は `--goal` を渡します。
+```sh
+# Full autonomy: create, check, and merge each PR.
+loop run task.md --pr --review-mode auto_merge
+
+# Human review with continued non-overlapping work while PRs wait.
+loop run task.md --pr --review-mode parallel_human_review
+
+# Strict serial review: one PR waits for human merge before the next iteration.
+loop run task.md --pr --review-mode serial_human_review
+```
+
+`--human-review` is a compatibility shortcut for `--review-mode serial_human_review`.
+
+By default, `run.maxIterations` is `0`, which means no iteration cap. In that open-ended mode, `loop` keeps selecting and integrating the next coherent AI sprint until a terminal error, interrupt, or configured limit stops the run.
+
+If you want a bounded run, provide a CLI goal:
 
 ```sh
 loop run task.md \
@@ -105,71 +119,66 @@ loop run task.md \
   --pr
 ```
 
-`--goal` があるときだけ、planner/reviewer の `goal_complete=true` が run 全体の停止条件になります。停止するのは、その goal を満たすイテレーションが正常に統合された後です。
+With a non-empty `--goal`, planner and review handoffs may report `goal_complete=true`; the CLI stops only after the satisfying iteration has integrated successfully.
 
-<a id="model"></a>
-## 仕組み
+## The Model
 
-`loop` は、AI の判断に任せる部分と、Git/PR 周りを確実に進める部分を分けています。
+`loop` makes autonomous work repeatable by separating product judgment from mechanics.
 
-1. `loop run` が設定を読み、実行状態を記録し、必要なら GitHub context を同期して、イテレーション `0001` を作ります。
-2. 計画役のエージェントが実行時の context、instruction、リポジトリのドキュメント、コード、最近の GitHub context を読み、1 つの実装スプリントに対応する task tree を書きます。
-3. CLI が task ごとの worktree を作り、依存関係と衝突情報に従って実装役のエージェントを並列実行します。
-4. 実装役のエージェントは、編集前に task-local TODO を作ります。各 TODO は `loop task todo complete` で 1 commit になり、完了した task branch は `loop task merge` で iteration branch に squash merge されます。
-5. 設定された検証コマンドが iteration worktree で実行されます。
-6. レビュー役のエージェントが diff、task tree、task result、検証結果を確認します。PR mode では branch rename、PR title/body 作成、PR 作成、チェック待ち、merge を `loop pr` 経由で行います。
-7. 検証失敗やレビュー指摘は repair task になります。
-8. merge 後、`loop` は local worktree/branch を cleanup し、結果を記録し、必要なら次のイテレーションを始めます。
+1. `loop run` loads configuration, records runtime state, syncs GitHub context when available, and creates iteration `0001`.
+2. The planner agent reads runtime context, the instruction file, repository documents, code, and recent GitHub memory, then writes a dependency-aware task tree for one AI sprint-sized PR.
+3. The CLI creates isolated task worktrees and runs non-conflicting coding agents in parallel.
+4. Coding agents create task-local TODOs before editing. Each completed TODO becomes one CLI-created task-branch commit. Completed task branches are squash-merged into the iteration branch through `loop task merge`.
+5. Configured validation runs from the iteration worktree.
+6. The review agent checks the integrated branch against the task tree, validation evidence, and PR requirements. In PR mode it renames the branch, writes PR text, creates the PR, waits for checks, and follows the configured review mode for merge or human review.
+7. Validation failures and review findings become repair tasks until approval or the fix-cycle limit.
+8. After a successful merge or human-review handoff, `loop` cleans up local worktrees and branches, records the result, and starts the next iteration when the run should continue.
 
-エージェントは、`loop` が管理する lifecycle に対して raw `git` や `gh` を直接実行しません。commit、merge、PR、checks、cleanup、監査状態は `loop` のコマンドに集約されます。
+Agents do not run raw Git or GitHub commands for loop-owned lifecycle work. They use `loop` commands so commits, merges, PRs, checks, cleanup, and audit state stay consistent.
 
-## 自走のルール
+## Autonomy Rules
 
-- `loop run` は既定で完全自動です。
-- エージェントはユーザーに直接質問しません。
-- 情報が足りないときは、明示的な仮定を置いて進めます。
-- 重要なプロダクト、方針、仕様の曖昧さは `loop issue ask` で GitHub Issue にします。
-- 確認用の Issue を作った後も、関係のない安全な作業は続けます。
-- CLI `--goal` がない run は、終わりを決めずに走るモードです。エージェントの出力だけでは run 全体を完了扱いにできません。
-- CLI `--goal` がある run は、その goal を満たすイテレーションが統合された後だけ停止できます。
+- Runs are fully automated by default. `loop run` does not stop to ask the user questions.
+- Agents must not ask the user questions directly.
+- Missing information is handled by making a local, explicit assumption and continuing.
+- Important product, policy, or large blocking specification questions are asked with `loop issue ask`, which creates GitHub Issues.
+- After asking a clarification Issue, agents continue unrelated safe work when possible.
+- In `parallel_human_review` mode, PRs waiting for human review are recorded with their titles and changed files, rendered while other work continues, and passed to later planners so they can choose non-overlapping work. If no safe non-overlapping work remains, the planner can return `wait_for_pending_prs=true` with no tasks so `loop` waits for pending PR changes.
+- In `serial_human_review` mode, `loop` shows a PR review wait screen and polls every 5 minutes until the human merges the current PR before starting another iteration.
+- Without a CLI `--goal`, the run is open-ended: role output cannot mark the full run complete.
+- With a CLI `--goal`, the run stops only after an integrated iteration satisfies that goal.
 
-## コマンド
+## Commands
 
-人間が使う主なコマンド:
+Human-facing commands:
 
-| コマンド | 説明 |
+| Command | Purpose |
 | --- | --- |
-| `loop init` | リポジトリ用の設定を作り、既定の skill を `npx skills` 経由でインストールします。 |
-| `loop run <instruction.md>` | 自走する実装イテレーションを実行します。 |
-| `loop version` | ビルドバージョン、commit、date を表示します。 |
+| `loop init` | Create repository-local config and install the default skill through `npx skills`. |
+| `loop run <instruction.md>` | Run autonomous coding iterations. |
+| `loop version` | Print build version, commit, and date. |
 
-エージェント向けのコマンドは簡潔な help にまとまっています。
+Agent-facing commands are included in the compact agent help:
 
 ```sh
 loop help agent
 ```
 
-人間向けの help:
+Run `loop help <command>` for human-facing help.
 
-```sh
-loop help <command>
-```
+## Configuration
 
-## 設定
+`loop init` writes a small `.loop/config.yaml`; built-in defaults supply the rest. The important default for the product philosophy is:
 
-`loop init` は小さな `.loop/config.yaml` を書きます。通常の既定値は組み込みです。
+- Pull request integration is the default workflow.
+- `run.maxIterations` defaults to `0`, meaning unlimited iterations.
+- Validation commands are repository-owned and should be configured when the project has a standard test or verification command.
 
-特に重要な既定値:
+See the [configuration guide](docs/configuration.md) for common overrides and [the configuration specification](spec/03-configuration.md) for the full contract.
 
-- Pull request integration が既定のワークフローです。
-- `run.maxIterations` は `0` です。つまりイテレーション数に上限を置きません。
-- 検証コマンドはリポジトリ側で設定します。
+## Runtime Files
 
-よく使う設定例は [configuration guide](docs/configuration.md) にあります。完全な仕様は [configuration specification](spec/03-configuration.md) を見てください。
-
-## 実行時ファイル
-
-`loop` は、実行の証跡を `.loop/` 以下に保存します。
+`loop` stores durable run evidence under `.loop/`:
 
 ```text
 .loop/config.yaml
@@ -179,11 +188,11 @@ loop help <command>
 .loop/loop.db
 ```
 
-イテレーションの記録には、instruction snapshot、effective config、event logs、task tree、task results、task merge audits、validation evidence、review result、PR state、PR checks、errors、GitHub update summaries が含まれます。
+Durable iteration artifacts include the instruction snapshot, effective config, event logs, task tree, task results, task merge audits, validation evidence, review result, PR state, PR checks, errors, and GitHub update summaries. Disposable active-work files are cleaned up after the iteration.
 
-## 開発
+## Development
 
-開発用コマンドは `make` から実行します。
+Use `make` as the entry point:
 
 ```sh
 make test
@@ -192,16 +201,14 @@ make verify
 make ci
 ```
 
-ローカルのスナップショットビルド:
+Create a local snapshot build:
 
 ```sh
 make release-snapshot
 ```
 
-<a id="docs"></a>
-## ドキュメント
+## Project Docs
 
-- [English README](README.en.md)
 - [Specification index](spec/00-index.md)
 - [System contract](spec/01-system-contract.md)
 - [CLI contract](spec/02-cli.md)

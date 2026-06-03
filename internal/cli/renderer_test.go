@@ -193,6 +193,72 @@ func TestRunRendererShowsGitHubSleepMode(t *testing.T) {
 	assertFrameBounds(t, frameLines, 100, 20)
 }
 
+func TestRunRendererShowsPullRequestReviewWaitMode(t *testing.T) {
+	t.Setenv("TERM", "xterm")
+	var out bytes.Buffer
+	now := time.Now()
+	renderer := &runRenderer{
+		enabled:     true,
+		interactive: false,
+		writer:      &out,
+		started:     now.Add(-2 * time.Minute),
+		done:        make(chan struct{}),
+		stage:       string(runstate.StagePullRequest),
+		iteration:   "0001",
+	}
+
+	renderer.SleepWaitingForPullRequests([]runstate.PendingPullRequest{{
+		PR:     "https://github.com/acme/app/pull/42",
+		Title:  "Add review dashboard",
+		Branch: "feat/review-dashboard",
+		Status: "waiting_for_human",
+	}})
+
+	if !strings.Contains(out.String(), "waiting for human PR review") {
+		t.Fatalf("line renderer should print PR wait status: %q", out.String())
+	}
+	frameLines := renderer.frame(110, 22)
+	frame := stripANSISequences(strings.Join(frameLines, "\n"))
+	for _, want := range []string{"Waiting For PR Review", "Waiting for human PR review", "Review Pending", "#42 Add review dashboard", "Polling every 5m"} {
+		if !strings.Contains(frame, want) {
+			t.Fatalf("PR wait frame missing %q:\n%s", want, frame)
+		}
+	}
+	assertFrameBounds(t, frameLines, 110, 22)
+}
+
+func TestRunRendererShowsPendingPullRequestsDuringWork(t *testing.T) {
+	t.Setenv("TERM", "xterm")
+	now := time.Now()
+	lines := renderDashboard(rendererSnapshot{
+		Started: now.Add(-time.Minute),
+		Now:     now,
+		Stage:   string(runstate.StageCoding),
+		Current: "coding tasks",
+		Tasks: []taskItem{{
+			ID:     "continue-safe-work",
+			Status: "active",
+			Text:   "Continue non-overlapping implementation",
+		}},
+		PendingPRs: []rendererPendingPullRequest{{
+			PR:     "42",
+			Title:  "Add review dashboard",
+			Branch: "feat/review-dashboard",
+		}},
+		LatestMsg: "Implementing a non-overlapping task.",
+	}, 120, 24)
+	frame := stripANSISequences(strings.Join(lines, "\n"))
+	for _, want := range []string{"Review Pending", "#42 Add review dashboard", "Continue non-overlapping implementation"} {
+		if !strings.Contains(frame, want) {
+			t.Fatalf("work frame missing %q:\n%s", want, frame)
+		}
+	}
+	if !containsAny(frame, []string{"◐", "◓", "◑", "◒"}) {
+		t.Fatalf("work frame should show a rotating circle status:\n%s", frame)
+	}
+	assertFrameBounds(t, lines, 120, 24)
+}
+
 func TestRunRendererShowsSleepFetchRequested(t *testing.T) {
 	var out bytes.Buffer
 	renderer := &runRenderer{
@@ -446,6 +512,15 @@ func TestRunRendererAppliesTokenUsageEvents(t *testing.T) {
 	if !renderer.tokensEstimated {
 		t.Fatal("estimated token usage should mark renderer totals as estimated")
 	}
+}
+
+func containsAny(text string, wants []string) bool {
+	for _, want := range wants {
+		if strings.Contains(text, want) {
+			return true
+		}
+	}
+	return false
 }
 
 func assertFrameBounds(t *testing.T, lines []string, width, height int) {

@@ -116,9 +116,12 @@ In role-orchestrated runs, pull request mode is driven by the review agent throu
 1. Review the iteration branch diff, task results, and validation evidence.
 2. Rename the iteration branch away from `wip/<iteration>` with `loop branch rename`.
 3. Read the PR template with `loop iteration read pr-template` and write `pr-title` and `pr-body`.
-4. Run `loop pr create`, `loop pr checks`, and `loop pr merge`.
-5. If checks fail, inspect logs when needed and write `changes_requested` findings instead of approval.
-6. After approval, the CLI verifies `pr-state.status=merged`, refreshes the base branch, and cleans up local runtime resources.
+4. Run `loop pr create` and `loop pr checks`.
+5. In `auto_merge` review mode, run `loop pr merge` and approve only after `pr-state.status=merged`.
+6. In `parallel_human_review` review mode, do not run `loop pr merge`; approve only after `loop pr checks` records `pr-state.status=waiting_for_human`. The CLI cleans local resources, keeps the remote PR branch, records the pending PR title, number, and changed files, renders pending PR status while continuing other work, and starts later iterations from the base branch. Planner runtime context includes these pending PR records and must avoid overlapping or dependent work. If no safe non-overlapping work remains, the planner may return `wait_for_pending_prs=true` with an empty task tree so the CLI waits for pending PR changes.
+7. In `serial_human_review` review mode, do not run `loop pr merge`; approve only after `loop pr checks` records `pr-state.status=waiting_for_human`. The CLI shows PR review wait status, polls every 5 minutes until an external human merge is observed, then pulls the base branch and cleans local resources before any next iteration.
+8. If checks fail, inspect logs when needed and write `changes_requested` findings instead of approval.
+9. After approval, the CLI verifies the state required by the configured review mode, refreshes the base branch when appropriate, and cleans up local runtime resources.
 
 The older single-agent workflow also uses `loop pr` commands:
 
@@ -156,7 +159,7 @@ When pull request mode has `waitChecks=true`, `loop pr checks` and `loop pr merg
 - In role-orchestrated mode, the review agent reports failed checks as `changes_requested` findings so repair tasks can be scheduled.
 - In older single-agent mode, the agent fixes the failure in the same context, validates locally, commits through `loop commit`, and reruns `loop pr checks`.
 
-`mergeWhenChecksPass` is retained for configuration compatibility, but PR-mode merge is now triggered by `loop pr merge`.
+`mergeWhenChecksPass` is retained for configuration compatibility, but PR-mode auto merge is now triggered by `loop pr merge`. In human-review modes, `loop pr merge` is rejected because merging is an external human action.
 
 ## Cleanup
 

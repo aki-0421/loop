@@ -122,6 +122,14 @@ Modes:
 
 Pull request mode is the built-in default and uses `gh` commands. In role-orchestrated mode, the review agent reads the PR template, writes `pr-title` and `pr-body`, and then invokes `loop pr create`.
 
+Pull request review modes:
+
+| Mode | Behavior |
+| --- | --- |
+| `auto_merge` | Fully autonomous mode. The review agent creates the PR, waits for checks, runs `loop pr merge`, and approval requires `pr-state.status=merged`. |
+| `parallel_human_review` | Trust-ramped parallel mode. The review agent creates the PR and waits for checks, `loop pr checks` records `pr-state.status=waiting_for_human`, and the CLI preserves the remote PR for human review while continuing later iterations from the base branch. Runtime context includes pending PR titles, branches, and changed files so planners can avoid overlapping work; when no safe non-overlapping work remains, planners can return `wait_for_pending_prs=true` with no tasks to enter PR review wait mode. |
+| `serial_human_review` | Strict manual mode. The review agent creates the PR and waits for checks, `loop pr checks` records `pr-state.status=waiting_for_human`, and the CLI shows a PR review wait screen and polls every 5 minutes until a human merges the PR externally before cleanup or the next iteration. |
+
 Pull request check timing:
 
 | Field | Built-in value | Behavior |
@@ -132,7 +140,8 @@ Pull request check timing:
 | `git.integration.pr.checksDiscoveryTimeoutSeconds` | `60` | Keep polling when GitHub reports no checks for the PR branch. |
 | `git.integration.pr.checksPollIntervalSeconds` | `5` | Delay between no-checks discovery polls and the `gh pr checks --watch --interval` value. |
 | `git.integration.pr.checksWatchTimeoutSeconds` | `3600` | Maximum time for a reported pending check set to complete before the command fails. |
-| `git.integration.pr.humanReview` | `false` | Create the PR and pause for external post-hoc review or merge updates instead of auto-merging. |
+| `git.integration.pr.humanReview` | `false` | Compatibility boolean. When true and `reviewMode` is omitted, selects `serial_human_review`. |
+| `git.integration.pr.reviewMode` | `auto_merge` | Pull request review policy: `auto_merge`, `parallel_human_review`, or `serial_human_review`. |
 
 If no checks are reported after the discovery timeout, the check wait is treated as skipped.
 

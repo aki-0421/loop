@@ -94,7 +94,9 @@ Review findings are converted into repair tasks. A review agent must provide eno
 Pull request mode is the primary integration path:
 
 - The review agent renames the branch with `loop branch rename` before PR creation.
-- The review agent reads `loop iteration read pr-template`, writes `pr-title` and `pr-body`, then runs `loop pr create`, `loop pr checks`, and `loop pr merge`.
+- With `git.integration.pr.reviewMode=auto_merge`, the review agent reads `loop iteration read pr-template`, writes `pr-title` and `pr-body`, then runs `loop pr create`, `loop pr checks`, and `loop pr merge`.
+- With `git.integration.pr.reviewMode=parallel_human_review`, the review agent creates the PR and runs checks but does not merge. `loop pr checks` records `pr-state.status=waiting_for_human`; the CLI records the pending PR title, number, and changed files in run state and later runtime context, renders the pending PRs while continuing other work, cleans local resources, preserves the remote PR branch, and continues from the base branch so the planner can choose non-overlapping work. If pending PRs reserve every safe implementation area, the planner can return `wait_for_pending_prs=true` with no tasks to put the CLI into PR review wait mode.
+- With `git.integration.pr.reviewMode=serial_human_review`, the review agent creates the PR and runs checks but does not merge. The CLI shows a PR review wait screen and polls every 5 minutes for an external human merge before cleanup and before starting another iteration.
 - If checks fail, the review agent writes `changes_requested` findings instead of approving.
 
 Local merge mode remains available for local-only repositories and tests. It squash-merges the approved iteration branch into the base branch.

@@ -482,6 +482,7 @@ func allHelpCommands() []helpCommand {
 				{Name: "--max-iterations <n>", Description: "maximum iterations; 0 means unlimited", Default: "config value"},
 				{Name: "--pr", Description: "use pull request integration", Default: "config value"},
 				{Name: "--human-review", Description: "open the PR and pause for external post-hoc review instead of auto-merging", Default: "config value"},
+				{Name: "--review-mode <mode>", Description: "PR mode: auto_merge, parallel_human_review, or serial_human_review", Default: "config value"},
 				{Name: "--base <branch>", Description: "base branch for integration", Default: "current branch at run start"},
 				{Name: "--resume <run-id>", Description: "accepted for older scripts; use loop resume"},
 				{Name: "--from-iteration <n>", Description: "accepted for older scripts with --resume; currently ignored"},
@@ -1014,7 +1015,7 @@ func handoffWriteHelpText() string {
 }
 
 func taskTreeSchemaHelpText() string {
-	return "task-tree={schema_version:1,summary:string,goal_evaluation:string,goal_complete?:bool,tasks:[{id,title,description,depends_on:[],conflicts_with:[],acceptance:[]}]}; ids start with a lowercase letter and contain lowercase letters, digits, or hyphens."
+	return "task-tree={schema_version:1,summary:string,goal_evaluation:string,goal_complete?:bool,wait_for_pending_prs?:bool,tasks:[{id,title,description,depends_on:[],conflicts_with:[],acceptance:[]}]}; ids start with a lowercase letter and contain lowercase letters, digits, or hyphens; wait_for_pending_prs requires an empty tasks array."
 }
 
 func taskResultSchemaHelpText() string {

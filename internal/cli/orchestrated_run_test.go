@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aki-0421/loop/internal/artifactdb"
 	"github.com/aki-0421/loop/internal/gitx"
@@ -453,6 +454,170 @@ git:
 	assertBranchMissing(t, repo, "feat/role-pr-repair")
 }
 
+func TestRoleOrchestratedParallelHumanReviewLeavesPendingPR(t *testing.T) {
+	ctx := context.Background()
+	repo := newCleanupRepo(t)
+	mustWrite(t, filepath.Join(repo, "task.md"), "# Task\n\nCreate a human-reviewed PR and keep moving.\n")
+	agentCommand, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, filepath.Join(repo, ".loop", "config.yaml"), `version: 1
+
+agent:
+  default: rolehumanpr
+  adapters:
+    rolehumanpr:
+      command: `+yamlSingleQuote(agentCommand)+`
+      args: [-test.run=TestHelperProcessRoleAgent, --]
+      prompt: stdin
+      env:
+        LOOP_ROLE_TEST_AGENT: "1"
+        LOOP_ROLE_TEST_AGENT_MODE: "pr-human-pending"
+
+run:
+  maxIterations: 1
+
+git:
+  baseBranch: develop
+  integration:
+    mode: pr
+    pr:
+      push: false
+      waitChecks: true
+      checksStartupDelaySeconds: 0
+      checksDiscoveryTimeoutSeconds: 0
+      checksPollIntervalSeconds: 1
+      reviewMode: parallel_human_review
+`)
+	git(t, repo, "add", "task.md", ".loop/config.yaml")
+	git(t, repo, "commit", "-m", "T: add parallel human review fixture")
+	ghDir := t.TempDir()
+	ghLog := filepath.Join(ghDir, "gh.log")
+	writePassingFakeGH(t, ghDir, ghLog)
+	t.Setenv("PATH", ghDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	withWorkingDir(t, repo)
+
+	if _, err := captureStdout(t, func() error {
+		return commandRun(ctx, globals{Agent: "rolehumanpr", JSON: true, NoColor: true}, []string{"task.md"})
+	}); err != nil {
+		t.Fatalf("loop run should leave a pending human-review PR: %v", err)
+	}
+
+	state := readLatestRunState(t, repo)
+	if state.Stage != runstate.StageCompleted {
+		t.Fatalf("run stage = %s, want completed", state.Stage)
+	}
+	if len(state.PendingPullRequests) != 1 {
+		t.Fatalf("pending PRs = %#v, want one", state.PendingPullRequests)
+	}
+	pending := state.PendingPullRequests[0]
+	if pending.Status != "waiting_for_human" || pending.Branch != "feat/human-pending-pr" {
+		t.Fatalf("pending PR = %#v", pending)
+	}
+	if !containsString(pending.ChangedFiles, "pending-human-pr.txt") {
+		t.Fatalf("pending changed files = %#v, want pending-human-pr.txt", pending.ChangedFiles)
+	}
+	iterDir := filepath.Join(repo, ".loop", "runs", state.RunID, "iterations", "0001")
+	prStateText, err := artifactdb.Read(iterDir, "pr-state")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(prStateText, `"status": "waiting_for_human"`) {
+		t.Fatalf("pr-state should wait for human review:\n%s", prStateText)
+	}
+	gh := readText(t, ghLog)
+	if !strings.Contains(gh, "pr create ") || !strings.Contains(gh, "pr checks 1") || strings.Contains(gh, "pr merge") {
+		t.Fatalf("fake gh log should create/check but not merge:\n%s", gh)
+	}
+	assertBranchMissing(t, repo, "wip/0001")
+	assertBranchMissing(t, repo, "feat/human-pending-pr")
+	if _, err := os.Stat(filepath.Join(repo, "pending-human-pr.txt")); !os.IsNotExist(err) {
+		t.Fatalf("pending PR work should not be on the checked-out base branch, stat err=%v", err)
+	}
+}
+
+func TestRoleOrchestratedPlannerCanWaitForPendingPRs(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	previousInterval := githubSleepPollInterval
+	githubSleepPollInterval = time.Millisecond
+	defer func() {
+		githubSleepPollInterval = previousInterval
+	}()
+	repo := newCleanupRepo(t)
+	mustWrite(t, filepath.Join(repo, "task.md"), "# Task\n\nCreate a human-reviewed PR, then wait when all remaining work is blocked.\n")
+	agentCommand, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, filepath.Join(repo, ".loop", "config.yaml"), `version: 1
+
+agent:
+  default: rolehumanprwait
+  adapters:
+    rolehumanprwait:
+      command: `+yamlSingleQuote(agentCommand)+`
+      args: [-test.run=TestHelperProcessRoleAgent, --]
+      prompt: stdin
+      env:
+        LOOP_ROLE_TEST_AGENT: "1"
+        LOOP_ROLE_TEST_AGENT_MODE: "pr-human-pending-then-wait"
+
+run:
+  maxIterations: 2
+
+git:
+  baseBranch: develop
+  integration:
+    mode: pr
+    pr:
+      push: false
+      waitChecks: true
+      checksStartupDelaySeconds: 0
+      checksDiscoveryTimeoutSeconds: 0
+      checksPollIntervalSeconds: 1
+      reviewMode: parallel_human_review
+`)
+	git(t, repo, "add", "task.md", ".loop/config.yaml")
+	git(t, repo, "commit", "-m", "T: add pending PR wait fixture")
+	ghDir := t.TempDir()
+	ghLog := filepath.Join(ghDir, "gh.log")
+	ghViews := filepath.Join(ghDir, "views.count")
+	writePendingThenMergedFakeGH(t, ghDir, ghLog, ghViews)
+	t.Setenv("PATH", ghDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	withWorkingDir(t, repo)
+
+	if _, err := captureStdout(t, func() error {
+		return commandRun(ctx, globals{Agent: "rolehumanprwait", JSON: true, NoColor: true}, []string{"task.md"})
+	}); err != nil {
+		t.Fatalf("loop run should wait for pending PR changes: %v", err)
+	}
+
+	state := readLatestRunState(t, repo)
+	if state.Stage != runstate.StageCompleted {
+		t.Fatalf("run stage = %s, want completed", state.Stage)
+	}
+	if len(state.PendingPullRequests) != 0 {
+		t.Fatalf("pending PRs = %#v, want none after merged state is observed", state.PendingPullRequests)
+	}
+	if len(state.Iterations) != 2 {
+		t.Fatalf("iterations = %d, want 2", len(state.Iterations))
+	}
+	secondTaskTree := readText(t, filepath.Join(repo, ".loop", "runs", state.RunID, "iterations", "0002", "task-tree.json"))
+	if !strings.Contains(secondTaskTree, `"wait_for_pending_prs": true`) {
+		t.Fatalf("second task tree should contain wait_for_pending_prs:\n%s", secondTaskTree)
+	}
+	events := readText(t, filepath.Join(repo, ".loop", "runs", state.RunID, "iterations", "0002", "agent-events.jsonl"))
+	if !strings.Contains(events, "pr.human_review.pending_waiting") || !strings.Contains(events, "pr.human_review.pending_updated") {
+		t.Fatalf("pending PR wait events missing:\n%s", events)
+	}
+	gh := readText(t, ghLog)
+	if strings.Count(gh, "pr view 1 --json state,mergedAt,url") < 2 {
+		t.Fatalf("fake gh log missing pending PR state polls:\n%s", gh)
+	}
+}
+
 func TestHelperProcessRoleAgent(t *testing.T) {
 	if os.Getenv("LOOP_ROLE_TEST_AGENT") != "1" {
 		return
@@ -560,6 +725,33 @@ func runRoleTestAgent() int {
       "depends_on": [],
       "conflicts_with": [],
       "acceptance": ["initial-pr.txt contains the initial value."]
+    }
+  ]
+}`
+			return exitCode(commandHandoff(ctx, globals{}, []string{"write", "task-tree", "--value", payload}))
+		case "pr-human-pending", "pr-human-pending-then-wait":
+			if os.Getenv("LOOP_ROLE_TEST_AGENT_MODE") == "pr-human-pending-then-wait" && os.Getenv("LOOP_ITERATION_ID") == "0002" {
+				payload := `{
+  "schema_version": 1,
+  "summary": "Wait for pending human-review PRs",
+  "goal_evaluation": "The pending PR reserves the remaining safe work.",
+  "wait_for_pending_prs": true,
+  "tasks": []
+}`
+				return exitCode(commandHandoff(ctx, globals{}, []string{"write", "task-tree", "--value", payload}))
+			}
+			payload := `{
+  "schema_version": 1,
+  "summary": "Run human-review PR workflow",
+  "goal_evaluation": "Fake planner selected one human-review PR task.",
+  "tasks": [
+    {
+      "id": "human-pr-task",
+      "title": "Human PR task",
+      "description": "Create a marker for a human-reviewed PR.",
+      "depends_on": [],
+      "conflicts_with": [],
+      "acceptance": ["pending-human-pr.txt contains the pending value."]
     }
   ]
 }`
@@ -780,6 +972,24 @@ func runRoleTestAgent() int {
 				return 1
 			}
 			return exitCode(commandTask(ctx, globals{}, []string{"merge", "--type", "F", "complete", taskID}))
+		case "pr-human-pending", "pr-human-pending-then-wait":
+			if err := startRoleTaskTodo(ctx, taskID, "run human review PR task"); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 1
+			}
+			if err := os.WriteFile(filepath.Join(workDir, "pending-human-pr.txt"), []byte("pending\n"), 0o644); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 1
+			}
+			if err := completeRoleTaskTodo(ctx); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 1
+			}
+			if err := writeRoleTaskResult(ctx, taskID, "Fake coding agent completed the human-review PR task."); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 1
+			}
+			return exitCode(commandTask(ctx, globals{}, []string{"merge", "--type", "F", "complete", taskID}))
 		}
 		if err := startRoleTaskTodo(ctx, taskID, "run fake role workflow"); err != nil {
 			fmt.Fprintln(os.Stderr, err)
@@ -801,6 +1011,9 @@ func runRoleTestAgent() int {
 	case "review":
 		if os.Getenv("LOOP_ROLE_TEST_AGENT_MODE") == "pr-rename-repair" {
 			return runPRRenameRepairReviewAgent(ctx)
+		}
+		if os.Getenv("LOOP_ROLE_TEST_AGENT_MODE") == "pr-human-pending" || os.Getenv("LOOP_ROLE_TEST_AGENT_MODE") == "pr-human-pending-then-wait" {
+			return runPRHumanPendingReviewAgent(ctx)
 		}
 		payload := `{
   "schema_version": 1,
@@ -903,6 +1116,38 @@ func runPRRenameRepairReviewAgent(ctx context.Context) int {
 	return exitCode(commandHandoff(ctx, globals{}, []string{"write", "review-result", "--value", payload}))
 }
 
+func runPRHumanPendingReviewAgent(ctx context.Context) int {
+	iterDir := os.Getenv("LOOP_ITERATION_DIR")
+	if err := commandBranch(ctx, globals{}, []string{"rename", "--kind", "feat", "human pending PR"}); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return exitCode(err)
+	}
+	if err := artifactdb.Write(iterDir, "pr-title", "Run human-review PR\n"); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	if err := artifactdb.Write(iterDir, "pr-body", "## Summary\n\nFake human-review PR.\n"); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	if err := commandPR(ctx, globals{}, []string{"create"}); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return exitCode(err)
+	}
+	if err := commandPR(ctx, globals{}, []string{"checks"}); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return exitCode(err)
+	}
+	payload := `{
+  "schema_version": 1,
+  "status": "approved",
+  "summary": "Fake review left the PR waiting for human review.",
+  "goal_evaluation": "The PR is ready for human review but not merged.",
+  "goal_complete": true
+}`
+	return exitCode(commandHandoff(ctx, globals{}, []string{"write", "review-result", "--value", payload}))
+}
+
 func writeFailOnceThenPassingFakeGH(t *testing.T, dir, logPath, checksPath string) {
 	t.Helper()
 	path := filepath.Join(dir, "gh")
@@ -949,6 +1194,56 @@ exit 0
 	}
 }
 
+func writePendingThenMergedFakeGH(t *testing.T, dir, logPath, viewsPath string) {
+	t.Helper()
+	path := filepath.Join(dir, "gh")
+	script := `#!/bin/sh
+echo "$@" >> ` + shellQuote(logPath) + `
+
+if [ "$1" = "--version" ]; then
+  echo "gh version fake"
+  exit 0
+fi
+
+if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
+  if [ "$5" = "url" ]; then
+    exit 1
+  fi
+  count=0
+  if [ -f ` + shellQuote(viewsPath) + ` ]; then
+    count=$(cat ` + shellQuote(viewsPath) + `)
+  fi
+  count=$((count + 1))
+  echo "$count" > ` + shellQuote(viewsPath) + `
+  if [ "$count" -lt 2 ]; then
+    printf 'OPEN\t\thttps://github.com/acme/app/pull/1\n'
+    exit 0
+  fi
+  printf 'MERGED\t2026-06-03T00:00:00Z\thttps://github.com/acme/app/pull/1\n'
+  exit 0
+fi
+
+if [ "$1" = "pr" ] && [ "$2" = "create" ]; then
+  echo "1"
+  exit 0
+fi
+
+if [ "$1" = "pr" ] && [ "$2" = "checks" ]; then
+  echo "checks passed"
+  exit 0
+fi
+
+if [ "$1" = "pr" ] && [ "$2" = "merge" ]; then
+  exit 1
+fi
+
+exit 0
+`
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func exitCode(err error) int {
 	if err == nil {
 		return 0
@@ -958,4 +1253,13 @@ func exitCode(err error) int {
 		return code
 	}
 	return 1
+}
+
+func containsString(items []string, want string) bool {
+	for _, item := range items {
+		if item == want {
+			return true
+		}
+	}
+	return false
 }

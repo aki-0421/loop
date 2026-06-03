@@ -126,6 +126,28 @@ func TestGHWrapperChecksUsesWatchOptions(t *testing.T) {
 	}
 }
 
+func TestGHWrapperViewStateParsesTSV(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "gh.log")
+	r := Runner{Dir: dir, GHPath: fakeScript(t, `#!/bin/sh
+echo "$@" >> "`+logPath+`"
+if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
+  printf 'MERGED\t2026-06-03T00:00:00Z\thttps://example.test/pr/1\n'
+  exit 0
+fi
+exit 1
+`)}
+
+	state, _, err := r.ViewState(ctx, "1")
+	if err != nil {
+		t.Fatalf("ViewState: %v", err)
+	}
+	if state.State != "MERGED" || state.MergedAt != "2026-06-03T00:00:00Z" || state.URL != "https://example.test/pr/1" {
+		t.Fatalf("state = %#v", state)
+	}
+}
+
 func TestGHWrapperChecksFailure(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()

@@ -59,6 +59,24 @@ func TestDecodeTaskTreeRejectsUnknownFields(t *testing.T) {
 	}
 }
 
+func TestDecodeTaskTreeAllowsPendingPRWaitSignal(t *testing.T) {
+	tree, err := DecodeTaskTree([]byte(`{"schema_version":1,"summary":"waiting","goal_evaluation":"pending PRs block safe work","wait_for_pending_prs":true,"tasks":[]}`))
+	if err != nil {
+		t.Fatalf("wait_for_pending_prs task tree should decode: %v", err)
+	}
+	if !tree.WaitForPendingPRs {
+		t.Fatal("wait_for_pending_prs was not decoded")
+	}
+}
+
+func TestValidateTaskTreeRejectsPendingPRWaitWithTasks(t *testing.T) {
+	tree := validTree()
+	tree.WaitForPendingPRs = true
+	if problems := ValidateTaskTree(tree); len(problems) == 0 {
+		t.Fatal("expected wait_for_pending_prs with tasks to be rejected")
+	}
+}
+
 func TestValidateTaskResultRequiresDiscardReason(t *testing.T) {
 	result := TaskResult{SchemaVersion: SchemaVersion, TaskID: "first", Status: "discarded", Summary: "Discarded."}
 	if problems := ValidateTaskResult(result); len(problems) == 0 {

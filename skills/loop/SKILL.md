@@ -30,7 +30,7 @@ Write one task tree:
 loop handoff write task-tree --file task-tree.json
 ```
 
-The task tree contains `schema_version`, `summary`, `goal_evaluation`, optional `goal_complete`, and `tasks`. Each task must include only `id`, `title`, `description`, `depends_on`, `conflicts_with`, and `acceptance`. Do not include commit split messages or commit metadata.
+The task tree contains `schema_version`, `summary`, `goal_evaluation`, optional `goal_complete`, optional `wait_for_pending_prs`, and `tasks`. Each task must include only `id`, `title`, `description`, `depends_on`, `conflicts_with`, and `acceptance`. Do not include commit split messages or commit metadata.
 
 Task-tree shape:
 
@@ -40,6 +40,7 @@ Task-tree shape:
   "summary": "One-sentence AI sprint-sized PR summary.",
   "goal_evaluation": "Current view of the CLI goal.",
   "goal_complete": false,
+  "wait_for_pending_prs": false,
   "tasks": [
     {
       "id": "implement-core",
@@ -63,6 +64,7 @@ Task rules:
 - Keep documentation and validation inside the task that owns the behavior unless a final cross-cutting hardening task adds distinct value.
 - Use the dependency graph to expose safe parallelism. When tasks must be serial, each serial step should still produce a meaningful integrated increment.
 - Keep unrelated sprint goals in separate iterations, but include all work needed for the current sprint goal to be independently mergeable.
+- If runtime context includes review-pending PRs and every safe implementation area is reserved by those PRs, return an empty `tasks` array with `wait_for_pending_prs: true` so the CLI waits for pending PR changes instead of creating overlapping work.
 - IDs use lowercase letters, digits, and hyphens.
 - `depends_on` defines required order.
 - `conflicts_with` prevents parallel execution.
@@ -139,7 +141,9 @@ Review-result shape:
 }
 ```
 
-In PR mode, before approval, rename the branch, read the PR template, write PR artifacts, create the PR, wait for checks, and merge:
+In PR mode, inspect `LOOP_PR_REVIEW_MODE` or `loop iteration read runtime` before approval.
+
+When `LOOP_PR_REVIEW_MODE=auto_merge`, rename the branch, read the PR template, write PR artifacts, create the PR, wait for checks, and merge:
 
 ```bash
 loop branch rename --kind feat concise-branch-subject
@@ -151,4 +155,15 @@ loop pr checks
 loop pr merge
 ```
 
-Use `status: "approved"` only when the iteration goals are satisfied, code quality is acceptable, and PR mode has `pr-state.status=merged`. Use `changes_requested` with concrete `findings` that can be converted into repair tasks, including failed CI findings. Set `goal_complete` only when a CLI goal exists and the integrated PR would satisfy it.
+When `LOOP_PR_REVIEW_MODE=parallel_human_review` or `serial_human_review`, do the same PR preparation but do not run `loop pr merge`:
+
+```bash
+loop branch rename --kind feat concise-branch-subject
+loop iteration read pr-template
+loop iteration write pr-title --value "Clear PR title"
+loop iteration write pr-body --file pr-body.md
+loop pr create
+loop pr checks
+```
+
+Use `status: "approved"` only when the iteration goals are satisfied, code quality is acceptable, and PR mode has the state required by the review mode: `pr-state.status=merged` for `auto_merge`, or `pr-state.status=waiting_for_human` for human-review modes. Use `changes_requested` with concrete `findings` that can be converted into repair tasks, including failed CI findings. Set `goal_complete` only when a CLI goal exists and the integrated or human-review-ready PR would satisfy it.

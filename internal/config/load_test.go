@@ -71,6 +71,9 @@ run:
 	if cfg.Git.Integration.PR.ChecksWatchTimeoutSeconds != 3600 {
 		t.Fatalf("default checks watch timeout = %d, want 3600", cfg.Git.Integration.PR.ChecksWatchTimeoutSeconds)
 	}
+	if cfg.Git.Integration.PR.ReviewMode != ReviewModeAutoMerge {
+		t.Fatalf("default PR review mode = %q, want %s", cfg.Git.Integration.PR.ReviewMode, ReviewModeAutoMerge)
+	}
 }
 
 func TestLoopConfigEnvOverridesUserPath(t *testing.T) {
@@ -263,11 +266,56 @@ git:
 
 	repo = t.TempDir()
 	mustWrite(t, filepath.Join(repo, ".loop", "config.yaml"), `version: 1
+git:
+  integration:
+    pr:
+      reviewMode: manual
+`)
+	_, err = Load(LoadOptions{CWD: repo, Env: []string{}, ConfigPath: filepath.Join(repo, ".loop", "config.yaml")})
+	if err == nil || !strings.Contains(err.Error(), "git.integration.pr.reviewMode") {
+		t.Fatalf("expected PR review mode validation error, got %v", err)
+	}
+
+	repo = t.TempDir()
+	mustWrite(t, filepath.Join(repo, ".loop", "config.yaml"), `version: 1
 unexpected: true
 `)
 	_, err = Load(LoadOptions{CWD: repo, Env: []string{}, ConfigPath: filepath.Join(repo, ".loop", "config.yaml")})
 	if err == nil || !strings.Contains(err.Error(), "field unexpected not found") {
 		t.Fatalf("expected strict decode error, got %v", err)
+	}
+}
+
+func TestPRReviewModeNormalizesHumanReviewCompatibility(t *testing.T) {
+	repo := t.TempDir()
+	mustWrite(t, filepath.Join(repo, ".loop", "config.yaml"), `version: 1
+git:
+  integration:
+    pr:
+      humanReview: true
+`)
+	cfg, err := Load(LoadOptions{CWD: repo, Env: []string{}, ConfigPath: filepath.Join(repo, ".loop", "config.yaml")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Git.Integration.PR.ReviewMode != ReviewModeSerialHumanReview {
+		t.Fatalf("humanReview review mode = %q, want %s", cfg.Git.Integration.PR.ReviewMode, ReviewModeSerialHumanReview)
+	}
+	if !cfg.Git.Integration.PR.HumanReview {
+		t.Fatal("humanReview compatibility flag should remain true")
+	}
+
+	cfg, err = Load(LoadOptions{
+		CWD:        repo,
+		Env:        []string{},
+		ConfigPath: filepath.Join(repo, ".loop", "config.yaml"),
+		Overrides:  Overrides{ReviewMode: ReviewModeParallelHumanReview},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Git.Integration.PR.ReviewMode != ReviewModeParallelHumanReview {
+		t.Fatalf("override review mode = %q, want %s", cfg.Git.Integration.PR.ReviewMode, ReviewModeParallelHumanReview)
 	}
 }
 

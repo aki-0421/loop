@@ -16,6 +16,10 @@ import (
 const (
 	DefaultRepoConfig = ".loop/config.yaml"
 	DefaultUserConfig = ".config/loop/config.yaml"
+
+	ReviewModeAutoMerge           = "auto_merge"
+	ReviewModeParallelHumanReview = "parallel_human_review"
+	ReviewModeSerialHumanReview   = "serial_human_review"
 )
 
 type Config struct {
@@ -83,17 +87,18 @@ type LocalMergeConfig struct {
 }
 
 type PRConfig struct {
-	Create                        bool `yaml:"create" json:"create"`
-	Push                          bool `yaml:"push" json:"push"`
-	WaitChecks                    bool `yaml:"waitChecks" json:"waitChecks"`
-	ChecksRequiredOnly            bool `yaml:"checksRequiredOnly" json:"checksRequiredOnly"`
-	ChecksStartupDelaySeconds     int  `yaml:"checksStartupDelaySeconds" json:"checksStartupDelaySeconds"`
-	ChecksDiscoveryTimeoutSeconds int  `yaml:"checksDiscoveryTimeoutSeconds" json:"checksDiscoveryTimeoutSeconds"`
-	ChecksPollIntervalSeconds     int  `yaml:"checksPollIntervalSeconds" json:"checksPollIntervalSeconds"`
-	ChecksWatchTimeoutSeconds     int  `yaml:"checksWatchTimeoutSeconds" json:"checksWatchTimeoutSeconds"`
-	MergeWhenChecksPass           bool `yaml:"mergeWhenChecksPass" json:"mergeWhenChecksPass"`
-	DeleteBranch                  bool `yaml:"deleteBranch" json:"deleteBranch"`
-	HumanReview                   bool `yaml:"humanReview" json:"humanReview"`
+	Create                        bool   `yaml:"create" json:"create"`
+	Push                          bool   `yaml:"push" json:"push"`
+	WaitChecks                    bool   `yaml:"waitChecks" json:"waitChecks"`
+	ChecksRequiredOnly            bool   `yaml:"checksRequiredOnly" json:"checksRequiredOnly"`
+	ChecksStartupDelaySeconds     int    `yaml:"checksStartupDelaySeconds" json:"checksStartupDelaySeconds"`
+	ChecksDiscoveryTimeoutSeconds int    `yaml:"checksDiscoveryTimeoutSeconds" json:"checksDiscoveryTimeoutSeconds"`
+	ChecksPollIntervalSeconds     int    `yaml:"checksPollIntervalSeconds" json:"checksPollIntervalSeconds"`
+	ChecksWatchTimeoutSeconds     int    `yaml:"checksWatchTimeoutSeconds" json:"checksWatchTimeoutSeconds"`
+	MergeWhenChecksPass           bool   `yaml:"mergeWhenChecksPass" json:"mergeWhenChecksPass"`
+	DeleteBranch                  bool   `yaml:"deleteBranch" json:"deleteBranch"`
+	HumanReview                   bool   `yaml:"humanReview" json:"humanReview"`
+	ReviewMode                    string `yaml:"reviewMode" json:"reviewMode"`
 }
 
 type ValidationConfig struct {
@@ -127,6 +132,7 @@ type Overrides struct {
 	BaseBranch    string
 	PRMode        *bool
 	HumanReview   *bool
+	ReviewMode    string
 	NoColor       bool
 }
 
@@ -289,6 +295,9 @@ func Validate(cfg Config) error {
 	if !oneOf(cfg.Git.Integration.Mode, "local_merge", "pr") {
 		errs = append(errs, "git.integration.mode must be local_merge or pr")
 	}
+	if !oneOf(cfg.Git.Integration.PR.ReviewMode, ReviewModeAutoMerge, ReviewModeParallelHumanReview, ReviewModeSerialHumanReview) {
+		errs = append(errs, "git.integration.pr.reviewMode must be auto_merge, parallel_human_review, or serial_human_review")
+	}
 	if cfg.Git.Integration.PR.ChecksStartupDelaySeconds < 0 {
 		errs = append(errs, "git.integration.pr.checksStartupDelaySeconds must be non-negative")
 	}
@@ -428,6 +437,9 @@ func applyOverrides(m map[string]any, o Overrides) {
 	if o.HumanReview != nil {
 		setPath(m, *o.HumanReview, "git", "integration", "pr", "humanReview")
 	}
+	if strings.TrimSpace(o.ReviewMode) != "" {
+		setPath(m, strings.TrimSpace(o.ReviewMode), "git", "integration", "pr", "reviewMode")
+	}
 }
 
 func setPath(m map[string]any, value any, path ...string) {
@@ -470,6 +482,20 @@ func normalize(c *Config) {
 	if c.Validation.Commands == nil {
 		c.Validation.Commands = []ValidationCommand{}
 	}
+	normalizePRReviewMode(c)
+}
+
+func normalizePRReviewMode(c *Config) {
+	mode := strings.TrimSpace(c.Git.Integration.PR.ReviewMode)
+	if mode == "" {
+		if c.Git.Integration.PR.HumanReview {
+			mode = ReviewModeSerialHumanReview
+		} else {
+			mode = ReviewModeAutoMerge
+		}
+	}
+	c.Git.Integration.PR.ReviewMode = mode
+	c.Git.Integration.PR.HumanReview = mode != ReviewModeAutoMerge
 }
 
 func normalizeCodexAdapter(a AdapterConfig) AdapterConfig {

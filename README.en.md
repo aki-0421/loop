@@ -94,6 +94,21 @@ Then run autonomously:
 loop run task.md --pr
 ```
 
+Choose the review policy that matches how much you trust the harness:
+
+```sh
+# Full autonomy: create, check, and merge each PR.
+loop run task.md --pr --review-mode auto_merge
+
+# Human review with continued non-overlapping work while PRs wait.
+loop run task.md --pr --review-mode parallel_human_review
+
+# Strict serial review: one PR waits for human merge before the next iteration.
+loop run task.md --pr --review-mode serial_human_review
+```
+
+`--human-review` is a compatibility shortcut for `--review-mode serial_human_review`.
+
 By default, `run.maxIterations` is `0`, which means no iteration cap. In that open-ended mode, `loop` keeps selecting and integrating the next coherent AI sprint until a terminal error, interrupt, or configured limit stops the run.
 
 If you want a bounded run, provide a CLI goal:
@@ -115,9 +130,9 @@ With a non-empty `--goal`, planner and review handoffs may report `goal_complete
 3. The CLI creates isolated task worktrees and runs non-conflicting coding agents in parallel.
 4. Coding agents create task-local TODOs before editing. Each completed TODO becomes one CLI-created task-branch commit. Completed task branches are squash-merged into the iteration branch through `loop task merge`.
 5. Configured validation runs from the iteration worktree.
-6. The review agent checks the integrated branch against the task tree, validation evidence, and PR requirements. In PR mode it renames the branch, writes PR text, creates the PR, waits for checks, and merges through `loop pr`.
+6. The review agent checks the integrated branch against the task tree, validation evidence, and PR requirements. In PR mode it renames the branch, writes PR text, creates the PR, waits for checks, and follows the configured review mode for merge or human review.
 7. Validation failures and review findings become repair tasks until approval or the fix-cycle limit.
-8. After a successful merge, `loop` cleans up local worktrees and branches, records the result, and starts the next iteration when the run should continue.
+8. After a successful merge or human-review handoff, `loop` cleans up local worktrees and branches, records the result, and starts the next iteration when the run should continue.
 
 Agents do not run raw Git or GitHub commands for loop-owned lifecycle work. They use `loop` commands so commits, merges, PRs, checks, cleanup, and audit state stay consistent.
 
@@ -128,6 +143,8 @@ Agents do not run raw Git or GitHub commands for loop-owned lifecycle work. They
 - Missing information is handled by making a local, explicit assumption and continuing.
 - Important product, policy, or large blocking specification questions are asked with `loop issue ask`, which creates GitHub Issues.
 - After asking a clarification Issue, agents continue unrelated safe work when possible.
+- In `parallel_human_review` mode, PRs waiting for human review are recorded with their changed files and passed to later planners so they can choose non-overlapping work.
+- In `serial_human_review` mode, `loop` waits for the human to merge the current PR before starting another iteration.
 - Without a CLI `--goal`, the run is open-ended: role output cannot mark the full run complete.
 - With a CLI `--goal`, the run stops only after an integrated iteration satisfies that goal.
 

@@ -91,7 +91,8 @@ Flags:
 | `--goal <text>` | empty | Natural-language stop condition stored in runtime context |
 | `--max-iterations <n>` | config value | Stop after `n` iterations; `0` means unlimited |
 | `--pr` | config value | Use pull request integration instead of local squash merge |
-| `--human-review` | config value | Open the PR and pause for external post-hoc review or merge updates instead of auto-merging |
+| `--human-review` | config value | Compatibility shortcut for `--review-mode serial_human_review` |
+| `--review-mode <mode>` | config value | PR review policy: `auto_merge`, `parallel_human_review`, or `serial_human_review` |
 | `--base <branch>` | current branch at run start | Base branch for integration |
 | `--resume <run-id>` | empty | Accepted for older scripts; use `loop resume <run-id>` |
 | `--from-iteration <n>` | latest | Accepted for older scripts with `--resume`; currently ignored |
@@ -111,7 +112,9 @@ Runtime rules:
 - Coding agents create task-local TODOs before editing, complete each TODO as one CLI-created task-branch commit, write `task-result` handoffs, run `loop task merge`, and resolve conflicts before exiting.
 - The CLI runs validation, then the review agent writes a `review-result` handoff.
 - Validation failures and review findings become repair tasks until approval or the configured fix-cycle limit.
-- In PR mode, review agents rename the branch, create PR title/body artifacts from the template, create/check/merge the PR through loop commands, and approve only after `pr-state.status=merged`. With `--human-review`, the PR command flow pauses for external post-hoc review or merge updates.
+- In PR mode with `reviewMode=auto_merge`, review agents rename the branch, create PR title/body artifacts from the template, create/check/merge the PR through loop commands, and approve only after `pr-state.status=merged`.
+- With `reviewMode=parallel_human_review`, review agents create the PR and run checks, then approve only after `pr-state.status=waiting_for_human`; the CLI records the PR, branch, title, and changed files as pending review context, renders pending PR numbers and titles while continuing other work, cleans local worktrees and branches while preserving the remote PR branch, and starts the next iteration from the base branch. Planners must avoid pending PR changed files and dependent work. If no safe non-overlapping work remains, planners can return `wait_for_pending_prs=true` with an empty task tree so the CLI enters PR review wait mode.
+- With `reviewMode=serial_human_review`, review agents create the PR and run checks, then approve only after `pr-state.status=waiting_for_human`; the CLI shows a PR review wait screen and polls every 5 minutes for an external human merge before cleanup or the next iteration. `--human-review` selects this mode.
 - `goal_complete=true` can stop the run only after successful integration and only when `--goal` is non-empty.
 
 Example:

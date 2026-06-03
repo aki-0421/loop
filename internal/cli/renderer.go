@@ -52,8 +52,11 @@ type runRenderer struct {
 	usageBaseOutputTokens int
 	latestMsg             string
 	confirmation          *rendererConfirmation
+	pendingPullRequests   []rendererPendingPullRequest
 	sleeping              bool
 	sleepSince            time.Time
+	sleepTitle            string
+	sleepStatus           string
 	sleepDetail           string
 	gracefulShutdown      bool
 	done                  chan struct{}
@@ -67,6 +70,12 @@ type rendererConfirmation struct {
 	TargetBranch string
 	MainBranch   string
 	Until        time.Time
+}
+
+type rendererPendingPullRequest struct {
+	PR     string
+	Title  string
+	Branch string
 }
 
 type taskItem struct {
@@ -523,6 +532,8 @@ func (r *runRenderer) SleepWaitingForGitHub() {
 	if r.sleepSince.IsZero() {
 		r.sleepSince = now
 	}
+	r.sleepTitle = "GitHub Sleep Mode"
+	r.sleepStatus = "Waiting for GitHub Issue/PR updates"
 	r.sleepDetail = detail
 	r.stage = "sleeping"
 	r.stageDetail = detail
@@ -553,6 +564,68 @@ func (r *runRenderer) SleepWaitingForGitHub() {
 	r.setTitle()
 }
 
+func (r *runRenderer) SleepWaitingForPullRequests(pending []runstate.PendingPullRequest) {
+	if !r.enabled {
+		return
+	}
+	items := rendererPendingPullRequestsFromState(pending)
+	detail := "sleeping; waiting for human PR review"
+	if len(items) > 0 {
+		detail = "sleeping; waiting for human PR review: " + rendererPendingPullRequestSummary(items)
+	}
+	r.mu.Lock()
+	now := time.Now()
+	r.sleeping = true
+	if r.sleepSince.IsZero() {
+		r.sleepSince = now
+	}
+	r.sleepTitle = "Waiting For PR Review"
+	r.sleepStatus = "Waiting for human PR review"
+	r.sleepDetail = detail
+	r.pendingPullRequests = items
+	r.stage = "sleeping"
+	r.stageDetail = detail
+	r.current = detail
+	r.latestMsg = detail
+	if len(r.activity) == 0 || r.activity[len(r.activity)-1] != detail {
+		r.activity = append(r.activity, detail)
+		r.activityLog = append(r.activityLog, rendererLogLine{At: time.Now(), Text: detail})
+		if len(r.activity) > 20 {
+			r.activity = append([]string(nil), r.activity[len(r.activity)-20:]...)
+		}
+		if len(r.activityLog) > 20 {
+			r.activityLog = append([]rendererLogLine(nil), r.activityLog[len(r.activityLog)-20:]...)
+		}
+	}
+	r.addEventLocked(rendererEvent{
+		At:     now,
+		Status: "active",
+		Title:  "PR Review Wait",
+		Detail: detail,
+	})
+	r.mu.Unlock()
+	if r.interactive {
+		r.render()
+	} else {
+		r.line("sleep", detail)
+	}
+	r.setTitle()
+}
+
+func (r *runRenderer) PendingPullRequests(pending []runstate.PendingPullRequest) {
+	if !r.enabled {
+		return
+	}
+	items := rendererPendingPullRequestsFromState(pending)
+	r.mu.Lock()
+	r.pendingPullRequests = items
+	r.mu.Unlock()
+	if !r.interactive && len(items) > 0 {
+		r.line("pending-pr", rendererPendingPullRequestSummary(items))
+	}
+	r.render()
+}
+
 func (r *runRenderer) SleepFetchRequested() {
 	if !r.enabled {
 		return
@@ -581,6 +654,8 @@ func (r *runRenderer) SleepFetchRequested() {
 func (r *runRenderer) clearSleepLocked() {
 	r.sleeping = false
 	r.sleepSince = time.Time{}
+	r.sleepTitle = ""
+	r.sleepStatus = ""
 	r.sleepDetail = ""
 }
 
@@ -773,8 +848,11 @@ func (r *runRenderer) frame(width, height int) []string {
 		LatestMsg:        r.latestMsg,
 		Tasks:            append([]taskItem(nil), r.tasks...),
 		Confirmation:     cloneRendererConfirmation(r.confirmation),
+		PendingPRs:       append([]rendererPendingPullRequest(nil), r.pendingPullRequests...),
 		Sleeping:         r.sleeping,
 		SleepSince:       r.sleepSince,
+		SleepTitle:       r.sleepTitle,
+		SleepStatus:      r.sleepStatus,
 		SleepDetail:      r.sleepDetail,
 		GracefulShutdown: r.gracefulShutdown,
 		Now:              time.Now(),
@@ -820,6 +898,36 @@ func taskDisplayTitle(task workflow.Task) string {
 		}
 	}
 	return "task"
+}
+
+func rendererPendingPullRequestsFromState(pending []runstate.PendingPullRequest) []rendererPendingPullRequest {
+	if len(pending) == 0 {
+		return nil
+	}
+	out := make([]rendererPendingPullRequest, 0, len(pending))
+	for _, item := range pending {
+		prID := strings.TrimSpace(item.PR)
+		if prID == "" {
+			continue
+		}
+		out = append(out, rendererPendingPullRequest{
+			PR:     prID,
+			Title:  strings.TrimSpace(item.Title),
+			Branch: strings.TrimSpace(item.Branch),
+		})
+	}
+	return out
+}
+
+func rendererPendingPullRequestSummary(items []rendererPendingPullRequest) string {
+	var parts []string
+	for _, item := range items {
+		text := pendingPullRequestDisplayText(item)
+		if text != "" {
+			parts = append(parts, text)
+		}
+	}
+	return strings.Join(parts, "; ")
 }
 
 func cloneRendererConfirmation(in *rendererConfirmation) *rendererConfirmation {

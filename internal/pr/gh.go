@@ -36,6 +36,12 @@ type CommandResult struct {
 	Pending  bool
 }
 
+type PullRequestState struct {
+	State    string
+	MergedAt string
+	URL      string
+}
+
 type CommandError struct {
 	Tool     string
 	Dir      string
@@ -119,6 +125,28 @@ func (r Runner) View(ctx context.Context, branch string) (CommandResult, error) 
 		return CommandResult{}, errors.New("branch is required")
 	}
 	return r.run(ctx, r.ghPath(), "gh", "pr", "view", branch, "--json", "url", "--jq", ".url")
+}
+
+func (r Runner) ViewState(ctx context.Context, pr string) (PullRequestState, CommandResult, error) {
+	if strings.TrimSpace(pr) == "" {
+		return PullRequestState{}, CommandResult{}, errors.New("pr identifier is required")
+	}
+	result, err := r.run(ctx, r.ghPath(), "gh", "pr", "view", pr, "--json", "state,mergedAt,url", "--jq", "[.state, (.mergedAt // \"\"), (.url // \"\")] | @tsv")
+	if err != nil {
+		return PullRequestState{}, result, err
+	}
+	fields := strings.Split(strings.TrimSpace(result.Stdout), "\t")
+	state := PullRequestState{}
+	if len(fields) > 0 {
+		state.State = strings.TrimSpace(fields[0])
+	}
+	if len(fields) > 1 {
+		state.MergedAt = strings.TrimSpace(fields[1])
+	}
+	if len(fields) > 2 {
+		state.URL = strings.TrimSpace(fields[2])
+	}
+	return state, result, nil
 }
 
 type CreateOptions struct {

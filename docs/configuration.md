@@ -76,6 +76,26 @@ git:
     mode: local_merge
 ```
 
+Choose a pull request review policy:
+
+```yaml
+version: 1
+
+git:
+  integration:
+    mode: pr
+    pr:
+      reviewMode: parallel_human_review
+```
+
+Review modes:
+
+| Mode | Behavior |
+| --- | --- |
+| `auto_merge` | Fully autonomous default. The review agent creates, checks, and merges the PR through loop commands. |
+| `parallel_human_review` | Human reviews and merges PRs externally while `loop` continues later iterations from the base branch. Pending PR branches and changed files are passed to planners so they can avoid overlapping work. |
+| `serial_human_review` | Human reviews and merges each PR externally, and `loop` waits for that merge before starting another iteration. |
+
 Customize the Codex adapter:
 
 ```yaml
@@ -119,6 +139,10 @@ loop run task.md --pr --human-review --max-iterations 1
 ```
 
 ```sh
+loop run task.md --pr --review-mode parallel_human_review
+```
+
+```sh
 loop run task.md \
   --goal "The selected feature is implemented and validation passes" \
   --pr
@@ -128,6 +152,8 @@ Important behavior:
 
 - `--max-iterations 0` means unlimited.
 - `--goal` is a stop condition, not the only source of work.
+- `--human-review` is a compatibility shortcut for `--review-mode serial_human_review`.
+- `--review-mode parallel_human_review` lets the run continue with non-overlapping work while earlier PRs wait for human review.
 - Without `--goal`, the run is open-ended and stops only on an iteration limit, interrupt, or terminal error.
 - With `--goal`, the run stops only after a successfully integrated iteration satisfies the goal.
 

@@ -15,11 +15,12 @@ const SchemaVersion = 1
 var taskIDPattern = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 
 type TaskTree struct {
-	SchemaVersion  int    `json:"schema_version"`
-	Summary        string `json:"summary"`
-	GoalEvaluation string `json:"goal_evaluation"`
-	GoalComplete   bool   `json:"goal_complete,omitempty"`
-	Tasks          []Task `json:"tasks"`
+	SchemaVersion     int    `json:"schema_version"`
+	Summary           string `json:"summary"`
+	GoalEvaluation    string `json:"goal_evaluation"`
+	GoalComplete      bool   `json:"goal_complete,omitempty"`
+	WaitForPendingPRs bool   `json:"wait_for_pending_prs,omitempty"`
+	Tasks             []Task `json:"tasks"`
 }
 
 type Task struct {
@@ -109,6 +110,9 @@ func ValidateTaskTree(tree TaskTree) []string {
 	}
 	if strings.TrimSpace(tree.GoalEvaluation) == "" {
 		problems = append(problems, "goal_evaluation is required")
+	}
+	if tree.WaitForPendingPRs && len(tree.Tasks) > 0 {
+		problems = append(problems, "wait_for_pending_prs requires an empty tasks array")
 	}
 	seen := map[string]Task{}
 	for i, task := range tree.Tasks {

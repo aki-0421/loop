@@ -18,6 +18,7 @@ Required fields:
 | `summary` | string | One-sentence AI sprint-sized PR summary. |
 | `goal_evaluation` | string | Current view of the CLI goal. |
 | `goal_complete` | boolean | Optional. True only when a CLI goal exists and the planner believes no more work remains after integration. |
+| `wait_for_pending_prs` | boolean | Optional. Only valid with an empty `tasks` array. In `parallel_human_review` mode, this asks the CLI to wait for pending human-review PR changes when no safe non-overlapping implementation work remains. |
 | `tasks` | array | Coding tasks with dependencies and conflicts. |
 
 Task fields:
@@ -31,7 +32,7 @@ Task fields:
 | `conflicts_with` | array | Task IDs that must not run concurrently. |
 | `acceptance` | array | Concrete acceptance checks. |
 
-The CLI rejects duplicate IDs, unknown dependencies or conflicts, self-dependencies, self-conflicts, dependency cycles, invalid IDs, and unknown fields. Planner tasks must not include commit metadata.
+The CLI rejects duplicate IDs, unknown dependencies or conflicts, self-dependencies, self-conflicts, dependency cycles, invalid IDs, `wait_for_pending_prs` combined with tasks, and unknown fields. Planner tasks must not include commit metadata.
 
 ### Task Result
 
@@ -102,6 +103,24 @@ Required fields:
 | `task_commits` | array | Task-branch TODO commits as `sha` and `subject`. |
 | `merge_commit` | object | The iteration branch squash commit as `sha` and `subject`. |
 | `merged_at` | string | UTC timestamp when the merge completed. |
+
+## Pending Pull Requests
+
+When `git.integration.pr.reviewMode=parallel_human_review`, approved PRs that are waiting for external human review remain in `run-state.json` under `pending_pull_requests` and are copied into later runtime artifacts.
+
+Pending PR fields:
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `pr` | string | PR number or URL returned by GitHub. |
+| `branch` | string | PR head branch. |
+| `base` | string | Integration base branch. |
+| `title` | string | PR title when known. |
+| `run_id` | string | Run that created the PR. |
+| `iteration_id` | string | Iteration that created the PR. |
+| `changed_files` | array | Files changed by the PR branch relative to the base branch. Later planners use this to avoid overlapping work. |
+| `created_at` | string | UTC timestamp recorded by `loop pr create`. |
+| `status` | enum | `waiting_for_human` while the PR is pending. |
 
 ## Iteration Close
 
