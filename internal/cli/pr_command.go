@@ -527,7 +527,8 @@ func ensurePRMode(prCtx prCommandContext) error {
 
 func isRoleOrchestratedPR(prCtx prCommandContext) bool {
 	value := strings.ToLower(strings.TrimSpace(prCtx.runtime["role_orchestrated"]))
-	return value == "true" || value == "1" || strings.TrimSpace(os.Getenv("LOOP_ROLE_ORCHESTRATED")) == "true"
+	envValue := strings.ToLower(strings.TrimSpace(os.Getenv("LOOP_ROLE_ORCHESTRATED")))
+	return value == "true" || value == "1" || envValue == "true" || envValue == "1"
 }
 
 func ensureRoleOrchestratedPRArtifacts(prCtx prCommandContext, title, body string) error {

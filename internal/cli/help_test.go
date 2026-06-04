@@ -35,20 +35,26 @@ func TestHelpCommandRejectsAgentOnlyDetail(t *testing.T) {
 	if err == nil {
 		t.Fatal("human help should reject agent-only topics")
 	}
-	if !strings.Contains(err.Error(), "loop help agent handoff write") {
-		t.Fatalf("error should point to agent help: %v", err)
+	if !strings.Contains(err.Error(), "available to agent processes through `loop help handoff write`") {
+		t.Fatalf("error should explain agent-only help: %v", err)
 	}
 }
 
-func TestAgentHelpCommandShowsCompactList(t *testing.T) {
+func TestAgentContextHelpCommandShowsCompactList(t *testing.T) {
+	t.Setenv("LOOP_AGENT_CONTEXT", "1")
 	out, err := captureStdout(t, func() error {
-		return commandHelp(context.Background(), globals{}, []string{"agent"})
+		return commandHelp(context.Background(), globals{}, nil)
 	})
 	if err != nil {
-		t.Fatalf("loop help agent: %v", err)
+		t.Fatalf("loop help: %v", err)
 	}
 	for _, want := range []string{
 		"agent-help-v1\n",
+		"context:LOOP_AGENT_CONTEXT=1 selects this agent-facing reference for `loop help`",
+		"rule:read runtime and instruction with `loop iteration read runtime` and `loop iteration read instruction` before acting.",
+		"planner:write one AI sprint-sized task-tree",
+		"coding:create task TODOs before edits",
+		"review:inspect diff, task results, and validation",
 		"cmd:loop branch rename",
 		"cmd:loop handoff write task-tree|task-result|review-result",
 		"cmd:loop iteration path|read|write",
@@ -61,7 +67,7 @@ func TestAgentHelpCommandShowsCompactList(t *testing.T) {
 		"artifacts:",
 		"runtime:r:file",
 		"task-tree:r:file",
-		"detail:loop help agent <command...>",
+		"detail:loop help <command...>",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("agent help output missing %q:\n%s", want, out)
@@ -77,14 +83,15 @@ func TestAgentHelpCommandShowsCompactList(t *testing.T) {
 	}
 }
 
-func TestAgentHelpCommandShowsReviewPRDetails(t *testing.T) {
+func TestAgentContextHelpCommandShowsReviewPRDetails(t *testing.T) {
+	t.Setenv("LOOP_AGENT_CONTEXT", "1")
 	for _, topic := range [][]string{
-		{"agent", "branch", "rename"},
-		{"agent", "pr", "create"},
-		{"agent", "pr", "checks"},
-		{"agent", "pr", "logs"},
-		{"agent", "pr", "merge"},
-		{"agent", "iteration", "write"},
+		{"branch", "rename"},
+		{"pr", "create"},
+		{"pr", "checks"},
+		{"pr", "logs"},
+		{"pr", "merge"},
+		{"iteration", "write"},
 	} {
 		out, err := captureStdout(t, func() error {
 			return commandHelp(context.Background(), globals{}, topic)
@@ -92,7 +99,7 @@ func TestAgentHelpCommandShowsReviewPRDetails(t *testing.T) {
 		if err != nil {
 			t.Fatalf("loop help %v: %v", topic, err)
 		}
-		if !strings.Contains(out, "cmd:loop "+strings.Join(topic[1:], " ")) {
+		if !strings.Contains(out, "cmd:loop "+strings.Join(topic, " ")) {
 			t.Fatalf("help %v missing command detail:\n%s", topic, out)
 		}
 	}
@@ -113,19 +120,20 @@ func TestHumanHelpForAgentOnlyTopicsPointsToAgentHelp(t *testing.T) {
 		if err == nil {
 			t.Fatalf("human help %v should reject agent-only topic", topic)
 		}
-		want := "loop help agent " + strings.Join(topic, " ")
+		want := "loop help " + strings.Join(topic, " ")
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("human help %v should point to %q, got %v", topic, want, err)
 		}
 	}
 }
 
-func TestAgentHelpCommandShowsHandoffWriteSchemas(t *testing.T) {
+func TestAgentContextHelpCommandShowsHandoffWriteSchemas(t *testing.T) {
+	t.Setenv("LOOP_AGENT_CONTEXT", "1")
 	out, err := captureStdout(t, func() error {
-		return commandHelp(context.Background(), globals{}, []string{"agent", "handoff", "write"})
+		return commandHelp(context.Background(), globals{}, []string{"handoff", "write"})
 	})
 	if err != nil {
-		t.Fatalf("loop help agent handoff write: %v", err)
+		t.Fatalf("loop help handoff write: %v", err)
 	}
 	for _, want := range []string{
 		"cmd:loop handoff write task-tree|task-result|review-result",
@@ -143,12 +151,13 @@ func TestAgentHelpCommandShowsHandoffWriteSchemas(t *testing.T) {
 	}
 }
 
-func TestAgentHelpCommandShowsIterationArtifactsFromRegistry(t *testing.T) {
+func TestAgentContextHelpCommandShowsIterationArtifactsFromRegistry(t *testing.T) {
+	t.Setenv("LOOP_AGENT_CONTEXT", "1")
 	out, err := captureStdout(t, func() error {
-		return commandHelp(context.Background(), globals{}, []string{"agent", "iteration", "read"})
+		return commandHelp(context.Background(), globals{}, []string{"iteration", "read"})
 	})
 	if err != nil {
-		t.Fatalf("loop help agent iteration read: %v", err)
+		t.Fatalf("loop help iteration read: %v", err)
 	}
 	for _, want := range []string{
 		"artifacts:",
@@ -167,10 +176,11 @@ func TestAgentHelpCommandShowsIterationArtifactsFromRegistry(t *testing.T) {
 	}
 }
 
-func TestAgentHelpCommandShowsIssueDetails(t *testing.T) {
+func TestAgentContextHelpCommandShowsIssueDetails(t *testing.T) {
+	t.Setenv("LOOP_AGENT_CONTEXT", "1")
 	for _, topic := range [][]string{
-		{"agent", "issue", "ask"},
-		{"agent", "issue", "report"},
+		{"issue", "ask"},
+		{"issue", "report"},
 	} {
 		out, err := captureStdout(t, func() error {
 			return commandHelp(context.Background(), globals{}, topic)
@@ -207,10 +217,11 @@ func TestHelpCommandPrintsJSON(t *testing.T) {
 	}
 
 	out, err = captureStdout(t, func() error {
-		return Run([]string{"--json", "help", "agent", "iteration", "read"})
+		t.Setenv("LOOP_AGENT_CONTEXT", "1")
+		return Run([]string{"--json", "help", "iteration", "read"})
 	})
 	if err != nil {
-		t.Fatalf("loop --json help agent iteration read: %v", err)
+		t.Fatalf("loop --json help iteration read: %v", err)
 	}
 	var detail struct {
 		Command   string         `json:"command"`

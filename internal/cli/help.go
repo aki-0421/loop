@@ -3,9 +3,11 @@ package cli
 import (
 	"context"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 
+	"github.com/aki-0421/loop/internal/agent"
 	"github.com/aki-0421/loop/internal/gitx"
 )
 
@@ -39,8 +41,8 @@ type helpArtifact struct {
 
 func commandHelp(ctx context.Context, g globals, args []string) error {
 	_ = ctx
-	if len(args) > 0 && args[0] == "agent" {
-		return commandAgentHelp(g, args[1:])
+	if isAgentHelpContext() {
+		return commandAgentContextHelp(g, args)
 	}
 	if len(args) == 0 {
 		summaries := helpSummaries()
@@ -56,7 +58,7 @@ func commandHelp(ctx context.Context, g globals, args []string) error {
 	cmd, ok := lookupHelpCommand(args)
 	if !ok {
 		if _, agentOnly := lookupAgentOnlyHelpCommand(args); agentOnly {
-			return codedError{2, fmt.Errorf("agent-only help topic %q; run `loop help agent %s`", strings.Join(args, " "), strings.Join(args, " "))}
+			return codedError{2, fmt.Errorf("agent-only help topic %q is available to agent processes through `loop help %s`", strings.Join(args, " "), strings.Join(args, " "))}
 		}
 		return codedError{2, fmt.Errorf("unknown help topic %q; run `loop help`", strings.Join(args, " "))}
 	}
@@ -198,6 +200,19 @@ func agentHelpCommands() []helpCommand {
 	return out
 }
 
+func isAgentHelpContext() bool {
+	return isTruthyEnv(os.Getenv(agent.AgentContextEnv))
+}
+
+func isTruthyEnv(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
 func sortHelpSummaries(items []helpSummary) {
 	sort.Slice(items, func(i, j int) bool {
 		return items[i].Command < items[j].Command
@@ -272,7 +287,7 @@ func agentHelpArtifacts() []helpArtifact {
 	return out
 }
 
-func commandAgentHelp(g globals, args []string) error {
+func commandAgentContextHelp(g globals, args []string) error {
 	if len(args) == 0 {
 		commands := agentHelpCommands()
 		value := map[string]any{
@@ -285,7 +300,7 @@ func commandAgentHelp(g globals, args []string) error {
 
 	cmd, ok := lookupAgentHelpCommand(args)
 	if !ok {
-		return codedError{2, fmt.Errorf("unknown agent help topic %q; run `loop help agent`", strings.Join(args, " "))}
+		return codedError{2, fmt.Errorf("unknown agent help topic %q; run `loop help`", strings.Join(args, " "))}
 	}
 	subcommands := agentChildHelpSummaries(cmd.Path)
 	artifacts := []helpArtifact(nil)
@@ -364,11 +379,18 @@ func renderAgentHelp(commands []helpCommand) string {
 	})
 	var b strings.Builder
 	b.WriteString("agent-help-v1\n")
+	b.WriteString("context:LOOP_AGENT_CONTEXT=1 selects this agent-facing reference for `loop help`; without it `loop help` is human-facing.\n")
+	b.WriteString("rule:read runtime and instruction with `loop iteration read runtime` and `loop iteration read instruction` before acting.\n")
+	b.WriteString("rule:do not run raw git or gh lifecycle commands; use loop commands for branch rename, commits, task merges, PRs, issues, and handoffs.\n")
+	b.WriteString("rule:write strict role handoff JSON with `loop handoff write`; unknown fields are rejected.\n")
+	b.WriteString("planner:write one AI sprint-sized task-tree for a coherent independently mergeable PR; use few meaningful task boundaries, dependencies, and conflicts.\n")
+	b.WriteString("coding:create task TODOs before edits; process start/change/complete serially; write task-result; run `loop task merge`; resolve conflicts before exit.\n")
+	b.WriteString("review:inspect diff, task results, and validation; in PR mode rename branch, write PR title/body, create/check/merge or wait for human review per runtime mode before approval.\n")
 	for _, cmd := range commands {
 		fmt.Fprintf(&b, "cmd:%s;%s\n", compactUsage(cmd.Usage), compactText(cmd.Summary))
 	}
 	fmt.Fprintf(&b, "artifacts:%s\n", compactArtifacts(agentHelpArtifacts()))
-	b.WriteString("detail:loop help agent <command...>\n")
+	b.WriteString("detail:loop help <command...>\n")
 	return b.String()
 }
 

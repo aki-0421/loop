@@ -78,6 +78,28 @@ func TestProcessAdapterPersistsAuditEventsAndFilteredMessages(t *testing.T) {
 	}
 }
 
+func TestProcessAdapterAlwaysMarksAgentContext(t *testing.T) {
+	adapter := ProcessAdapter{
+		AdapterName: "test",
+		Command:     "agent-bin",
+		Env:         map[string]string{AgentContextEnv: "0", "OTHER": "adapter"},
+	}
+	prepared, err := adapter.Prepare(context.Background(), PrepareRequest{
+		WorkDir:     t.TempDir(),
+		PromptText:  "prompt",
+		Environment: map[string]string{AgentContextEnv: "false", "OTHER": "request"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := prepared.Env[AgentContextEnv]; got != AgentContextValue {
+		t.Fatalf("%s = %q, want %q", AgentContextEnv, got, AgentContextValue)
+	}
+	if got := prepared.Env["OTHER"]; got != "request" {
+		t.Fatalf("request environment should override adapter environment, got %q", got)
+	}
+}
+
 func TestProcessAdapterFlushesAuditEventsBeforeExit(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell command uses sh")

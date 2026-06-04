@@ -47,7 +47,7 @@ The built-in `loop` skill consolidates the planner, coding, and review role conv
 - Review role: inspect the iteration diff, rename the iteration branch, prepare PR text from `loop iteration read pr-template`, create/check/merge the PR through `loop pr`, and write `review-result` with `loop handoff write review-result`.
 - Avoid direct Git lifecycle commands, `loop commit`, and `loop iteration close`; use `loop branch`, `loop task`, and `loop pr` for the role-owned actions.
 
-The skill includes compact JSON shapes for `task-tree`, `task-result`, and `review-result`, and points agents to `loop help agent handoff write` for current command flags and schema details.
+The skill includes compact JSON shapes for `task-tree`, `task-result`, and `review-result`, and points agents to `loop help` and `loop help handoff write` for current command flags, role rules, and schema details. Agent subprocesses receive `LOOP_AGENT_CONTEXT=1`, so `loop help` prints the agent-facing reference instead of the human command list.
 
 The planner role treats one iteration as one AI sprint-sized PR: the largest coherent development goal suitable for an autonomous run while still producing an independently mergeable result. It splits that sprint into coding-agent work packets for dependency ordering, conflict avoidance, validation, and parallel execution. The default skill tells planners to prefer natural task boundaries, avoid layer-only splits, merge commit-sized microtasks into neighboring tasks, and keep documentation or validation with the behavior owner unless a cross-cutting hardening task adds distinct value.
 

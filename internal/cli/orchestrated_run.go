@@ -1704,9 +1704,9 @@ func runRoleAgentOnce(ctx context.Context, cfg config.Config, workDir string, pa
 		"LOOP_ITERATION_WORKTREE":        paths.IterationWorktree,
 		"LOOP_INTEGRATION_MODE":          paths.IntegrationMode,
 		"LOOP_PR_REVIEW_MODE":            paths.PRReviewMode,
-		"LOOP_PULL_REQUEST_MODE":         strconv.FormatBool(paths.PullRequestMode),
-		"LOOP_PR_MODE":                   strconv.FormatBool(paths.PullRequestMode),
-		"LOOP_ROLE_ORCHESTRATED":         strconv.FormatBool(paths.RoleOrchestrated),
+		"LOOP_PULL_REQUEST_MODE":         loopBoolEnv(paths.PullRequestMode),
+		"LOOP_PR_MODE":                   loopBoolEnv(paths.PullRequestMode),
+		"LOOP_ROLE_ORCHESTRATED":         loopBoolEnv(paths.RoleOrchestrated),
 	}
 	if paths.PendingPRRepair != nil {
 		env["LOOP_REPAIR_PR"] = paths.PendingPRRepair.PR
@@ -1793,7 +1793,7 @@ func buildRolePrompt(role string, paths pathSet, task workflow.Task, tree any, t
 	fmt.Fprintf(&b, "\n## Role\n\nYou are the %s agent in a CLI-orchestrated loop iteration.\n", role)
 	b.WriteString("Read runtime context with `loop iteration read runtime` and the instruction with `loop iteration read instruction`.\n")
 	b.WriteString("Do not run Git or GitHub commands directly; use loop-owned commands for commits, branch renames, pull requests, handoffs, and task merges.\n")
-	b.WriteString("Use `loop help agent handoff write` for the current handoff schema and command flags if needed.\n")
+	b.WriteString("Use `loop help` for the agent-facing command reference and `loop help handoff write` for the current handoff schema and command flags if needed.\n")
 	if paths.PendingPRRepair != nil {
 		b.WriteString("This iteration resumes an existing human-review pull request branch. Address only the selected PR feedback and keep the work on the existing PR branch.\n")
 	}
@@ -1851,6 +1851,13 @@ func buildRolePrompt(role string, paths pathSet, task workflow.Task, tree any, t
 		b.WriteString(strings.TrimSpace(paths.AgentPromptExtra) + "\n")
 	}
 	return strings.TrimRight(b.String(), "\n") + "\n"
+}
+
+func loopBoolEnv(value bool) string {
+	if value {
+		return "1"
+	}
+	return "0"
 }
 
 func validationRepairTask(cycle int) workflow.Task {

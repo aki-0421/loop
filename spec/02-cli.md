@@ -27,13 +27,11 @@ Show the CLI-owned command reference.
 ```bash
 loop help
 loop help <command...>
-loop help agent
-loop help agent <command...>
 ```
 
 `loop help` lists human-facing commands with summaries. `loop help <command...>` prints human-facing usage, description, flags, and subcommands. It does not list agent-only commands such as `loop commit` or `loop iteration`.
 
-`loop help agent` is the compact agent-facing reference. It uses dense line-oriented text and includes agent-only commands plus command-owned reference data such as iteration artifact names. Agents should treat `loop help agent` and `loop help agent <command...>` as the source of truth instead of embedding long command lists. `loop --help` and `loop -h` are aliases for human-facing help.
+Agent subprocesses receive `LOOP_AGENT_CONTEXT=1`. In that environment, the same `loop help` command prints the compact agent-facing reference, and `loop help <command...>` resolves agent-only command details such as `loop help handoff write` or `loop help task merge`. The agent-facing reference uses dense line-oriented text and includes role rules, agent-only commands, schemas, and command-owned reference data such as iteration artifact names. Agents should treat `loop help` and `loop help <command...>` in the agent context as the source of truth instead of embedding long command lists in skills. `loop --help` and `loop -h` are aliases for the active help context.
 
 ## `loop init`
 
@@ -126,7 +124,7 @@ loop run docs/task.md \
 
 ## `loop commit`
 
-Create an iteration commit through the CLI. This is agent-facing and is shown by `loop help agent`, not by human-facing `loop help`. `loop help agent commit` is the compact source of truth for commit types, aliases, and message rules.
+Create an iteration commit through the CLI. This is an agent-facing diagnostic utility. Role-orchestrated coding agents normally create commits through `loop task todo complete`, so the compact role-agent help does not list `loop commit`.
 
 ```bash
 loop commit --type <type> <message>
@@ -194,7 +192,7 @@ Flags:
 
 ## `loop iteration`
 
-Read and write named iteration artifacts through the CLI instead of requiring agents to construct file paths. These commands are agent-facing and are shown by `loop help agent`, not by human-facing `loop help`.
+Read and write named iteration artifacts through the CLI instead of requiring agents to construct file paths. These commands are agent-facing and are shown by `loop help` only when `LOOP_AGENT_CONTEXT=1`, not by human-facing `loop help`.
 
 ```bash
 loop iteration path <artifact> [--iteration-dir <dir>|--run <run-id> --iteration <n>]

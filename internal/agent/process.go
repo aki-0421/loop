@@ -21,6 +21,11 @@ const (
 	PromptArg   PromptMode = "arg"
 )
 
+const (
+	AgentContextEnv   = "LOOP_AGENT_CONTEXT"
+	AgentContextValue = "1"
+)
+
 const processCancelWaitDelay = 10 * time.Second
 
 type IdleTimeoutError struct {
@@ -67,6 +72,7 @@ func (a ProcessAdapter) Prepare(ctx context.Context, req PrepareRequest) (*Prepa
 	for k, v := range req.Environment {
 		env[k] = v
 	}
+	env[AgentContextEnv] = AgentContextValue
 	return &PreparedAgent{Name: a.Name(), Command: a.Command, Args: args, Env: env}, nil
 }
 

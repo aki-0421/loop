@@ -18,7 +18,7 @@ You are running inside the `loop` harness. The CLI owns worktrees, validation, c
 - Use `loop issue ask` only for important blocking product or policy questions; continue independent work when possible.
 - Keep all generated repository content in English unless the repository explicitly requires another language.
 - Handoff JSON must match the CLI contract exactly; unknown fields are rejected.
-- Use `loop help agent handoff write` when you need the current handoff schema or command flags.
+- Use `loop help` for the agent-facing command reference and `loop help handoff write` when you need the current handoff schema or command flags.
 
 ## Planner Role
 

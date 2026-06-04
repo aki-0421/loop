@@ -158,13 +158,13 @@ Human-facing commands:
 | `loop run <instruction.md>` | Run autonomous coding iterations. |
 | `loop version` | Print build version, commit, and date. |
 
-Agent-facing commands are included in the compact agent help:
+Human shells see the normal command reference:
 
 ```sh
-loop help agent
+loop help
 ```
 
-Run `loop help <command>` for human-facing help.
+Agent subprocesses receive `LOOP_AGENT_CONTEXT=1`, so the same command prints the compact agent-facing reference. Run `loop help <command>` for details in the active context.
 
 ## Configuration
 
