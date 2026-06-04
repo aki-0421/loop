@@ -156,6 +156,15 @@ func readRunStateForIteration(iterationDir string) (string, runstate.State, bool
 }
 
 func rejectBranchRenameAfterIntegration(iterationDir string) error {
+	if state, ok, err := readPRState(iterationDir); err != nil {
+		return err
+	} else if ok && strings.TrimSpace(state.PR) != "" {
+		branch := strings.TrimSpace(state.Branch)
+		if branch == "" {
+			branch = "the tracked PR branch"
+		}
+		return fmt.Errorf("branch rename is not allowed after pull request creation; continue repairs on %q", branch)
+	}
 	_, state, ok, err := readRunStateForIteration(iterationDir)
 	if err != nil || !ok {
 		return err

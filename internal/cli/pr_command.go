@@ -86,6 +86,9 @@ func commandPRCreate(ctx context.Context, g globals, args []string) error {
 	if err := ensurePRMode(prCtx); err != nil {
 		return codedError{2, err}
 	}
+	if err := rejectPRLifecycleFromTaskRuntime(prCtx); err != nil {
+		return codedError{2, err}
+	}
 	if err := ensureIterationBranch(ctx, gitx.Runner{Dir: prCtx.workDir}, prCtx.branch); err != nil {
 		return codedError{4, err}
 	}
@@ -191,6 +194,9 @@ func commandPRChecks(ctx context.Context, g globals, args []string) error {
 	if err := ensurePRMode(prCtx); err != nil {
 		return codedError{2, err}
 	}
+	if err := rejectPRLifecycleFromTaskRuntime(prCtx); err != nil {
+		return codedError{2, err}
+	}
 	state, err := requirePRState(prCtx.iterDir)
 	if err != nil {
 		return codedError{2, err}
@@ -282,6 +288,9 @@ func commandPRMerge(ctx context.Context, g globals, args []string) error {
 		return err
 	}
 	if err := ensurePRMode(prCtx); err != nil {
+		return codedError{2, err}
+	}
+	if err := rejectPRLifecycleFromTaskRuntime(prCtx); err != nil {
 		return codedError{2, err}
 	}
 	if prReviewMode(prCtx) != config.ReviewModeAutoMerge {
@@ -523,6 +532,13 @@ func ensurePRMode(prCtx prCommandContext) error {
 		return errors.New("pull request commands require git.integration.mode=pr")
 	}
 	return nil
+}
+
+func rejectPRLifecycleFromTaskRuntime(prCtx prCommandContext) error {
+	if strings.TrimSpace(prCtx.runtime["task_id"]) == "" {
+		return nil
+	}
+	return errors.New("pull request lifecycle commands must run from the iteration worktree; finish the task with `loop task merge` and let the review step rerun PR checks")
 }
 
 func isRoleOrchestratedPR(prCtx prCommandContext) bool {

@@ -133,6 +133,36 @@ func TestBranchRenameRejectsDirectGitBranchChanges(t *testing.T) {
 	}
 }
 
+func TestBranchRenameRejectsAfterPRCreation(t *testing.T) {
+	ctx := context.Background()
+	repo, iterDir := setupBranchRenameIteration(t)
+	withWorkingDir(t, repo)
+	if _, err := captureStdout(t, func() error {
+		return commandBranch(ctx, globals{}, []string{"rename", "--kind", "feat", "add", "user", "profile", "--iteration-dir", iterDir})
+	}); err != nil {
+		t.Fatalf("first rename: %v", err)
+	}
+	if err := writePRState(iterDir, prState{SchemaVersion: 1, Status: "created", PR: "1", Branch: "feat/add-user-profile", Base: "develop"}); err != nil {
+		t.Fatal(err)
+	}
+
+	err := commandBranch(ctx, globals{}, []string{"rename", "--kind", "fix", "repair", "checks", "--iteration-dir", iterDir})
+	if err == nil {
+		t.Fatal("expected rename after PR creation to fail")
+	}
+	if !strings.Contains(err.Error(), "branch rename is not allowed after pull request creation") {
+		t.Fatalf("error = %v", err)
+	}
+	if got := strings.TrimSpace(git(t, repo, "branch", "--show-current")); got != "feat/add-user-profile" {
+		t.Fatalf("current branch = %q", got)
+	}
+	assertBranchMissing(t, repo, "fix/repair-checks")
+	runtime := readRuntimeForTest(t, iterDir)
+	if runtime["current_branch"] != "feat/add-user-profile" {
+		t.Fatalf("runtime current_branch = %#v", runtime["current_branch"])
+	}
+}
+
 func setupBranchRenameIteration(t *testing.T) (string, string) {
 	t.Helper()
 	repo := newCleanupRepo(t)
