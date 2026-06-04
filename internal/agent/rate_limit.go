@@ -16,8 +16,11 @@ var (
 	rateLimitRetryAfterPattern   = regexp.MustCompile(`(?i)\bretry-after\b\s*[:=]?\s*(\d+(?:\.\d+)?)\s*(milliseconds?|msecs?|ms|seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h)?\b`)
 	rateLimitTryAgainPattern     = regexp.MustCompile(`(?i)\b(?:please\s+)?(?:try again|retry|retrying|wait)\b.{0,32}?\bin\s+((?:\d+(?:\.\d+)?\s*(?:milliseconds?|msecs?|ms|seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h)\s*)+)`)
 	rateLimitResetClockPattern   = regexp.MustCompile(`(?i)\bresets?\s+(?:at\s+)?(?:(sun|mon|tue|wed|thu|fri|sat)(?:day)?\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?(?:\s+on\s+(\d{1,2})\s+([a-z]{3,9}))?\b`)
+	rateLimitResetDatePattern    = regexp.MustCompile(`(?i)\bresets?\s+at\s*:?\s+([a-z]{3,9})\s+(\d{1,2})(?:,\s*(\d{4}))?\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b`)
+	rateLimitResetsAtJSONPattern = regexp.MustCompile(`(?i)\b"?(?:resets_at|resetsAt)"?\s*[:=]\s*"?(\d{10,13})"?`)
+	rateLimitResetsInPattern     = regexp.MustCompile(`(?i)\bresets?\s+in\s+((?:\d+(?:\.\d+)?\s*(?:days?|d|hours?|hrs?|h|minutes?|mins?|m|seconds?|secs?|s)\s*)+)`)
 	rateLimitUntilClockPattern   = regexp.MustCompile(`(?i)\buntil\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b`)
-	rateLimitDurationPartPattern = regexp.MustCompile(`(?i)(\d+(?:\.\d+)?)\s*(milliseconds?|msecs?|ms|hours?|hrs?|h|minutes?|mins?|m|seconds?|secs?|s)\b`)
+	rateLimitDurationPartPattern = regexp.MustCompile(`(?i)(\d+(?:\.\d+)?)\s*(milliseconds?|msecs?|ms|days?|d|hours?|hrs?|h|minutes?|mins?|m|seconds?|secs?|s)\b`)
 )
 
 type RateLimitError struct {
@@ -81,6 +84,14 @@ func DetectRateLimit(text string, now time.Time) (*RateLimitError, bool) {
 		err.ResetAt = resetAt
 		return err, true
 	}
+	if resetAt, ok := parseRateLimitUnixReset(text, now); ok {
+		err.ResetAt = resetAt
+		return err, true
+	}
+	if resetAt, ok := parseRateLimitDate(text, now); ok {
+		err.ResetAt = resetAt
+		return err, true
+	}
 	if resetAt, ok := parseRateLimitClock(text, now); ok {
 		err.ResetAt = resetAt
 		return err, true
@@ -128,6 +139,7 @@ func looksLikeRateLimit(text string) bool {
 		"opus limit",
 		"server is temporarily limiting requests",
 		"limit reached",
+		"platform.openai.com/account/rate-limits",
 	} {
 		if strings.Contains(lower, marker) {
 			return true
@@ -163,9 +175,15 @@ func parseRateLimitDuration(text string) (time.Duration, bool) {
 		}
 	}
 	matches = rateLimitTryAgainPattern.FindAllStringSubmatch(text, -1)
-	if len(matches) == 0 {
-		return 0, false
+	for _, match := range matches {
+		if len(match) < 2 {
+			continue
+		}
+		if d, ok := parseDurationParts(match[1]); ok {
+			return d, true
+		}
 	}
+	matches = rateLimitResetsInPattern.FindAllStringSubmatch(text, -1)
 	for _, match := range matches {
 		if len(match) < 2 {
 			continue
@@ -199,6 +217,8 @@ func durationFromParts(value, unit string) (time.Duration, bool) {
 	switch strings.ToLower(unit) {
 	case "millisecond", "milliseconds", "msec", "msecs", "ms":
 		return time.Duration(n * float64(time.Millisecond)), true
+	case "day", "days", "d":
+		return time.Duration(n * float64(24*time.Hour)), true
 	case "hour", "hours", "hr", "hrs", "h":
 		return time.Duration(n * float64(time.Hour)), true
 	case "minute", "minutes", "min", "mins", "m":
@@ -208,6 +228,86 @@ func durationFromParts(value, unit string) (time.Duration, bool) {
 	default:
 		return 0, false
 	}
+}
+
+func parseRateLimitUnixReset(text string, now time.Time) (time.Time, bool) {
+	matches := rateLimitResetsAtJSONPattern.FindAllStringSubmatch(text, -1)
+	var resets []time.Time
+	for _, match := range matches {
+		if len(match) < 2 {
+			continue
+		}
+		raw := match[1]
+		n, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil {
+			continue
+		}
+		var at time.Time
+		if len(raw) >= 13 {
+			at = time.UnixMilli(n).In(now.Location())
+		} else {
+			at = time.Unix(n, 0).In(now.Location())
+		}
+		resets = append(resets, at)
+	}
+	if len(resets) == 0 {
+		return time.Time{}, false
+	}
+	switch strings.ToLower(strings.TrimSpace(rateLimitReachedType(text))) {
+	case "primary", "five_hour", "five-hour", "5h", "five-hour-limit":
+		return resets[0], true
+	case "secondary", "weekly", "weekly-limit":
+		if len(resets) > 1 {
+			return resets[1], true
+		}
+		return resets[0], true
+	default:
+		var best time.Time
+		for _, at := range resets {
+			if !at.After(now) {
+				continue
+			}
+			if best.IsZero() || at.Before(best) {
+				best = at
+			}
+		}
+		if !best.IsZero() {
+			return best, true
+		}
+		return resets[0], true
+	}
+}
+
+func rateLimitReachedType(text string) string {
+	for _, key := range []string{"rateLimitReachedType", "rate_limit_reached_type"} {
+		pattern := regexp.MustCompile(`(?i)"?` + key + `"?\s*:\s*"([^"]+)"`)
+		if match := pattern.FindStringSubmatch(text); len(match) > 1 {
+			return match[1]
+		}
+	}
+	return ""
+}
+
+func parseRateLimitDate(text string, now time.Time) (time.Time, bool) {
+	match := rateLimitResetDatePattern.FindStringSubmatch(text)
+	if len(match) == 0 {
+		return time.Time{}, false
+	}
+	if _, ok := monthByName(match[1]); !ok {
+		return time.Time{}, false
+	}
+	day, err := strconv.Atoi(match[2])
+	if err != nil || day < 1 || day > 31 {
+		return time.Time{}, false
+	}
+	year := now.Year()
+	if match[3] != "" {
+		year, err = strconv.Atoi(match[3])
+		if err != nil {
+			return time.Time{}, false
+		}
+	}
+	return clockMatchToTime(match[4], match[5], match[6], "", match[2], match[1], time.Date(year, now.Month(), now.Day(), now.Hour(), now.Minute(), now.Second(), now.Nanosecond(), now.Location()))
 }
 
 func parseRateLimitClock(text string, now time.Time) (time.Time, bool) {

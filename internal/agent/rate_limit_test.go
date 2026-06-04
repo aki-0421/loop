@@ -27,6 +27,34 @@ func TestDetectRateLimitCodexExceededRetryLimit(t *testing.T) {
 	}
 }
 
+func TestDetectRateLimitCodexRateLimitsReadResetsAt(t *testing.T) {
+	now := time.Date(2026, time.May, 22, 12, 0, 0, 0, time.UTC)
+	text := `{"type":"event_msg","payload":{"type":"token_count","info":{"rate_limits":{"limitId":"codex","primary":{"usedPercent":100,"windowDurationMins":300,"resetsAt":1779459394},"secondary":{"usedPercent":18,"windowDurationMins":10080,"resetsAt":1779826837},"rateLimitReachedType":"primary"}}}}
+exceeded retry limit, last status: 429 Too Many Requests`
+	err, ok := DetectRateLimit(text, now)
+	if !ok {
+		t.Fatal("expected Codex rate_limits payload to be detected")
+	}
+	want := time.Unix(1779459394, 0).UTC()
+	if !err.ResetAt.Equal(want) {
+		t.Fatalf("reset at = %s, want %s", err.ResetAt, want)
+	}
+}
+
+func TestDetectRateLimitCodexRateLimitsReadSecondaryReset(t *testing.T) {
+	now := time.Date(2026, time.May, 22, 12, 0, 0, 0, time.UTC)
+	text := `{"rateLimits":{"primary":{"resetsAt":1779459394},"secondary":{"resetsAt":1779826837},"rateLimitReachedType":"secondary"}}
+exceeded retry limit, last status: 429 Too Many Requests`
+	err, ok := DetectRateLimit(text, now)
+	if !ok {
+		t.Fatal("expected Codex secondary rate limit payload to be detected")
+	}
+	want := time.Unix(1779826837, 0).UTC()
+	if !err.ResetAt.Equal(want) {
+		t.Fatalf("reset at = %s, want %s", err.ResetAt, want)
+	}
+}
+
 func TestDetectRateLimitCodexUsageLimitResetClock(t *testing.T) {
 	loc := time.FixedZone("test", 9*60*60)
 	now := time.Date(2026, time.June, 5, 13, 0, 0, 0, loc)
@@ -35,6 +63,19 @@ func TestDetectRateLimitCodexUsageLimitResetClock(t *testing.T) {
 		t.Fatal("expected Codex usage limit message to be detected")
 	}
 	want := time.Date(2026, time.June, 5, 13, 37, 0, 0, loc)
+	if !err.ResetAt.Equal(want) {
+		t.Fatalf("reset at = %s, want %s", err.ResetAt, want)
+	}
+}
+
+func TestDetectRateLimitCodexResetDate(t *testing.T) {
+	loc := time.FixedZone("test", -7*60*60)
+	now := time.Date(2025, time.September, 25, 12, 0, 0, 0, loc)
+	err, ok := DetectRateLimit("Resets at: Sep 25, 2025 2:37 PM. Visit https://platform.openai.com/account/rate-limits to learn more.", now)
+	if !ok {
+		t.Fatal("expected Codex reset date message to be detected")
+	}
+	want := time.Date(2025, time.September, 25, 14, 37, 0, 0, loc)
 	if !err.ResetAt.Equal(want) {
 		t.Fatalf("reset at = %s, want %s", err.ResetAt, want)
 	}

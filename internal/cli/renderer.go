@@ -405,11 +405,16 @@ func (r *runRenderer) AgentEvent(event runstate.Event) {
 		r.addEvent("done", "Agent Exited", fmt.Sprintf("exit=%v", event["exit_code"]))
 	case "agent.rate_limit_wait":
 		waitMs, _ := intEventField(event, "wait_ms")
-		detail := "sleeping; waiting for agent rate limit reset"
+		resetAt, _ := event["reset_at"].(string)
+		detail := "sleeping; waiting before retrying agent after rate limit"
 		if waitMs > 0 {
-			detail = fmt.Sprintf("sleeping; waiting %s for agent rate limit reset", formatDuration(time.Duration(waitMs)*time.Millisecond))
+			detail = fmt.Sprintf("sleeping; waiting %s before retrying agent after rate limit", formatDuration(time.Duration(waitMs)*time.Millisecond))
 		}
-		if resetAt, _ := event["reset_at"].(string); strings.TrimSpace(resetAt) != "" {
+		if strings.TrimSpace(resetAt) != "" {
+			detail = "sleeping; waiting for agent rate limit reset"
+			if waitMs > 0 {
+				detail = fmt.Sprintf("sleeping; waiting %s for agent rate limit reset", formatDuration(time.Duration(waitMs)*time.Millisecond))
+			}
 			detail += " at " + strings.TrimSpace(resetAt)
 		}
 		r.sleepWaitingForAgentRateLimit(detail)
@@ -628,7 +633,7 @@ func (r *runRenderer) sleepWaitingForAgentRateLimit(detail string) {
 	}
 	detail = strings.TrimSpace(detail)
 	if detail == "" {
-		detail = "sleeping; waiting for agent rate limit reset"
+		detail = "sleeping; waiting before retrying agent after rate limit"
 	}
 	r.mu.Lock()
 	now := time.Now()

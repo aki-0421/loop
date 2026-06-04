@@ -42,7 +42,7 @@ Sleep mode is entered only when the agent explicitly closes with `loop iteration
 
 When a role agent subprocess exits after printing a waitable Codex or Claude Code rate-limit message, the CLI records `agent.rate_limit_wait`, waits for the parsed reset or retry time, and relaunches the same planner, coding, or review role.
 
-- Codex detection covers `rate_limit_exceeded`, `rate_limit_reached`, `Rate limit reached ... Please try again in ...`, `exceeded retry limit, last status: 429 Too Many Requests`, and usage-limit reset banners such as `resets 13:37`.
+- Codex detection covers `rate_limit_exceeded`, `rate_limit_reached`, `Rate limit reached ... Please try again in ...`, `exceeded retry limit, last status: 429 Too Many Requests`, `account/rateLimits/read` payloads with `primary.resetsAt` / `secondary.resetsAt`, and usage-limit reset banners such as `resets 13:37`.
 - Claude Code detection covers usage-limit messages such as `You've hit your session limit · resets 3:45pm`, `You've hit your weekly limit · resets Mon 12:00am`, `You've hit your Opus limit · resets ...`, `Server is temporarily limiting requests`, and `Request rejected (429)`.
 - If the message includes a retry delay, the CLI waits that duration. If it includes a reset clock, the CLI waits until that clock in the local timezone. If no wait time can be parsed, the CLI waits five minutes before retrying.
 - Rate-limit waits do not consume `run.maxRoleAgentRestarts` or `run.maxTaskAttempts`; idle-timeout restarts still use `run.maxRoleAgentRestarts`.
