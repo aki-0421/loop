@@ -312,6 +312,7 @@ func TestEnsureIterationBranchRejectsAgentBranchSwitch(t *testing.T) {
 func newCleanupRepo(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
+	t.Setenv("HOME", filepath.Join(dir, ".home"))
 	git(t, dir, "init", "-b", "develop")
 	git(t, dir, "config", "user.email", "loop@example.test")
 	git(t, dir, "config", "user.name", "Loop Test")

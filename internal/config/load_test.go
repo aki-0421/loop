@@ -31,6 +31,7 @@ run:
 		CWD:        repo,
 		ConfigPath: filepath.Join(repo, ".loop", "config.yaml"),
 		Env: []string{
+			"HOME=" + repo,
 			"LOOP_AGENT=codex",
 			"LOOP_MAX_ITERATIONS=9",
 			"LOOP_BASE_BRANCH=release",

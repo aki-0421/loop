@@ -189,7 +189,7 @@ func Load(opts LoadOptions) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	if userPath, ok := userConfigPath(); ok {
+	if userPath, ok := userConfigPath(env); ok {
 		if err := mergeFile(merged, userPath); err != nil {
 			return Config{}, err
 		}
@@ -601,12 +601,26 @@ func envValue(env []string, key string) string {
 	return ""
 }
 
-func userConfigPath() (string, bool) {
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
+func userConfigPath(env []string) (string, bool) {
+	home := homeDirFromEnv(env)
+	if home == "" {
 		return "", false
 	}
 	return filepath.Join(home, DefaultUserConfig), true
+}
+
+func homeDirFromEnv(env []string) string {
+	for _, key := range []string{"HOME", "USERPROFILE"} {
+		if value := strings.TrimSpace(envValue(env, key)); value != "" {
+			return value
+		}
+	}
+	drive := strings.TrimSpace(envValue(env, "HOMEDRIVE"))
+	path := strings.TrimSpace(envValue(env, "HOMEPATH"))
+	if drive != "" && path != "" {
+		return drive + path
+	}
+	return ""
 }
 
 func atomicWrite(path string, data []byte, perm os.FileMode) error {
