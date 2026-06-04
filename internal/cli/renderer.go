@@ -403,6 +403,16 @@ func (r *runRenderer) AgentEvent(event runstate.Event) {
 	case "agent.exited":
 		r.setAgentExit(fmt.Sprintf("exit=%v", event["exit_code"]))
 		r.addEvent("done", "Agent Exited", fmt.Sprintf("exit=%v", event["exit_code"]))
+	case "agent.rate_limit_wait":
+		waitMs, _ := intEventField(event, "wait_ms")
+		detail := "sleeping; waiting for agent rate limit reset"
+		if waitMs > 0 {
+			detail = fmt.Sprintf("sleeping; waiting %s for agent rate limit reset", formatDuration(time.Duration(waitMs)*time.Millisecond))
+		}
+		if resetAt, _ := event["reset_at"].(string); strings.TrimSpace(resetAt) != "" {
+			detail += " at " + strings.TrimSpace(resetAt)
+		}
+		r.sleepWaitingForAgentRateLimit(detail)
 	case "run.cancelled_cleanup.started", "run.cancelled_cleanup.completed":
 		r.setCurrent(typ)
 		r.addActivity(typ)
@@ -601,6 +611,52 @@ func (r *runRenderer) SleepWaitingForPullRequests(pending []runstate.PendingPull
 		At:     now,
 		Status: "active",
 		Title:  "PR Review Wait",
+		Detail: detail,
+	})
+	r.mu.Unlock()
+	if r.interactive {
+		r.render()
+	} else {
+		r.line("sleep", detail)
+	}
+	r.setTitle()
+}
+
+func (r *runRenderer) sleepWaitingForAgentRateLimit(detail string) {
+	if !r.enabled {
+		return
+	}
+	detail = strings.TrimSpace(detail)
+	if detail == "" {
+		detail = "sleeping; waiting for agent rate limit reset"
+	}
+	r.mu.Lock()
+	now := time.Now()
+	r.sleeping = true
+	if r.sleepSince.IsZero() {
+		r.sleepSince = now
+	}
+	r.sleepTitle = "Agent Rate Limit"
+	r.sleepStatus = "Waiting for reset"
+	r.sleepDetail = detail
+	r.stage = "sleeping"
+	r.stageDetail = detail
+	r.current = detail
+	r.latestMsg = detail
+	if len(r.activity) == 0 || r.activity[len(r.activity)-1] != detail {
+		r.activity = append(r.activity, detail)
+		r.activityLog = append(r.activityLog, rendererLogLine{At: time.Now(), Text: detail})
+		if len(r.activity) > 20 {
+			r.activity = append([]string(nil), r.activity[len(r.activity)-20:]...)
+		}
+		if len(r.activityLog) > 20 {
+			r.activityLog = append([]rendererLogLine(nil), r.activityLog[len(r.activityLog)-20:]...)
+		}
+	}
+	r.addEventLocked(rendererEvent{
+		At:     now,
+		Status: "active",
+		Title:  "Rate Limit Wait",
 		Detail: detail,
 	})
 	r.mu.Unlock()

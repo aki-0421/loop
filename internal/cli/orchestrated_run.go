@@ -1548,12 +1548,13 @@ func clearTaskAttemptState(paths pathSet) error {
 
 func runPlannerRole(ctx context.Context, cfg config.Config, workDir string, paths pathSet, onEvent func(runstate.Event)) (workflow.TaskTree, error) {
 	promptText := buildRolePrompt("planner", paths, workflow.Task{}, nil, nil, nil)
-	attempts := roleAgentAttempts(cfg)
 	var lastErr error
 	var lastDecodeErr error
-	for attempt := 1; attempt <= attempts; attempt++ {
-		if attempt > 1 {
-			appendRoleRestartEvent(paths, "planner", "", attempt, lastErr, onEvent)
+	roleAttempt := 1
+	restartsUsed := 0
+	for {
+		if roleAttempt > 1 {
+			appendRoleRestartEvent(paths, "planner", "", roleAttempt, lastErr, onEvent)
 		}
 		err := runRoleAgentOnce(ctx, cfg, workDir, paths, "planner", "", promptText, onEvent)
 		handoff, decodeErr := artifactdb.ReadRoleHandoff(artifactdb.GlobalDBPathForIteration(paths.IterationDir), paths.RunID, paths.IterationID, "task-tree", "")
@@ -1566,9 +1567,14 @@ func runPlannerRole(ctx context.Context, cfg config.Config, workDir string, path
 		}
 		lastErr = err
 		lastDecodeErr = decodeErr
-		if err == nil || !shouldRestartRoleAgent(err) || attempt == attempts {
+		recovery, recoveryErr := recoverRoleAgent(ctx, cfg, paths, "planner", "", err, &restartsUsed, onEvent)
+		if recoveryErr != nil {
+			return workflow.TaskTree{}, recoveryErr
+		}
+		if err == nil || !recovery {
 			break
 		}
+		roleAttempt++
 	}
 	if lastErr != nil {
 		return workflow.TaskTree{}, lastErr
@@ -1578,10 +1584,11 @@ func runPlannerRole(ctx context.Context, cfg config.Config, workDir string, path
 
 func runCodingRole(ctx context.Context, cfg config.Config, workDir string, paths pathSet, task workflow.Task, branch string, attempt int, onEvent func(runstate.Event)) (workflow.TaskResult, []gitx.Commit, error) {
 	promptText := buildRolePrompt("coding", paths, task, nil, nil, nil)
-	attempts := roleAgentAttempts(cfg)
 	var lastErr error
 	var lastDecodeErr error
-	for roleAttempt := 1; roleAttempt <= attempts; roleAttempt++ {
+	roleAttempt := 1
+	restartsUsed := 0
+	for {
 		if roleAttempt > 1 {
 			appendRoleRestartEvent(paths, "coding", task.ID, roleAttempt, lastErr, onEvent)
 		}
@@ -1592,9 +1599,14 @@ func runCodingRole(ctx context.Context, cfg config.Config, workDir string, paths
 		}
 		lastErr = err
 		lastDecodeErr = decodeErr
-		if err == nil || !shouldRestartRoleAgent(err) || roleAttempt == attempts {
+		recovery, recoveryErr := recoverRoleAgent(ctx, cfg, paths, "coding", task.ID, err, &restartsUsed, onEvent)
+		if recoveryErr != nil {
+			return workflow.TaskResult{}, nil, recoveryErr
+		}
+		if err == nil || !recovery {
 			break
 		}
+		roleAttempt++
 	}
 	if lastErr != nil {
 		return workflow.TaskResult{}, nil, lastErr
@@ -1639,12 +1651,13 @@ func readCompletedCodingRoleResult(paths pathSet, taskID, branch string, attempt
 
 func runReviewRole(ctx context.Context, cfg config.Config, workDir string, paths pathSet, tree workflow.TaskTree, taskResults []workflow.TaskResult, validationResults []validation.CommandResult, onEvent func(runstate.Event)) (workflow.ReviewResult, error) {
 	promptText := buildRolePrompt("review", paths, workflow.Task{}, tree, taskResults, validationResults)
-	attempts := roleAgentAttempts(cfg)
 	var lastErr error
 	var lastDecodeErr error
-	for attempt := 1; attempt <= attempts; attempt++ {
-		if attempt > 1 {
-			appendRoleRestartEvent(paths, "review", "", attempt, lastErr, onEvent)
+	roleAttempt := 1
+	restartsUsed := 0
+	for {
+		if roleAttempt > 1 {
+			appendRoleRestartEvent(paths, "review", "", roleAttempt, lastErr, onEvent)
 		}
 		err := runRoleAgentOnce(ctx, cfg, workDir, paths, "review", "", promptText, onEvent)
 		handoff, decodeErr := artifactdb.ReadRoleHandoff(artifactdb.GlobalDBPathForIteration(paths.IterationDir), paths.RunID, paths.IterationID, "review-result", "")
@@ -1657,9 +1670,14 @@ func runReviewRole(ctx context.Context, cfg config.Config, workDir string, paths
 		}
 		lastErr = err
 		lastDecodeErr = decodeErr
-		if err == nil || !shouldRestartRoleAgent(err) || attempt == attempts {
+		recovery, recoveryErr := recoverRoleAgent(ctx, cfg, paths, "review", "", err, &restartsUsed, onEvent)
+		if recoveryErr != nil {
+			return workflow.ReviewResult{}, recoveryErr
+		}
+		if err == nil || !recovery {
 			break
 		}
+		roleAttempt++
 	}
 	if lastErr != nil {
 		return workflow.ReviewResult{}, lastErr
@@ -1739,12 +1757,55 @@ func roleAgentIdleTimeout(cfg config.Config) time.Duration {
 	return time.Duration(cfg.Run.AgentIdleTimeoutSeconds) * time.Second
 }
 
-func roleAgentAttempts(cfg config.Config) int {
-	return cfg.Run.MaxRoleAgentRestarts + 1
+func recoverRoleAgent(ctx context.Context, cfg config.Config, paths pathSet, role, taskID string, err error, restartsUsed *int, onEvent func(runstate.Event)) (bool, error) {
+	if err == nil {
+		return false, nil
+	}
+	if rateLimit, ok := agent.RateLimitFromError(err); ok {
+		if waitErr := waitForAgentRateLimitReset(ctx, paths, role, taskID, rateLimit, onEvent); waitErr != nil {
+			return false, waitErr
+		}
+		return true, nil
+	}
+	if !agent.IsIdleTimeout(err) {
+		return false, nil
+	}
+	if restartsUsed == nil || *restartsUsed >= cfg.Run.MaxRoleAgentRestarts {
+		return false, nil
+	}
+	*restartsUsed++
+	return true, nil
 }
 
-func shouldRestartRoleAgent(err error) bool {
-	return agent.IsIdleTimeout(err)
+func waitForAgentRateLimitReset(ctx context.Context, paths pathSet, role, taskID string, rateLimit *agent.RateLimitError, onEvent func(runstate.Event)) error {
+	if rateLimit == nil {
+		return nil
+	}
+	wait := rateLimit.WaitDuration(time.Now())
+	event := runstate.Event{
+		"type":       "agent.rate_limit_wait",
+		"agent_type": role,
+		"wait_ms":    wait.Milliseconds(),
+		"reason":     "agent rate limit reached",
+	}
+	if strings.TrimSpace(taskID) != "" {
+		event["task_id"] = taskID
+	}
+	if strings.TrimSpace(rateLimit.Message) != "" {
+		event["message"] = rateLimit.Message
+	}
+	if !rateLimit.ResetAt.IsZero() {
+		event["reset_at"] = rateLimit.ResetAt.Format(time.RFC3339)
+	}
+	if rateLimit.RetryAfter > 0 {
+		event["retry_after_ms"] = rateLimit.RetryAfter.Milliseconds()
+	}
+	_ = runstate.AppendEvent(paths.Events, event)
+	appendErrorLog(paths.Errors, fmt.Sprintf("agent rate limit reached for %s; waiting %s before retry", role, wait.Round(time.Second)))
+	if onEvent != nil {
+		onEvent(event)
+	}
+	return sleepContext(ctx, wait)
 }
 
 func appendRoleRestartEvent(paths pathSet, role, taskID string, attempt int, previous error, onEvent func(runstate.Event)) {

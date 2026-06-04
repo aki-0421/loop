@@ -161,6 +161,66 @@ git:
 	}
 }
 
+func TestRoleAgentRateLimitWaitsAndRestartsCodingAgent(t *testing.T) {
+	ctx := context.Background()
+	repo := newCleanupRepo(t)
+	mustWrite(t, filepath.Join(repo, "task.md"), "# Task\n\nRun the role workflow with a rate limit wait.\n")
+	agentCommand, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, filepath.Join(repo, ".loop", "config.yaml"), `version: 1
+
+agent:
+  default: rolefake
+  adapters:
+    rolefake:
+      command: `+yamlSingleQuote(agentCommand)+`
+      args: [-test.run=TestHelperProcessRoleAgent, --]
+      prompt: stdin
+      env:
+        LOOP_ROLE_TEST_AGENT: "1"
+        LOOP_ROLE_TEST_AGENT_MODE: coding-rate-limit-restart
+
+run:
+  maxIterations: 1
+  maxTaskAttempts: 1
+  maxRoleAgentRestarts: 0
+
+git:
+  baseBranch: develop
+  integration:
+    mode: local_merge
+`)
+	git(t, repo, "add", "task.md", ".loop/config.yaml")
+	git(t, repo, "commit", "-m", "T: add rate limit restart fixture")
+	withWorkingDir(t, repo)
+
+	if _, err := captureStdout(t, func() error {
+		return commandRun(ctx, globals{Agent: "rolefake", JSON: true, NoColor: true}, []string{"task.md", "--goal", "The fake role workflow is complete."})
+	}); err != nil {
+		t.Fatalf("loop run: %v", err)
+	}
+
+	if data := readText(t, filepath.Join(repo, "loop-fake-role-change.txt")); !strings.Contains(data, "resumed after rate limit") {
+		t.Fatalf("merged rate limit restart change missing:\n%s", data)
+	}
+	iterDir := latestIterationDir(t, repo, "0001")
+	taskDir := filepath.Join(iterDir, "tasks", "0001")
+	if got := countEventType(t, taskDir, "agent.started"); got != 2 {
+		t.Fatalf("coding agent starts = %d, want rate limit attempt + restart", got)
+	}
+	taskEvents := readText(t, filepath.Join(taskDir, "agent-events.jsonl"))
+	for _, want := range []string{`"type":"agent.rate_limit_wait"`, `"type":"agent.restart"`} {
+		if !strings.Contains(taskEvents, want) {
+			t.Fatalf("task events missing %s:\n%s", want, taskEvents)
+		}
+	}
+	if strings.Contains(taskEvents, `"type":"task.attempt.discarded"`) {
+		t.Fatalf("rate limit restart should preserve the same task attempt:\n%s", taskEvents)
+	}
+}
+
 func TestResumeRunRestartsReviewingIterationFromDurableArtifacts(t *testing.T) {
 	ctx := context.Background()
 	repo := newCleanupRepo(t)
@@ -1296,6 +1356,34 @@ func runRoleTestAgent() int {
 				return 1
 			}
 			if err := writeRoleTaskResult(ctx, taskID, "Fake coding agent resumed after idle timeout."); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 1
+			}
+			return exitCode(commandTask(ctx, globals{}, []string{"merge", "--type", "F", "complete", taskID}))
+		case "coding-rate-limit-restart":
+			taskDir := os.Getenv("LOOP_TASK_DIR")
+			restartFile := filepath.Join(taskDir, "rate-limit-restart-count.txt")
+			if _, err := os.Stat(restartFile); os.IsNotExist(err) {
+				if err := os.WriteFile(restartFile, []byte("1\n"), 0o644); err != nil {
+					fmt.Fprintln(os.Stderr, err)
+					return 1
+				}
+				fmt.Fprintln(os.Stderr, "Rate limit reached for o3 in organization org-REDACTED on tokens per min (TPM): Limit 30000, Used 23669, Requested 29142. Please try again in 0.05s.")
+				return 1
+			}
+			if err := os.WriteFile(filepath.Join(workDir, "loop-fake-role-change.txt"), []byte("resumed after rate limit\n"), 0o644); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 1
+			}
+			if err := startRoleTaskTodo(ctx, taskID, "resume after rate limit"); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 1
+			}
+			if err := completeRoleTaskTodo(ctx); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 1
+			}
+			if err := writeRoleTaskResult(ctx, taskID, "Fake coding agent resumed after a rate limit wait."); err != nil {
 				fmt.Fprintln(os.Stderr, err)
 				return 1
 			}

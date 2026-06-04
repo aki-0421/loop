@@ -212,6 +212,34 @@ func TestProcessAdapterPersistsUsageEvents(t *testing.T) {
 	}
 }
 
+func TestProcessAdapterReturnsRateLimitErrorFromOutput(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell command uses sh")
+	}
+	dir := t.TempDir()
+	adapter := ProcessAdapter{
+		AdapterName: "test",
+		Command:     "sh",
+		Args:        []string{"-c", "cat >/dev/null; echo 'Rate limit reached for o3. Please try again in 1.5s.' >&2; exit 1"},
+		PromptMode:  PromptStdin,
+	}
+	_, err := adapter.Run(context.Background(), RunRequest{
+		WorkDir:       dir,
+		PromptText:    "prompt",
+		IterationDir:  dir,
+		EventLogPath:  filepath.Join(dir, "agent-events.jsonl"),
+		ErrorsLogPath: filepath.Join(dir, "errors.log"),
+	})
+	rateLimit, ok := RateLimitFromError(err)
+	if !ok {
+		t.Fatalf("expected rate limit error, got %v", err)
+	}
+	if got, want := rateLimit.RetryAfter, 1500*time.Millisecond; got != want {
+		t.Fatalf("retry after = %s, want %s", got, want)
+	}
+	assertFileContains(t, filepath.Join(dir, "errors.log"), "agent rate limit reached")
+}
+
 func TestProcessAdapterCancelsProcessGroup(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell command uses sh")

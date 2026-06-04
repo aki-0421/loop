@@ -136,6 +136,8 @@ func (a ProcessAdapter) Run(ctx context.Context, req RunRequest) (*RunResult, er
 		}
 		if cause := context.Cause(ctx); cause != nil {
 			waitErr = cause
+		} else if rateLimit, ok := DetectRateLimit(stdoutCapture.RecentText()+"\n"+stderrCapture.RecentText(), time.Now()); ok {
+			waitErr = rateLimit
 		}
 	}
 	finished := time.Now().UTC()
@@ -176,6 +178,7 @@ type streamCapture struct {
 	onActivity           func(time.Time)
 	pending              []byte
 	err                  error
+	recentLines          []string
 	pendingCommandStarts map[string]time.Time
 }
 
@@ -224,9 +227,19 @@ func (c *streamCapture) Err() error {
 	return c.err
 }
 
+func (c *streamCapture) RecentText() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return strings.Join(c.recentLines, "\n")
+}
+
 func (c *streamCapture) emit(text string) {
 	if c.err != nil {
 		return
+	}
+	c.recentLines = append(c.recentLines, text)
+	if len(c.recentLines) > 80 {
+		c.recentLines = append([]string(nil), c.recentLines[len(c.recentLines)-80:]...)
 	}
 	summary := summarizeAgentOutput(c.stream, text)
 	now := time.Now().UTC()

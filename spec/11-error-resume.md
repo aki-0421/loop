@@ -6,6 +6,7 @@
 | --- | --- | --- |
 | Config error | Invalid YAML, unknown enum | Stop before run creation |
 | Environment error | Missing Git repo, missing agent command | Stop before agent launch |
+| Agent rate limit | Codex `rate_limit_exceeded`, Codex `429 Too Many Requests`, Claude Code `You've hit your session limit · resets ...`, Claude Code `Server is temporarily limiting requests` | Wait until the parsed reset/retry time, then relaunch the same role agent without consuming task attempts |
 | Agent contract error | Missing close handoff or invalid close JSON | Fail the iteration contract and clean local runtime resources |
 | Dirty merge close | Uncommitted changes before `--merge` | Reject the close command before handoff |
 | Validation error | Required validation failed | Do not integrate; clean local runtime resources, then stop or create a repair task when configured |
@@ -36,6 +37,16 @@ Sleep mode is entered only when the agent explicitly closes with `loop iteration
 - When a diff appears, the CLI writes `github-updates` into the next iteration and launches the next agent.
 - The next agent decides whether to implement, comment or reopen an Issue, merge, skip merge again, or return to sleep.
 - The CLI does not ask the user.
+
+## Agent Rate Limit Wait Mode
+
+When a role agent subprocess exits after printing a waitable Codex or Claude Code rate-limit message, the CLI records `agent.rate_limit_wait`, waits for the parsed reset or retry time, and relaunches the same planner, coding, or review role.
+
+- Codex detection covers `rate_limit_exceeded`, `rate_limit_reached`, `Rate limit reached ... Please try again in ...`, `exceeded retry limit, last status: 429 Too Many Requests`, and usage-limit reset banners such as `resets 13:37`.
+- Claude Code detection covers usage-limit messages such as `You've hit your session limit · resets 3:45pm`, `You've hit your weekly limit · resets Mon 12:00am`, `You've hit your Opus limit · resets ...`, `Server is temporarily limiting requests`, and `Request rejected (429)`.
+- If the message includes a retry delay, the CLI waits that duration. If it includes a reset clock, the CLI waits until that clock in the local timezone. If no wait time can be parsed, the CLI waits five minutes before retrying.
+- Rate-limit waits do not consume `run.maxRoleAgentRestarts` or `run.maxTaskAttempts`; idle-timeout restarts still use `run.maxRoleAgentRestarts`.
+- Non-waitable hard stops such as oversized requests, missing login, invalid API keys, or low credit balance remain normal agent errors.
 
 ## Stored Run State
 
