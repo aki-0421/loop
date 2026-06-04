@@ -314,6 +314,73 @@ func TestTaskMergeRejectsIncompleteTodos(t *testing.T) {
 	}
 }
 
+func TestTaskMergePreservesTaskCommitHistory(t *testing.T) {
+	ctx := context.Background()
+	_, iterDir, taskDir, iterationWorktree, taskWorktree := setupTaskMergeWorktrees(t)
+	withWorkingDir(t, taskWorktree)
+
+	if err := commandTask(ctx, globals{}, []string{"todo", "add", "--iteration-dir", iterDir, "--task", "fake-task", "--type", "F", "--title", "Add marker", "--acceptance", "marker.txt exists.", "add", "marker"}); err != nil {
+		t.Fatalf("todo add marker: %v", err)
+	}
+	if err := commandTask(ctx, globals{}, []string{"todo", "start", "1", "--iteration-dir", iterDir, "--task", "fake-task"}); err != nil {
+		t.Fatalf("todo start marker: %v", err)
+	}
+	mustWrite(t, filepath.Join(taskWorktree, "marker.txt"), "marker\n")
+	if err := commandTask(ctx, globals{}, []string{"todo", "stage", "1", "--iteration-dir", iterDir, "--task", "fake-task"}); err != nil {
+		t.Fatalf("todo stage marker: %v", err)
+	}
+	if err := commandTask(ctx, globals{}, []string{"todo", "complete", "1", "--iteration-dir", iterDir, "--task", "fake-task"}); err != nil {
+		t.Fatalf("todo complete marker: %v", err)
+	}
+	if err := commandTask(ctx, globals{}, []string{"todo", "add", "--iteration-dir", iterDir, "--task", "fake-task", "--type", "T", "--title", "Add marker test", "--acceptance", "marker_test.txt exists.", "add", "marker", "test"}); err != nil {
+		t.Fatalf("todo add marker test: %v", err)
+	}
+	if err := commandTask(ctx, globals{}, []string{"todo", "start", "2", "--iteration-dir", iterDir, "--task", "fake-task"}); err != nil {
+		t.Fatalf("todo start marker test: %v", err)
+	}
+	mustWrite(t, filepath.Join(taskWorktree, "marker_test.txt"), "marker test\n")
+	if err := commandTask(ctx, globals{}, []string{"todo", "stage", "2", "--iteration-dir", iterDir, "--task", "fake-task"}); err != nil {
+		t.Fatalf("todo stage marker test: %v", err)
+	}
+	if err := commandTask(ctx, globals{}, []string{"todo", "complete", "2", "--iteration-dir", iterDir, "--task", "fake-task"}); err != nil {
+		t.Fatalf("todo complete marker test: %v", err)
+	}
+
+	todos := readTaskTodoForTest(t, taskDir)
+	var todoSHAs []string
+	for _, item := range todos.Items {
+		todoSHAs = append(todoSHAs, item.CommitSHA)
+	}
+	if err := commandTask(ctx, globals{}, []string{"merge", "--iteration-dir", iterDir, "--task", "fake-task", "--type", "F", "complete", "fake", "task"}); err != nil {
+		t.Fatalf("task merge: %v", err)
+	}
+
+	mergeSHA := strings.TrimSpace(git(t, iterationWorktree, "rev-parse", "HEAD"))
+	parents := strings.Fields(git(t, iterationWorktree, "show", "-s", "--format=%P", "HEAD"))
+	if len(parents) != 2 {
+		t.Fatalf("task merge should create a merge commit, parents = %#v", parents)
+	}
+	for _, sha := range todoSHAs {
+		if sha == "" {
+			t.Fatal("TODO commit SHA should be recorded")
+		}
+		git(t, iterationWorktree, "merge-base", "--is-ancestor", sha, "HEAD")
+	}
+	log := git(t, iterationWorktree, "log", "--format=%s", "develop..HEAD")
+	for _, want := range []string{"F: complete fake task", "F: add marker", "T: add marker test"} {
+		if !strings.Contains(log, want) {
+			t.Fatalf("iteration branch log missing %q:\n%s", want, log)
+		}
+	}
+	record, err := readTaskMergeAudit(taskDir, "fake-task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.MergeCommit.SHA != mergeSHA || record.MergeCommit.Subject != "F: complete fake task" {
+		t.Fatalf("merge record merge commit = %#v, want %s F: complete fake task", record.MergeCommit, mergeSHA)
+	}
+}
+
 func setupTaskTodoIteration(t *testing.T) (string, string, string) {
 	t.Helper()
 	repo := newCleanupRepo(t)
@@ -354,6 +421,50 @@ func setupTaskTodoIteration(t *testing.T) (string, string, string) {
 		t.Fatal(err)
 	}
 	return repo, iterDir, taskDir
+}
+
+func setupTaskMergeWorktrees(t *testing.T) (string, string, string, string, string) {
+	t.Helper()
+	repo := newCleanupRepo(t)
+	iterationWorktree := filepath.Join(repo, ".loop", "worktrees", "run-1", "0001", "iteration")
+	taskWorktree := filepath.Join(repo, ".loop", "worktrees", "run-1", "0001", "tasks", "fake-task", "attempt-1")
+	git(t, repo, "worktree", "add", "-b", "wip/0001", iterationWorktree, "develop")
+	git(t, repo, "worktree", "add", "-b", "task/0001-fake-task-attempt-1", taskWorktree, "wip/0001")
+	iterDir := filepath.Join(repo, ".loop", "runs", "run-1", "iterations", "0001")
+	taskDir := filepath.Join(iterDir, "tasks", "0001")
+	if err := os.MkdirAll(taskDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	taskData, err := workflow.MarshalIndent(workflow.Task{
+		ID:          "fake-task",
+		Title:       "Fake task",
+		Description: "Complete a fake task.",
+		Acceptance:  []string{"The fake task is done."},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(taskDir, "task.json"), taskData, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := artifactdb.Write(iterDir, "runtime", `{
+  "run_id": "run-1",
+  "iteration_id": "0001",
+  "base_branch": "develop",
+  "initial_branch": "wip/0001",
+  "current_branch": "task/0001-fake-task-attempt-1",
+  "workdir": "`+filepath.ToSlash(taskWorktree)+`",
+  "iteration_worktree": "`+filepath.ToSlash(iterationWorktree)+`",
+  "task_id": "fake-task",
+  "task_dir": "`+filepath.ToSlash(taskDir)+`",
+  "integration_mode": "local_merge",
+  "pull_request_mode": false,
+  "role_orchestrated": true
+}
+`); err != nil {
+		t.Fatal(err)
+	}
+	return repo, iterDir, taskDir, iterationWorktree, taskWorktree
 }
 
 func readTaskTodoForTest(t *testing.T, taskDir string) taskTodoFile {

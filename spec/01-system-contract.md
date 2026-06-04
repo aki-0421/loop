@@ -8,7 +8,7 @@
 2. Load recent GitHub PR, Issue, and comment context from the local `.loop/loop.db` cache.
 3. Run the configured adapter as planner, coding, and review agents with compact role prompts.
 4. Validate the planner task tree, schedule coding tasks by dependency and conflict metadata, and run coding agents in CLI-created worktrees.
-5. Require coding agents to create initial task-local TODOs before editing, allow pending follow-up TODOs after the fixed completed/current boundary, complete commit TODOs as CLI-created task-branch commits, complete no_commit TODOs only when they leave no repository changes, then complete `loop task merge` to squash-merge the task branch into the iteration branch.
+5. Require coding agents to create initial task-local TODOs before editing, allow pending follow-up TODOs after the fixed completed/current boundary, complete commit TODOs as CLI-created task-branch commits, complete no_commit TODOs only when they leave no repository changes, then complete `loop task merge` to merge the task branch into the iteration branch while preserving task commit history.
 6. Require review agents to rename the iteration branch, create PR text from the template, create/check/merge the pull request through `loop pr`, or perform local merge mode when configured.
 7. Repeat until role output reports `goal_complete=true` for a CLI-provided goal, the iteration limit is reached, or a terminal error is recorded.
 

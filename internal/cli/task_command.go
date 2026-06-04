@@ -718,7 +718,11 @@ func startTaskMerge(ctx context.Context, g globals, mergeCtx taskMergeContext, s
 	if err := ensureIterationBranch(ctx, iterRunner, mergeCtx.IterationBranch); err != nil {
 		return codedError{1, err}
 	}
-	if _, err := iterRunner.Run(ctx, "merge", "--squash", mergeCtx.TaskBranch); err != nil {
+	beforeMergeHead, err := iterRunner.Head(ctx)
+	if err != nil {
+		return codedError{1, err}
+	}
+	if _, err := iterRunner.Run(ctx, "merge", "--no-ff", "-m", subject, mergeCtx.TaskBranch); err != nil {
 		conflicts := unmergedPaths(ctx, iterRunner)
 		if len(conflicts) > 0 {
 			lock.Status = "conflicts"
@@ -733,9 +737,12 @@ func startTaskMerge(ctx context.Context, g globals, mergeCtx taskMergeContext, s
 		_, _ = runGitCleanPreservingLoopRuntime(context.Background(), iterRunner)
 		return codedError{1, err}
 	}
-	mergeCommit, err := commitMergedTask(ctx, iterRunner, subject)
+	mergeCommit, err := taskMergeHead(ctx, iterRunner)
 	if err != nil {
 		return codedError{1, err}
+	}
+	if mergeCommit.SHA == strings.TrimSpace(beforeMergeHead) {
+		return codedError{1, errors.New("no merged task changes to commit")}
 	}
 	record := buildTaskMergeRecord(mergeCtx, taskCommits, mergeCommit)
 	if err := writeTaskMergeAudit(mergeCtx.TaskDir, record); err != nil {
@@ -743,6 +750,18 @@ func startTaskMerge(ctx context.Context, g globals, mergeCtx taskMergeContext, s
 	}
 	appendTaskMergeEvent(mergeCtx, runstate.Event{"type": "task.merge.completed", "task_id": mergeCtx.TaskID, "branch": mergeCtx.TaskBranch, "merge_commit": mergeCommit.SHA})
 	return printTaskMergeResult(g, record)
+}
+
+func taskMergeHead(ctx context.Context, runner gitx.Runner) (taskMergeCommit, error) {
+	sha, err := runner.Head(ctx)
+	if err != nil {
+		return taskMergeCommit{}, err
+	}
+	subject, err := runner.Run(ctx, "log", "-1", "--format=%s")
+	if err != nil {
+		return taskMergeCommit{}, err
+	}
+	return taskMergeCommit{SHA: strings.TrimSpace(sha), Subject: strings.TrimSpace(subject)}, nil
 }
 
 func continueTaskMerge(ctx context.Context, g globals, mergeCtx taskMergeContext) error {

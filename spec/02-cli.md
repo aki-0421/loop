@@ -250,9 +250,9 @@ Coding agents must create an initial task-local TODO list before implementation.
 
 `loop task discard` writes a discarded `task-result` with a required reason so the planner can revise or rewrite the remaining plan.
 
-`loop task merge` is used by coding agents after all task TODOs are complete and a completed `task-result` handoff exists. It waits for exclusive access to the iteration branch, squash-merges the task branch into the iteration branch with the supplied summary, writes `tasks/<n>/task-merge.json`, and exits non-zero if conflicts require agent resolution.
+`loop task merge` is used by coding agents after all task TODOs are complete and a completed `task-result` handoff exists. It waits for exclusive access to the iteration branch, merges the task branch into the iteration branch with the supplied summary while preserving task commit history, writes `tasks/<n>/task-merge.json`, and exits non-zero if conflicts require agent resolution.
 
-When conflicts occur, the command leaves the iteration worktree in the conflicted state and prints that path. The coding agent resolves conflicts there, then runs `loop task merge --continue` to stage the resolution, commit the squash merge, write the merge audit, and release the merge lock.
+When conflicts occur, the command leaves the iteration worktree in the conflicted state and prints that path. The coding agent resolves conflicts there, then runs `loop task merge --continue` to stage the resolution, commit the merge, write the merge audit, and release the merge lock.
 
 ## `loop branch`
 

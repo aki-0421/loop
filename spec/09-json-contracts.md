@@ -102,9 +102,9 @@ Required fields:
 | `task_id` | string | Completed task ID. |
 | `status` | enum | `merged`. |
 | `branch` | string | Task branch that was merged. |
-| `iteration_branch` | string | Iteration branch that received the squash merge. |
+| `iteration_branch` | string | Iteration branch that received the task branch merge. |
 | `task_commits` | array | Task-branch TODO commits as `sha` and `subject`. |
-| `merge_commit` | object | The iteration branch squash commit as `sha` and `subject`. |
+| `merge_commit` | object | The iteration branch merge commit as `sha` and `subject`. |
 | `merged_at` | string | UTC timestamp when the merge completed. |
 
 ## Pending Pull Requests
@@ -139,7 +139,7 @@ Required fields:
 | --- | --- | --- |
 | `schema_version` | integer | Schema version. Current value is `1`. |
 | `action` | enum | `merge` or `skip_merge`. |
-| `summary_sentence` | string | Required for `merge`; one English sentence used for squash commit or merge subject. |
+| `summary_sentence` | string | Required for `merge`; one English sentence used for the merge subject. |
 | `skip_merge_reason` | string | Required for `skip_merge`; explains why this branch should not be incorporated. |
 | `sleep_until_github_update` | boolean | Optional for `skip_merge`; true means pause in GitHub sleep mode before the next iteration and requires `should_fully_stop=false`. |
 | `should_fully_stop` | boolean | Whether the run goal is fully satisfied. |

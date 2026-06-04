@@ -24,7 +24,7 @@ The specification defines what to implement. It does not include source comparis
 | `04-agent-adapter.md` | External agent process contract |
 | `05-skills.md` | Skill format and default skill |
 | `06-iteration-workflow.md` | Runtime loop and iteration lifecycle |
-| `07-git-and-pr.md` | Branch, commit, squash merge, and PR behavior |
+| `07-git-and-pr.md` | Branch, commit, merge, and PR behavior |
 | `08-memory-and-logs.md` | `.loop/` storage, GitHub context memory, runtime artifacts, and logs |
 | `09-json-contracts.md` | Iteration close JSON and state files |
 | `10-security.md` | Permission, shell, file, and merge controls |
