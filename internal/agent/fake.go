@@ -92,6 +92,9 @@ func runFakeRoleAgent() int {
 			return 1
 		}
 		_ = os.WriteFile(filepath.Join(workDir, "loop-fake-role-change.txt"), []byte("fake role change at "+time.Now().UTC().Format(time.RFC3339Nano)+"\n"), 0o644)
+		if err := loopTaskCommand(workDir, "task", "todo", "stage", "1"); err != nil {
+			return 1
+		}
 		if err := loopTaskCommand(workDir, "task", "todo", "complete", "1"); err != nil {
 			return 1
 		}

@@ -21,7 +21,7 @@ Each iteration is CLI-owned:
 9. In PR mode, require the review agent to rename the branch, write PR title/body artifacts, create the PR, wait for checks, and merge through `loop pr` before approval. In local mode, perform local merge after approval.
 10. Clean task and iteration worktrees and continue until `goal_complete=true`, the iteration limit is reached, or a terminal error occurs.
 
-Agents do not run Git or GitHub commands directly. Coding agents create task-local TODOs before editing, complete each TODO through `loop task todo complete` so the CLI creates one task-branch commit per TODO, and use `loop task merge` to squash-merge the completed task branch into the iteration branch. Review agents use `loop branch rename` and `loop pr` commands for PR integration.
+Agents do not run Git or GitHub commands directly. Coding agents create initial task-local TODOs before editing, may add or reorder pending follow-up TODOs after the fixed done/active/cancelled boundary during implementation, stage and inspect active commit TODOs through `loop task todo stage`, complete commit TODOs through CLI-created task-branch commits, complete no_commit TODOs only when they leave no repository changes, and use `loop task merge` to squash-merge the completed task branch into the iteration branch. Review agents use `loop branch rename` and `loop pr` commands for PR integration.
 
 If a coding agent exits without completing `loop task merge`, the CLI does not merge or salvage that task branch. It discards the unmerged attempt branch and worktree, clears stale task handoff and task TODO state, records a discard event, and starts the next attempt in a fresh branch and worktree until `run.maxTaskAttempts` is exhausted. When attempts are exhausted, or when the agent explicitly runs `loop task discard --reason`, the planner runs again with the discarded task and current plan context; replanning is capped by `run.maxPlanRevisions`.
 
@@ -66,6 +66,7 @@ Coding agents write:
 ```bash
 loop task todo add --type F --title "Add publish review route" --acceptance "The route renders the review workflow and focused coverage passes." add publish review route
 loop task todo start 1
+loop task todo stage 1
 loop task todo complete 1
 loop handoff write task-result --task "$LOOP_TASK_ID" --file "$LOOP_TASK_DIR/task-result.json"
 loop task merge --type F complete "$LOOP_TASK_ID"

@@ -43,7 +43,7 @@ The built-in `loop` skill consolidates the planner, coding, and review role conv
 - Create important clarification Issues with `loop issue ask`.
 - Report concrete repository or harness improvement proposals with `loop issue report`; do not persist unsupported agent capability findings as Issues.
 - Planner role: write `task-tree` with `loop handoff write task-tree`.
-- Coding role: edit only the assigned task worktree, create task-local TODOs before implementation, complete each TODO through `loop task todo complete`, write `task-result` with `loop handoff write task-result --task "$LOOP_TASK_ID"`, and run `loop task merge` until the task is merged.
+- Coding role: edit only the assigned task worktree, create initial task-local TODOs before implementation, add or reorder pending follow-up TODOs after the fixed boundary when needed, stage and inspect commit TODOs through `loop task todo stage`, complete commit and no_commit TODOs through `loop task todo complete`, write `task-result` with `loop handoff write task-result --task "$LOOP_TASK_ID"`, and run `loop task merge` until the task is merged.
 - Review role: inspect the iteration diff, rename the iteration branch, prepare PR text from `loop iteration read pr-template`, create/check/merge the PR through `loop pr`, and write `review-result` with `loop handoff write review-result`.
 - Avoid direct Git lifecycle commands, `loop commit`, and `loop iteration close`; use `loop branch`, `loop task`, and `loop pr` for the role-owned actions.
 

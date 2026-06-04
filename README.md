@@ -128,7 +128,7 @@ With a non-empty `--goal`, planner and review handoffs may report `goal_complete
 1. `loop run` loads configuration, records runtime state, syncs GitHub context when available, and creates iteration `0001`.
 2. The planner agent reads runtime context, the instruction file, repository documents, code, and recent GitHub memory, then writes a dependency-aware task tree for one AI sprint-sized PR.
 3. The CLI creates isolated task worktrees and runs non-conflicting coding agents in parallel.
-4. Coding agents create task-local TODOs before editing. Each completed TODO becomes one CLI-created task-branch commit. Completed task branches are squash-merged into the iteration branch through `loop task merge`.
+4. Coding agents create initial task-local TODOs before editing, then may add pending follow-up TODOs after the fixed completed/current boundary as work is discovered. Commit TODOs become CLI-created task-branch commits; no_commit TODOs record clean validation, inspection, or handoff work without creating commits. Completed task branches are squash-merged into the iteration branch through `loop task merge`.
 5. Configured validation runs from the iteration worktree.
 6. The review agent checks the integrated branch against the task tree, validation evidence, and PR requirements. In PR mode it renames the branch, writes PR text, creates the PR, waits for checks, and follows the configured review mode for merge or human review.
 7. Validation failures and review findings become repair tasks until approval or the fix-cycle limit.

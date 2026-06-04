@@ -8,7 +8,7 @@ Before each iteration, the CLI updates the base branch when configured to pull a
 
 ## Branch And Task Worktrees
 
-Role-orchestrated runs create the iteration branch before planning and one task branch/worktree for each coding task. Coding agents create task-local TODOs before editing. Each TODO is started, implemented, and completed serially with `loop task todo complete`, which stages changes and creates one task-branch commit. After writing a completed task handoff, the coding agent runs `loop task merge --type <type> <summary>`, which serializes access to the iteration branch and squash-merges the task branch into the iteration branch. If the squash merge conflicts, the coding agent resolves conflicts in the iteration worktree and runs `loop task merge --continue`; the task is not complete until that command succeeds.
+Role-orchestrated runs create the iteration branch before planning and one task branch/worktree for each coding task. Coding agents create initial task-local TODOs before editing. During implementation they may add or reorder pending follow-up TODOs after the fixed done/active/cancelled boundary. Commit TODOs are started, implemented, staged for inspection with `loop task todo stage`, and completed serially with `loop task todo complete`, which commits the staged changes as one task-branch commit. no_commit TODOs are started and completed serially without staging or committing, and completion is rejected if repository changes remain. After writing a completed task handoff, the coding agent runs `loop task merge --type <type> <summary>`, which serializes access to the iteration branch and squash-merges the task branch into the iteration branch. If the squash merge conflicts, the coding agent resolves conflicts in the iteration worktree and runs `loop task merge --continue`; the task is not complete until that command succeeds.
 
 When a coding task attempt exits before `loop task merge` succeeds, the CLI treats that attempt as unmerged work. It removes the attempt worktree, deletes the attempt branch, clears stale task-result, task TODO, and task-merge files, and retries the task in a new branch/worktree when attempts remain. When attempts are exhausted, or the coding agent explicitly discards the task, the planner receives the discarded task context and writes a revised remaining task tree.
 
@@ -62,7 +62,7 @@ Branch slugs:
 
 ## Commit Creation Through The CLI
 
-In role-orchestrated runs, coding agents use `loop task todo complete <n>` to ask the CLI to create commits. Planner tasks do not contain commit metadata. `loop task merge --type <type> <summary>` creates the iteration-branch squash commit for the completed task branch.
+In role-orchestrated runs, coding agents use `loop task todo stage <n>` to inspect and adjust commit candidates, then `loop task todo complete <n>` to ask the CLI to create commits from staged changes. Planner tasks do not contain commit metadata. `loop task merge --type <type> <summary>` creates the iteration-branch squash commit for the completed task branch.
 
 The `loop commit` command remains available for agent-facing diagnostics and direct iteration utilities:
 
@@ -94,7 +94,7 @@ Default prefixes:
 
 The CLI rejects commits that do not match the loop commit pattern.
 
-Task TODOs are sized so that one completed TODO corresponds to one task-branch commit. Pending TODOs may be reordered before work starts, but a TODO cannot be marked complete unless `loop task todo complete` creates the matching commit.
+Task TODOs are sized so that one completed commit TODO corresponds to one task-branch commit. Pending TODOs may be added, removed, cancelled, or reordered after the fixed done/active/cancelled boundary. A commit TODO cannot be marked complete unless `loop task todo complete` creates the matching commit; a no_commit TODO cannot be marked complete unless no repository changes remain.
 
 ## Local merge mode
 

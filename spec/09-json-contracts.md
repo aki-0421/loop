@@ -66,7 +66,7 @@ Each finding has `id`, optional `task_id`, `title`, `description`, and `acceptan
 
 ## Task TODOs
 
-`loop task todo` writes `tasks/<sequence>/task-todo.json`. Coding agents must create TODOs before editing the task worktree. Pending TODOs can be inserted or moved before work starts. TODOs are processed serially; `loop task todo complete <n>` creates the task-branch commit and then marks the item done.
+`loop task todo` writes `tasks/<sequence>/task-todo.json`. Coding agents must create initial TODOs before editing the task worktree. Pending TODOs can be inserted, moved, removed, or cancelled. Done, active, and cancelled TODOs are fixed; later additions and moves must stay after the last fixed TODO. TODOs are processed serially. `commit` TODOs are staged with `loop task todo stage <n>` and completed by `loop task todo complete <n>`, which creates the task-branch commit from staged changes before marking the item done. `no_commit` TODOs skip staging and are marked done by `loop task todo complete <n>` only when the task worktree has no repository changes. Cancelled TODOs are skipped by serial start, stage, completion, and merge checks.
 
 TODO file fields:
 
@@ -80,13 +80,15 @@ TODO item fields:
 
 | Field | Type | Meaning |
 | --- | --- | --- |
-| `status` | enum | `pending`, `active`, or `done`. |
-| `type` | enum | Commit type `F`, `T`, `R`, `D`, `S`, `V`, or `C`. |
+| `status` | enum | `pending`, `active`, `done`, or `cancelled`. |
+| `work_type` | enum | `commit` or `no_commit`. Missing values in older files are treated as `commit`. |
+| `type` | enum | Required for `commit`; commit type `F`, `T`, `R`, `D`, `S`, `V`, or `C`. |
 | `title` | string | Short TODO title. |
 | `acceptance` | array | TODO-specific success criteria. |
-| `commit_message` | string | Lowercase imperative commit body. |
-| `commit_sha` | string | Required when done; created by `loop task todo complete`. |
-| `commit_subject` | string | Required when done; final `<TYPE>: <message>` subject. |
+| `commit_message` | string | Required for `commit`; lowercase imperative commit body. |
+| `commit_sha` | string | Required when a `commit` TODO is done; created by `loop task todo complete`. |
+| `commit_subject` | string | Required when a `commit` TODO is done; final `<TYPE>: <message>` subject. |
+| `cancelled_at` | string | Required when cancelled; UTC RFC3339 timestamp. |
 
 ## Task Merge Audit
 

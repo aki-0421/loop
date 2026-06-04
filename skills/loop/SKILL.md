@@ -11,7 +11,7 @@ You are running inside the `loop` harness. The CLI owns worktrees, validation, c
 ## Shared Rules
 
 - Do not run `git add`, `git commit`, branch rename/switch commands, `gh pr`, `loop commit`, or `loop iteration close`.
-- Coding agents must use `loop task todo` to create one task-branch commit per TODO, then use `loop task merge` to merge the task branch; do not exit a completed task before that command succeeds.
+- Coding agents must use `loop task todo`; commit TODOs create task-branch commits, no_commit TODOs record clean validation or inspection work, and `loop task merge` merges the completed task branch. Do not exit a completed task before that command succeeds.
 - Review agents must use `loop branch rename`, `loop iteration read pr-template`, `loop iteration write pr-title`, `loop iteration write pr-body`, and `loop pr` commands in PR mode.
 - If you exit before `loop task merge` succeeds, the orchestrator treats the attempt as unmerged, discards that task branch/worktree, and may retry the task in a fresh coding session.
 - Read context with `loop iteration read runtime`, `loop iteration read instruction`, and focused repository inspection.
@@ -73,19 +73,23 @@ Task rules:
 
 ## Coding Role
 
-Complete only the assigned task from the prompt. Understand the task goal and success criteria, then inspect the repository before editing. Before implementation, create a task-local TODO list through `loop task todo add`; each TODO corresponds to exactly one task-branch commit. TODO titles and commit messages must be specific to the assigned task; do not use generic placeholder text such as "Implement behavior". Run task TODO mutation commands one at a time. If you need to adjust pending order before starting work, use `loop task todo add --after <n>` or `loop task todo move <n> --after <n>`; `--after 0` places an item at the top.
+Complete only the assigned task from the prompt. Understand the task goal and success criteria, then inspect the repository before editing. Before implementation, create an initial task-local TODO list through `loop task todo add`. Use `--work-type commit` for TODOs that should create one task-branch commit, and `--work-type no_commit` for validation, inspection, handoff, or other work that must leave no repository changes. Commit TODO titles and commit messages must be specific to the assigned task; do not use generic placeholder text such as "Implement behavior". Run task TODO mutation commands one at a time. If you need to adjust pending order before starting work, use `loop task todo add --after <n>` or `loop task todo move <n> --after <n>`; `--after 0` places an item at the top. During implementation, you may add, move, remove, or cancel pending follow-up TODOs after the fixed done/active/cancelled boundary when you discover additional work such as documentation, tests, validation, or cleanup.
 
 Process TODOs serially:
 
 ```bash
 loop task todo add --type F --title "Add publish review route" --acceptance "The route renders the review workflow and focused coverage passes." add publish review route
+loop task todo add --work-type no_commit --title "Run focused validation" --acceptance "The focused validation command passes."
 loop task todo list
 loop task todo start 1
 # edit files for TODO 1 only
+loop task todo stage 1
 loop task todo complete 1
 ```
 
-Do not start the next TODO until the current TODO has been completed and committed by `loop task todo complete`.
+Inspect the `loop task todo stage` output before completing a commit TODO. If unrelated files appear, remove them from the index with `loop task todo stage <n> --remove <path>` or reset and explicitly add the intended paths with `loop task todo stage <n> --reset --add <path>`. For no_commit TODOs, do not stage files; `loop task todo complete <n>` succeeds only when the task worktree has no repository changes. Do not start the next TODO until the current TODO has been completed or cancelled.
+
+Use `loop task todo cancel <n>` for pending TODOs that should remain in the audit trail as cancelled. To cancel an active TODO, run `loop task todo cancel <n> --discard-changes`; this discards task worktree and index changes before marking the TODO cancelled.
 
 When all TODOs are done, write the task result outside repository changes:
 

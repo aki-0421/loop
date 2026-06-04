@@ -1414,6 +1414,9 @@ func startRoleTaskTodo(ctx context.Context, taskID, message string) error {
 }
 
 func completeRoleTaskTodo(ctx context.Context) error {
+	if err := commandTask(ctx, globals{}, []string{"todo", "stage", "1"}); err != nil {
+		return err
+	}
 	return commandTask(ctx, globals{}, []string{"todo", "complete", "1"})
 }
 

@@ -34,7 +34,7 @@ The Go implementation includes tests for:
 - Value-critical run resilience:
   - validating task-tree dependencies and conflicts;
   - scheduling non-conflicting tasks in parallel while serializing dependencies;
-  - creating one task-branch commit per completed task TODO;
+  - creating one task-branch commit per completed commit TODO and no commit for clean no_commit TODOs;
   - replanning after explicit discard or exhausted task attempts;
   - creating, checking, and merging PRs through fake `gh`.
 
@@ -55,7 +55,7 @@ Environment controls:
 | `LOOP_FAKE_AGENT_MODE=issue_skip_merge` | Create a clarification Issue and write a skip-merge sleep close. |
 | `LOOP_FAKE_AGENT_MODE=validation_fix` | Commit a validation marker for validation tests. |
 | `LOOP_ROLE=planner` | Write a deterministic `task-tree` handoff. |
-| `LOOP_ROLE=coding` | Create a task TODO, commit it through `loop task todo complete`, write a `task-result` handoff, and complete `loop task merge`. |
+| `LOOP_ROLE=coding` | Create a task TODO, stage and inspect it through `loop task todo stage`, commit it through `loop task todo complete`, write a `task-result` handoff, and complete `loop task merge`. |
 | `LOOP_ROLE=review` | Write an approved `review-result` handoff. |
 | `LOOP_FAKE_AGENT_SEQUENCE` | Comma-separated modes consumed by successive agent invocations. |
 | `LOOP_FAKE_AGENT_COUNT_FILE` | Counter file used with `LOOP_FAKE_AGENT_SEQUENCE` across process invocations. |

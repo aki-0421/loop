@@ -24,6 +24,9 @@ func TestTaskTodoCompleteCreatesCommit(t *testing.T) {
 		t.Fatalf("todo start: %v", err)
 	}
 	mustWrite(t, filepath.Join(repo, "marker.txt"), "marker\n")
+	if err := commandTask(ctx, globals{}, []string{"todo", "stage", "1", "--iteration-dir", iterDir, "--task", "fake-task"}); err != nil {
+		t.Fatalf("todo stage: %v", err)
+	}
 	if err := commandTask(ctx, globals{}, []string{"todo", "complete", "1", "--iteration-dir", iterDir, "--task", "fake-task"}); err != nil {
 		t.Fatalf("todo complete: %v", err)
 	}
@@ -54,6 +57,122 @@ func TestTaskTodoRejectsNoChangeComplete(t *testing.T) {
 	}
 }
 
+func TestTaskTodoCompleteRequiresStagedChanges(t *testing.T) {
+	ctx := context.Background()
+	repo, iterDir, _ := setupTaskTodoIteration(t)
+	withWorkingDir(t, repo)
+
+	if err := commandTask(ctx, globals{}, []string{"todo", "add", "--iteration-dir", iterDir, "--task", "fake-task", "--type", "F", "--title", "Add marker", "--acceptance", "marker.txt exists.", "add", "marker"}); err != nil {
+		t.Fatalf("todo add: %v", err)
+	}
+	if err := commandTask(ctx, globals{}, []string{"todo", "start", "1", "--iteration-dir", iterDir, "--task", "fake-task"}); err != nil {
+		t.Fatalf("todo start: %v", err)
+	}
+	mustWrite(t, filepath.Join(repo, "marker.txt"), "marker\n")
+
+	err := commandTask(ctx, globals{}, []string{"todo", "complete", "1", "--iteration-dir", iterDir, "--task", "fake-task"})
+	if err == nil || !strings.Contains(err.Error(), "run loop task todo stage <n> first") {
+		t.Fatalf("complete without staged changes error = %v", err)
+	}
+}
+
+func TestTaskTodoNoCommitCompletesWithoutCommit(t *testing.T) {
+	ctx := context.Background()
+	repo, iterDir, taskDir := setupTaskTodoIteration(t)
+	withWorkingDir(t, repo)
+	before := strings.TrimSpace(git(t, repo, "rev-parse", "HEAD"))
+
+	if err := commandTask(ctx, globals{}, []string{"todo", "add", "--iteration-dir", iterDir, "--task", "fake-task", "--work-type", "no_commit", "--title", "Run validation", "--acceptance", "The validation command passes."}); err != nil {
+		t.Fatalf("todo add no_commit: %v", err)
+	}
+	if err := commandTask(ctx, globals{}, []string{"todo", "start", "1", "--iteration-dir", iterDir, "--task", "fake-task"}); err != nil {
+		t.Fatalf("todo start: %v", err)
+	}
+	err := commandTask(ctx, globals{}, []string{"todo", "stage", "1", "--iteration-dir", iterDir, "--task", "fake-task"})
+	if err == nil || !strings.Contains(err.Error(), "work_type is no_commit") {
+		t.Fatalf("stage no_commit error = %v", err)
+	}
+	if err := commandTask(ctx, globals{}, []string{"todo", "complete", "1", "--iteration-dir", iterDir, "--task", "fake-task"}); err != nil {
+		t.Fatalf("todo complete no_commit: %v", err)
+	}
+	after := strings.TrimSpace(git(t, repo, "rev-parse", "HEAD"))
+	if after != before {
+		t.Fatalf("no_commit TODO should not create a commit: before=%s after=%s", before, after)
+	}
+	todos := readTaskTodoForTest(t, taskDir)
+	if todos.Items[0].WorkType != "no_commit" || todos.Items[0].Status != "done" || todos.Items[0].CommitSHA != "" {
+		t.Fatalf("no_commit TODO item = %#v", todos.Items[0])
+	}
+}
+
+func TestTaskTodoNoCommitRejectsRepositoryChanges(t *testing.T) {
+	ctx := context.Background()
+	repo, iterDir, _ := setupTaskTodoIteration(t)
+	withWorkingDir(t, repo)
+
+	if err := commandTask(ctx, globals{}, []string{"todo", "add", "--iteration-dir", iterDir, "--task", "fake-task", "--work-type", "no_commit", "--title", "Inspect output", "--acceptance", "The output has been inspected."}); err != nil {
+		t.Fatalf("todo add no_commit: %v", err)
+	}
+	if err := commandTask(ctx, globals{}, []string{"todo", "start", "1", "--iteration-dir", iterDir, "--task", "fake-task"}); err != nil {
+		t.Fatalf("todo start: %v", err)
+	}
+	mustWrite(t, filepath.Join(repo, "unexpected.txt"), "unexpected\n")
+
+	err := commandTask(ctx, globals{}, []string{"todo", "complete", "1", "--iteration-dir", iterDir, "--task", "fake-task"})
+	if err == nil || !strings.Contains(err.Error(), "no_commit task TODO cannot complete with repository changes") {
+		t.Fatalf("complete dirty no_commit error = %v", err)
+	}
+}
+
+func TestTaskTodoStageShowsAndRemovesCommitCandidates(t *testing.T) {
+	ctx := context.Background()
+	repo, iterDir, _ := setupTaskTodoIteration(t)
+	withWorkingDir(t, repo)
+
+	if err := commandTask(ctx, globals{}, []string{"todo", "add", "--iteration-dir", iterDir, "--task", "fake-task", "--type", "F", "--title", "Add marker", "--acceptance", "marker.txt exists.", "add", "marker"}); err != nil {
+		t.Fatalf("todo add: %v", err)
+	}
+	if err := commandTask(ctx, globals{}, []string{"todo", "start", "1", "--iteration-dir", iterDir, "--task", "fake-task"}); err != nil {
+		t.Fatalf("todo start: %v", err)
+	}
+	mustWrite(t, filepath.Join(repo, "marker.txt"), "marker\n")
+	mustWrite(t, filepath.Join(repo, "build.log"), "temporary build output\n")
+
+	out, err := captureStdout(t, func() error {
+		return commandTask(ctx, globals{}, []string{"todo", "stage", "1", "--iteration-dir", iterDir, "--task", "fake-task"})
+	})
+	if err != nil {
+		t.Fatalf("todo stage: %v", err)
+	}
+	for _, want := range []string{"staged files:", "A marker.txt", "A build.log"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("stage output missing %q:\n%s", want, out)
+		}
+	}
+
+	out, err = captureStdout(t, func() error {
+		return commandTask(ctx, globals{}, []string{"todo", "stage", "1", "--iteration-dir", iterDir, "--task", "fake-task", "--remove", "build.log"})
+	})
+	if err != nil {
+		t.Fatalf("todo stage remove: %v", err)
+	}
+	if strings.Contains(out, "A build.log") {
+		t.Fatalf("removed build log should not remain staged:\n%s", out)
+	}
+	if !strings.Contains(out, "?? build.log") {
+		t.Fatalf("removed build log should be reported as unstaged:\n%s", out)
+	}
+	if err := commandTask(ctx, globals{}, []string{"todo", "complete", "1", "--iteration-dir", iterDir, "--task", "fake-task"}); err != nil {
+		t.Fatalf("todo complete: %v", err)
+	}
+	if got := strings.TrimSpace(git(t, repo, "show", "--name-only", "--format=", "HEAD")); got != "marker.txt" {
+		t.Fatalf("committed files = %q, want marker.txt", got)
+	}
+	if _, err := os.Stat(filepath.Join(repo, "build.log")); err != nil {
+		t.Fatalf("build log should remain in the worktree: %v", err)
+	}
+}
+
 func TestTaskTodoAddAfterAndMoveReorderPendingTodos(t *testing.T) {
 	ctx := context.Background()
 	repo, iterDir, taskDir := setupTaskTodoIteration(t)
@@ -78,9 +197,9 @@ func TestTaskTodoAddAfterAndMoveReorderPendingTodos(t *testing.T) {
 	}
 }
 
-func TestTaskTodoMoveRejectsStartedWork(t *testing.T) {
+func TestTaskTodoAddAndMoveAfterActiveTodo(t *testing.T) {
 	ctx := context.Background()
-	repo, iterDir, _ := setupTaskTodoIteration(t)
+	repo, iterDir, taskDir := setupTaskTodoIteration(t)
 	withWorkingDir(t, repo)
 
 	if err := commandTask(ctx, globals{}, []string{"todo", "add", "--iteration-dir", iterDir, "--task", "fake-task", "--type", "F", "--title", "Add marker", "--acceptance", "marker.txt exists.", "add", "marker"}); err != nil {
@@ -92,9 +211,92 @@ func TestTaskTodoMoveRejectsStartedWork(t *testing.T) {
 	if err := commandTask(ctx, globals{}, []string{"todo", "start", "1", "--iteration-dir", iterDir, "--task", "fake-task"}); err != nil {
 		t.Fatalf("todo start: %v", err)
 	}
-	err := commandTask(ctx, globals{}, []string{"todo", "move", "2", "--iteration-dir", iterDir, "--task", "fake-task", "--after", "0"})
-	if err == nil || !strings.Contains(err.Error(), "cannot move task TODOs after task work has started") {
-		t.Fatalf("move after work started error = %v", err)
+	mustWrite(t, filepath.Join(repo, "marker.txt"), "marker\n")
+	if err := commandTask(ctx, globals{}, []string{"todo", "add", "--iteration-dir", iterDir, "--task", "fake-task", "--after", "1", "--type", "D", "--title", "Document marker", "--acceptance", "marker docs exist.", "document", "marker"}); err != nil {
+		t.Fatalf("todo add after active: %v", err)
+	}
+	err := commandTask(ctx, globals{}, []string{"todo", "add", "--iteration-dir", iterDir, "--task", "fake-task", "--after", "0", "--type", "D", "--title", "Document before marker", "--acceptance", "marker docs exist.", "document", "before", "marker"})
+	if err == nil || !strings.Contains(err.Error(), "cannot insert before fixed task TODO 1") {
+		t.Fatalf("add before active error = %v", err)
+	}
+	if err := commandTask(ctx, globals{}, []string{"todo", "move", "3", "--iteration-dir", iterDir, "--task", "fake-task", "--after", "1"}); err != nil {
+		t.Fatalf("move pending after active: %v", err)
+	}
+	err = commandTask(ctx, globals{}, []string{"todo", "move", "2", "--iteration-dir", iterDir, "--task", "fake-task", "--after", "0"})
+	if err == nil || !strings.Contains(err.Error(), "cannot insert before fixed task TODO 1") {
+		t.Fatalf("move before active error = %v", err)
+	}
+
+	todos := readTaskTodoForTest(t, taskDir)
+	if got := []string{todos.Items[0].Title, todos.Items[1].Title, todos.Items[2].Title}; strings.Join(got, "|") != "Add marker|Add marker tests|Document marker" {
+		t.Fatalf("task TODO order = %#v", got)
+	}
+}
+
+func TestTaskTodoRemoveOnlyPendingTodos(t *testing.T) {
+	ctx := context.Background()
+	repo, iterDir, taskDir := setupTaskTodoIteration(t)
+	withWorkingDir(t, repo)
+
+	if err := commandTask(ctx, globals{}, []string{"todo", "add", "--iteration-dir", iterDir, "--task", "fake-task", "--type", "F", "--title", "Add marker", "--acceptance", "marker.txt exists.", "add", "marker"}); err != nil {
+		t.Fatalf("todo add first: %v", err)
+	}
+	if err := commandTask(ctx, globals{}, []string{"todo", "add", "--iteration-dir", iterDir, "--task", "fake-task", "--type", "D", "--title", "Document marker", "--acceptance", "marker docs exist.", "document", "marker"}); err != nil {
+		t.Fatalf("todo add second: %v", err)
+	}
+	if err := commandTask(ctx, globals{}, []string{"todo", "start", "1", "--iteration-dir", iterDir, "--task", "fake-task"}); err != nil {
+		t.Fatalf("todo start: %v", err)
+	}
+	if err := commandTask(ctx, globals{}, []string{"todo", "remove", "2", "--iteration-dir", iterDir, "--task", "fake-task"}); err != nil {
+		t.Fatalf("remove pending todo: %v", err)
+	}
+	err := commandTask(ctx, globals{}, []string{"todo", "remove", "1", "--iteration-dir", iterDir, "--task", "fake-task"})
+	if err == nil || !strings.Contains(err.Error(), "not pending") {
+		t.Fatalf("remove active todo error = %v", err)
+	}
+	todos := readTaskTodoForTest(t, taskDir)
+	if len(todos.Items) != 1 || todos.Items[0].Title != "Add marker" {
+		t.Fatalf("task TODO items after remove = %#v", todos.Items)
+	}
+}
+
+func TestTaskTodoCancelActiveDiscardsChangesAndSkipsToNextTodo(t *testing.T) {
+	ctx := context.Background()
+	repo, iterDir, taskDir := setupTaskTodoIteration(t)
+	withWorkingDir(t, repo)
+
+	if err := commandTask(ctx, globals{}, []string{"todo", "add", "--iteration-dir", iterDir, "--task", "fake-task", "--type", "F", "--title", "Add marker", "--acceptance", "marker.txt exists.", "add", "marker"}); err != nil {
+		t.Fatalf("todo add first: %v", err)
+	}
+	if err := commandTask(ctx, globals{}, []string{"todo", "add", "--iteration-dir", iterDir, "--task", "fake-task", "--type", "D", "--title", "Document marker", "--acceptance", "marker docs exist.", "document", "marker"}); err != nil {
+		t.Fatalf("todo add second: %v", err)
+	}
+	if err := commandTask(ctx, globals{}, []string{"todo", "start", "1", "--iteration-dir", iterDir, "--task", "fake-task"}); err != nil {
+		t.Fatalf("todo start: %v", err)
+	}
+	mustWrite(t, filepath.Join(repo, "marker.txt"), "marker\n")
+	mustWrite(t, filepath.Join(repo, "build.log"), "temporary build output\n")
+	if err := commandTask(ctx, globals{}, []string{"todo", "stage", "1", "--iteration-dir", iterDir, "--task", "fake-task"}); err != nil {
+		t.Fatalf("todo stage: %v", err)
+	}
+	err := commandTask(ctx, globals{}, []string{"todo", "cancel", "1", "--iteration-dir", iterDir, "--task", "fake-task"})
+	if err == nil || !strings.Contains(err.Error(), "--discard-changes") {
+		t.Fatalf("cancel active without discard error = %v", err)
+	}
+	if err := commandTask(ctx, globals{}, []string{"todo", "cancel", "1", "--iteration-dir", iterDir, "--task", "fake-task", "--discard-changes"}); err != nil {
+		t.Fatalf("cancel active with discard: %v", err)
+	}
+	for _, path := range []string{"marker.txt", "build.log"} {
+		if _, err := os.Stat(filepath.Join(repo, path)); !os.IsNotExist(err) {
+			t.Fatalf("%s should be discarded, stat error = %v", path, err)
+		}
+	}
+	if err := commandTask(ctx, globals{}, []string{"todo", "start", "2", "--iteration-dir", iterDir, "--task", "fake-task"}); err != nil {
+		t.Fatalf("start after cancelled todo: %v", err)
+	}
+	todos := readTaskTodoForTest(t, taskDir)
+	if todos.Items[0].Status != "cancelled" || todos.Items[0].CancelledAt == "" || todos.Items[1].Status != "active" {
+		t.Fatalf("task TODO statuses after cancel/start = %#v", todos.Items)
 	}
 }
 

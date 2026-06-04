@@ -106,7 +106,7 @@ Runtime rules:
 - If `--goal` is empty, `--should-stop true` is invalid regardless of instruction, Issue, PR, or comment text.
 - The planner agent writes an AI sprint-level `task-tree` handoff for one coherent PR-sized development goal.
 - The CLI schedules non-conflicting ready tasks and runs coding agents in task worktrees.
-- Coding agents create task-local TODOs before editing, complete each TODO as one CLI-created task-branch commit, write `task-result` handoffs, run `loop task merge`, and resolve conflicts before exiting.
+- Coding agents create initial task-local TODOs before editing, add pending follow-up TODOs after the fixed boundary when needed, complete commit TODOs as CLI-created task-branch commits, complete no_commit TODOs only when they leave no repository changes, write `task-result` handoffs, run `loop task merge`, and resolve conflicts before exiting.
 - The CLI runs validation, then the review agent writes a `review-result` handoff.
 - Validation failures and review findings become repair tasks until approval or the configured fix-cycle limit.
 - In PR mode with `reviewMode=auto_merge`, review agents rename the branch, create PR title/body artifacts from the template, create/check/merge the PR through loop commands, and approve only after `pr-state.status=merged`.
@@ -232,17 +232,21 @@ loop handoff list [--kind <task-tree|task-result|review-result>]
 Complete coding-task integration actions through agent-facing CLI commands.
 
 ```bash
-loop task todo add --type <type> --title <title> --acceptance <text>... [--after <n>] <commit-message>
+loop task todo add --work-type commit --type <type> --title <title> --acceptance <text>... [--after <n>] <commit-message>
+loop task todo add --work-type no_commit --title <title> --acceptance <text>... [--after <n>]
 loop task todo list [--iteration-dir <dir>|--run <run-id> --iteration <n>] [--task <id>]
 loop task todo move <n> --after <n> [--iteration-dir <dir>|--run <run-id> --iteration <n>] [--task <id>]
+loop task todo remove <n> [--iteration-dir <dir>|--run <run-id> --iteration <n>] [--task <id>]
+loop task todo cancel <n> [--discard-changes] [--iteration-dir <dir>|--run <run-id> --iteration <n>] [--task <id>]
 loop task todo start <n> [--iteration-dir <dir>|--run <run-id> --iteration <n>] [--task <id>]
+loop task todo stage <n> [--add <path>]... [--remove <path>]... [--reset] [--iteration-dir <dir>|--run <run-id> --iteration <n>] [--task <id>]
 loop task todo complete <n> [--iteration-dir <dir>|--run <run-id> --iteration <n>] [--task <id>]
 loop task discard --reason <reason> [--iteration-dir <dir>|--run <run-id> --iteration <n>] [--task <id>]
 loop task merge --type <type> <summary> [--iteration-dir <dir>|--run <run-id> --iteration <n>] [--task <id>]
 loop task merge --continue [--iteration-dir <dir>|--run <run-id> --iteration <n>] [--task <id>]
 ```
 
-Coding agents must create the task-local TODO list before implementation. `loop task todo add` accepts `--after <n>` for placement, with `--after 0` inserting at the top. `loop task todo move <n> --after <n>` can reorder pending TODOs before task work starts. `loop task todo add` and `move` are rejected after task work starts. `loop task todo start` enforces serial ordering. `loop task todo complete` stages current task worktree changes, creates the loop-formatted task-branch commit, records its SHA and subject in `tasks/<n>/task-todo.json`, and marks that TODO done. It rejects clean completions.
+Coding agents must create an initial task-local TODO list before implementation. `loop task todo add` accepts `--work-type commit` for TODOs that create a task-branch commit and `--work-type no_commit` for validation, inspection, handoff, or other work that must not create a commit. `commit` TODOs require `--type` and a commit message. `no_commit` TODOs must not include commit metadata. `--after <n>` controls placement, with `--after 0` inserting at the top before work starts. After work starts, new TODOs may be inserted only after the last fixed TODO. Fixed TODOs are `done`, `active`, or `cancelled`; pending TODOs remain editable queue entries. `loop task todo move <n> --after <n>` can reorder pending TODOs after the fixed boundary. `loop task todo remove <n>` removes only pending TODOs. `loop task todo cancel <n>` marks a pending or active TODO as `cancelled`; active cancellation requires `--discard-changes`, which discards task worktree and index changes before recording cancellation. `loop task todo start` enforces serial ordering and skips cancelled TODOs. `loop task todo stage <n>` stages active commit TODO changes for review, prints the staged commit candidates and remaining unstaged files, and accepts repeatable `--add <path>` and `--remove <path>` flags to adjust the index without raw Git. `--reset` unstages all files before applying explicit additions or removals. `loop task todo complete` commits the currently staged changes for `commit` TODOs, or marks `no_commit` TODOs done after confirming the task worktree has no repository changes. It rejects clean commit completions, dirty commit completions with no staged changes, and dirty no_commit completions.
 
 `loop task discard` writes a discarded `task-result` with a required reason so the planner can revise or rewrite the remaining plan.
 
