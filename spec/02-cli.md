@@ -277,7 +277,7 @@ loop pr logs <job-url-or-id> [--iteration-dir <dir>|--run <run-id> --iteration <
 loop pr merge [--iteration-dir <dir>|--run <run-id> --iteration <n>]
 ```
 
-`loop pr create` reads `pr-title` and `pr-body`, pushes the tracked branch when configured, creates or reuses the pull request, and writes `pr-state`. `loop pr checks` pushes current commits, waits for checks, writes `pr-checks`, and exits non-zero on failed checks with only a concise `errors.log` pointer. `loop pr feedback` fetches review decisions, latest reviews, comments, and updated time for planner decisions. `loop pr logs` writes `pr-check-log`. `loop pr merge` runs configured validation, performs a final check wait, merges through `gh`, and records `pr-state.status=merged`.
+`loop pr create` reads `pr-title` and `pr-body`, pushes the tracked branch when configured, creates or reuses the pull request, and writes `pr-state`. `loop pr checks` pushes current commits, waits for checks, writes `pr-checks`, and exits non-zero on failed checks with only a concise `errors.log` pointer. `loop pr feedback` is accepted only from the initial planner role before an iteration worktree exists; it fetches review decisions, latest reviews, comments, and updated time for planner decisions. `loop pr logs` writes `pr-check-log`. `loop pr merge` runs configured validation, performs a final check wait, merges through `gh`, and records `pr-state.status=merged`.
 
 ## `loop issue`
 

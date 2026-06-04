@@ -571,7 +571,7 @@ func allHelpCommands() []helpCommand {
 			Path:        []string{"pr", "feedback"},
 			Usage:       "loop pr feedback <pr> [--iteration-dir <dir>|--run <run-id> --iteration <n>]",
 			Summary:     "Inspect pull request review decisions and comments",
-			Description: "Fetches reviewDecision, latestReviews, comments, and updatedAt through gh so planners can decide whether a pending human-review PR needs repair.",
+			Description: "Initial planner role only. Fetches reviewDecision, latestReviews, comments, and updatedAt through gh so the planner can decide whether a pending human-review PR needs repair before iteration work starts.",
 			Flags:       iterationLocatorFlags(),
 			Agent:       true,
 			AgentOnly:   true,

@@ -1797,21 +1797,19 @@ func buildRolePrompt(role string, paths pathSet, task workflow.Task, tree any, t
 	if paths.PendingPRRepair != nil {
 		b.WriteString("This iteration resumes an existing human-review pull request branch. Address only the selected PR feedback and keep the work on the existing PR branch.\n")
 	}
-	if len(paths.PendingPRs) > 0 {
-		data, _ := json.MarshalIndent(paths.PendingPRs, "", "  ")
-		if paths.PendingPRRepair == nil {
-			b.WriteString("Runtime includes review-pending pull requests. Before planning unrelated implementation work, inspect open pending PRs from oldest to newest with `loop pr feedback <pr>` and compare the latest feedback timestamp with each record's feedback_handled_at. If an unhandled review comment or change-request review needs code changes, return a task tree with `repair_pull_request` set to that PR and tasks that address only that feedback.\n")
-			b.WriteString("For pending PRs that do not need repair, treat their changed_files as reserved work and avoid planning tasks that are likely to overlap, conflict with, or depend on those changes until the PRs merge.\n")
-			b.WriteString("If every safe implementation area is blocked by review-pending PRs, write an empty task tree with `wait_for_pending_prs: true` so the CLI enters PR review wait mode instead of inventing overlapping work.\n")
-		}
-		b.WriteString("\nReview-pending pull requests:\n\n```json\n" + string(data) + "\n```\n")
-	}
 	switch role {
 	case "planner":
 		b.WriteString("\nWrite one task-tree handoff:\n\n```bash\nloop handoff write task-tree --file task-tree.json\n```\n\n")
 		b.WriteString("Plan one AI sprint-sized PR: the largest coherent sprint goal suitable for an autonomous coding run while still producing an independently mergeable result. If the obvious next slice is only a narrow affordance, isolated implementation layer, or commit-sized change, expand to adjacent behavior that belongs to the same product or technical goal.\n")
 		b.WriteString("Choose the fewest task boundaries that preserve autonomy, dependency ordering, conflict avoidance, validation, and safe parallelism. Each task should own a meaningful vertical outcome or substantial subsystem slice, not a file-level, layer-only, or commit-sized microtask. Keep documentation and validation with the behavior owner unless a final cross-cutting hardening task adds distinct value. When tasks must be serial, each step should still produce a meaningful integrated increment.\n")
 		b.WriteString("Task entries describe task goals, implementation context, dependencies, conflicts, and acceptance criteria only. Do not include commit split messages or commit metadata.\n")
+		if shouldPromptInitialPlannerForPendingPRs(paths) {
+			data, _ := json.MarshalIndent(paths.PendingPRs, "", "  ")
+			b.WriteString("\nRuntime includes review-pending pull requests. Before planning unrelated implementation work, inspect open pending PRs from oldest to newest with `loop pr feedback <pr>` and compare the latest feedback timestamp with each record's feedback_handled_at. If an unhandled review comment or change-request review needs code changes, return a task tree with `repair_pull_request` set to that PR and tasks that address only that feedback.\n")
+			b.WriteString("For pending PRs that do not need repair, treat their changed_files as reserved work and avoid planning tasks that are likely to overlap, conflict with, or depend on those changes until the PRs merge.\n")
+			b.WriteString("If every safe implementation area is blocked by review-pending PRs, write an empty task tree with `wait_for_pending_prs: true` so the CLI enters PR review wait mode instead of inventing overlapping work.\n")
+			b.WriteString("\nReview-pending pull requests:\n\n```json\n" + string(data) + "\n```\n")
+		}
 		b.WriteString("The JSON must match this schema: " + taskTreeSchemaHelpText() + "\n")
 		b.WriteString("Minimal example:\n\n```json\n{\n  \"schema_version\": 1,\n  \"summary\": \"Implement the requested sprint goal.\",\n  \"goal_evaluation\": \"This iteration plans the work needed for the current goal.\",\n  \"tasks\": [\n    {\n      \"id\": \"implement-core\",\n      \"title\": \"Implement core behavior\",\n      \"description\": \"Update the relevant code paths for the requested behavior.\",\n      \"depends_on\": [],\n      \"conflicts_with\": [],\n      \"acceptance\": [\"Focused tests or validation cover the behavior.\"]\n    }\n  ]\n}\n```\n")
 	case "coding":
@@ -1851,6 +1849,13 @@ func buildRolePrompt(role string, paths pathSet, task workflow.Task, tree any, t
 		b.WriteString(strings.TrimSpace(paths.AgentPromptExtra) + "\n")
 	}
 	return strings.TrimRight(b.String(), "\n") + "\n"
+}
+
+func shouldPromptInitialPlannerForPendingPRs(paths pathSet) bool {
+	return len(paths.PendingPRs) > 0 &&
+		paths.PendingPRRepair == nil &&
+		strings.TrimSpace(paths.AgentPromptExtra) == "" &&
+		strings.TrimSpace(paths.IterationWorktree) == ""
 }
 
 func loopBoolEnv(value bool) string {

@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/aki-0421/loop/internal/artifactdb"
+	"github.com/aki-0421/loop/internal/runstate"
+	"github.com/aki-0421/loop/internal/workflow"
 )
 
 func TestRoleOrchestratedPRCreateRequiresRenameAndArtifacts(t *testing.T) {
@@ -75,6 +77,77 @@ git:
 	}
 	if _, err := artifactdb.Read(iterDir, "pr-checks"); !errors.Is(err, artifactdb.ErrNotFound) {
 		t.Fatalf("pr-checks should not be written before rejection: %v", err)
+	}
+}
+
+func TestPRFeedbackRequiresInitialPlannerRole(t *testing.T) {
+	ctx := context.Background()
+	repo := newCleanupRepo(t)
+	mustWrite(t, filepath.Join(repo, ".loop", "config.yaml"), `version: 1
+
+git:
+  integration:
+    mode: pr
+`)
+	git(t, repo, "add", ".loop/config.yaml")
+	git(t, repo, "commit", "-m", "C: configure pr mode")
+	iterDir := filepath.Join(repo, ".loop", "runs", "run-1", "iterations", "0001")
+	writeRolePRRuntimeForTest(t, iterDir, repo, "develop")
+	withWorkingDir(t, repo)
+
+	t.Setenv("LOOP_ROLE", "coding")
+	err := commandPR(ctx, globals{}, []string{"feedback", "1", "--iteration-dir", iterDir})
+	if err == nil || !strings.Contains(err.Error(), "only available to the initial planner role") {
+		t.Fatalf("coding feedback error = %v", err)
+	}
+}
+
+func TestPRFeedbackRejectsPlannerAfterIterationWorktreeExists(t *testing.T) {
+	ctx := context.Background()
+	repo := newCleanupRepo(t)
+	mustWrite(t, filepath.Join(repo, ".loop", "config.yaml"), `version: 1
+
+git:
+  integration:
+    mode: pr
+`)
+	git(t, repo, "add", ".loop/config.yaml")
+	git(t, repo, "commit", "-m", "C: configure pr mode")
+	iterDir := filepath.Join(repo, ".loop", "runs", "run-1", "iterations", "0001")
+	writeRolePRRuntimeForTest(t, iterDir, repo, "wip/0001")
+	t.Setenv("LOOP_ROLE", "planner")
+	t.Setenv("LOOP_ITERATION_WORKTREE", filepath.Join(repo, ".loop", "worktrees", "run-1", "0001", "iteration"))
+	withWorkingDir(t, repo)
+
+	err := commandPR(ctx, globals{}, []string{"feedback", "1", "--iteration-dir", iterDir})
+	if err == nil || !strings.Contains(err.Error(), "before the iteration worktree is created") {
+		t.Fatalf("post-worktree planner feedback error = %v", err)
+	}
+}
+
+func TestPendingPRPromptOnlyInitialPlanner(t *testing.T) {
+	paths := pathSet{
+		PendingPRs: []runstate.PendingPullRequest{{
+			PR:           "1",
+			Branch:       "feat/pending",
+			ChangedFiles: []string{"feature.txt"},
+		}},
+	}
+
+	initialPlannerPrompt := buildRolePrompt("planner", paths, workflow.Task{}, nil, nil, nil)
+	if !strings.Contains(initialPlannerPrompt, "loop pr feedback <pr>") || !strings.Contains(initialPlannerPrompt, "Review-pending pull requests") {
+		t.Fatalf("initial planner prompt missing pending PR guidance:\n%s", initialPlannerPrompt)
+	}
+
+	for name, prompt := range map[string]string{
+		"coding":           buildRolePrompt("coding", paths, workflow.Task{}, nil, nil, nil),
+		"review":           buildRolePrompt("review", paths, workflow.Task{}, nil, nil, nil),
+		"planner-revision": buildRolePrompt("planner", pathSet{PendingPRs: paths.PendingPRs, AgentPromptExtra: "A coding task was discarded."}, workflow.Task{}, nil, nil, nil),
+		"planner-worktree": buildRolePrompt("planner", pathSet{PendingPRs: paths.PendingPRs, IterationWorktree: filepath.Join("worktrees", "0001")}, workflow.Task{}, nil, nil, nil),
+	} {
+		if strings.Contains(prompt, "loop pr feedback <pr>") || strings.Contains(prompt, "Review-pending pull requests") {
+			t.Fatalf("%s prompt should not include pending PR feedback guidance:\n%s", name, prompt)
+		}
 	}
 }
 

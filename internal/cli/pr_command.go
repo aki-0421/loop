@@ -53,6 +53,7 @@ type prCommandContext struct {
 	paths             pathSet
 	cfg               config.Config
 	runtime           map[string]string
+	role              string
 	branch            string
 	base              string
 	repairPullRequest *runstate.PendingPullRequest
@@ -251,6 +252,9 @@ func commandPRFeedback(ctx context.Context, g globals, args []string) error {
 		return err
 	}
 	if err := ensurePRMode(prCtx); err != nil {
+		return codedError{2, err}
+	}
+	if err := ensurePRFeedbackAllowed(prCtx); err != nil {
 		return codedError{2, err}
 	}
 	prID := strings.TrimSpace(argsWithoutPRLocatorFlags(args)[0])
@@ -480,6 +484,7 @@ func loadPRCommandContext(ctx context.Context, g globals, subcommand string, arg
 		paths:             paths,
 		cfg:               cfg,
 		runtime:           runtime,
+		role:              strings.TrimSpace(os.Getenv("LOOP_ROLE")),
 		branch:            branch,
 		base:              base,
 		repairPullRequest: repairPR,
@@ -539,6 +544,19 @@ func rejectPRLifecycleFromTaskRuntime(prCtx prCommandContext) error {
 		return nil
 	}
 	return errors.New("pull request lifecycle commands must run from the iteration worktree; finish the task with `loop task merge` and let the review step rerun PR checks")
+}
+
+func ensurePRFeedbackAllowed(prCtx prCommandContext) error {
+	if prCtx.role != "planner" {
+		return errors.New("loop pr feedback is only available to the initial planner role")
+	}
+	if strings.TrimSpace(prCtx.runtime["task_id"]) != "" {
+		return errors.New("loop pr feedback is only available before task work starts")
+	}
+	if strings.TrimSpace(firstNonEmpty(prCtx.runtime["iteration_worktree"], os.Getenv("LOOP_ITERATION_WORKTREE"))) != "" {
+		return errors.New("loop pr feedback is only available before the iteration worktree is created")
+	}
+	return nil
 }
 
 func isRoleOrchestratedPR(prCtx prCommandContext) bool {
