@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -16,9 +15,13 @@ import (
 func TestRunSnapshotsInstructionPromptWithoutPersistingSourcePath(t *testing.T) {
 	ctx := context.Background()
 	repo := newCleanupRepo(t)
+	captureDir := t.TempDir()
 	instructionPath := filepath.Join(repo, "secret", "private-task.md")
 	instructionText := "# Secret Task\n\nDo not leak this path.\n"
 	mustWrite(t, instructionPath, instructionText)
+	writeCapturePlannerConfig(t, repo, captureDir, 1)
+	git(t, repo, "add", "secret/private-task.md", ".loop/config.yaml")
+	git(t, repo, "commit", "-m", "T: add prompt snapshot fixture")
 
 	oldwd, err := os.Getwd()
 	if err != nil {
@@ -32,9 +35,9 @@ func TestRunSnapshotsInstructionPromptWithoutPersistingSourcePath(t *testing.T) 
 	}()
 
 	if _, err := captureStdout(t, func() error {
-		return commandRun(ctx, globals{JSON: true, NoColor: true}, []string{instructionPath, "--dry-run", "--goal", "ship it"})
+		return commandRun(ctx, globals{Agent: "capture", JSON: true, NoColor: true}, []string{instructionPath, "--goal", "ship it"})
 	}); err != nil {
-		t.Fatalf("loop run --dry-run: %v", err)
+		t.Fatalf("loop run: %v", err)
 	}
 
 	runID, err := latestRun(filepath.Join(repo, ".loop", "runs"))
@@ -69,26 +72,6 @@ func TestRunSnapshotsInstructionPromptWithoutPersistingSourcePath(t *testing.T) 
 		t.Fatalf("instruction path should be hidden, got err=%v", err)
 	}
 
-	runtimeText, err := artifactdb.Read(iterDir, "runtime")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var runtime map[string]any
-	if err := json.Unmarshal([]byte(runtimeText), &runtime); err != nil {
-		t.Fatal(err)
-	}
-	if got := runtime["base_branch"]; got != "develop" {
-		t.Fatalf("runtime base_branch = %#v, want develop from command start branch", got)
-	}
-	for _, key := range []string{"instruction_file", "instruction_path", "instruction_rel"} {
-		if _, ok := runtime[key]; ok {
-			t.Fatalf("runtime leaked %s: %#v", key, runtime)
-		}
-	}
-	if strings.Contains(runtimeText, instructionPath) || strings.Contains(runtimeText, "private-task.md") {
-		t.Fatalf("runtime leaked instruction path:\n%s", runtimeText)
-	}
-
 	stateBytes, err := os.ReadFile(filepath.Join(repo, ".loop", "runs", runID, "run-state.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -114,29 +97,7 @@ func TestAgentReceivesBootstrapWithoutInstructionPathOrPromptPath(t *testing.T) 
 	captureDir := t.TempDir()
 	instructionPath := filepath.Join(repo, "secret", "private-task.md")
 	mustWrite(t, instructionPath, "# Secret Task\n\nDo not leak this path.\n")
-	agentCommand, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
-	mustWrite(t, filepath.Join(repo, ".loop", "config.yaml"), fmt.Sprintf(`version: 1
-
-agent:
-  default: capture
-  adapters:
-    capture:
-      command: %s
-      args: [-test.run=TestHelperProcessCaptureAgent, --]
-      prompt: stdin
-      env:
-        LOOP_TEST_CAPTURE_AGENT: "1"
-        LOOP_TEST_CAPTURE_DIR: %s
-
-run:
-  maxIterations: 1
-
-git:
-  baseBranch: develop
-`, yamlSingleQuote(agentCommand), yamlSingleQuote(captureDir)))
+	writeCapturePlannerConfig(t, repo, captureDir, 1)
 	git(t, repo, "add", "secret/private-task.md", ".loop/config.yaml")
 	git(t, repo, "commit", "-m", "T: add capture fixture")
 
@@ -193,26 +154,50 @@ git:
 	}
 }
 
+func writeCapturePlannerConfig(t *testing.T, repo, captureDir string, maxIterations int) {
+	t.Helper()
+	agentCommand, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, filepath.Join(repo, ".loop", "config.yaml"), fmt.Sprintf(`version: 1
+
+agent:
+  default: capture
+  adapters:
+    capture:
+      command: %s
+      args: [-test.run=TestHelperProcessCaptureAgent, --]
+      prompt: stdin
+      env:
+        LOOP_CAPTURE_AGENT: "1"
+        LOOP_CAPTURE_DIR: %s
+
+run:
+  maxIterations: %d
+
+git:
+  baseBranch: develop
+`, yamlSingleQuote(agentCommand), yamlSingleQuote(captureDir), maxIterations))
+}
+
 func TestHelperProcessCaptureAgent(t *testing.T) {
-	if os.Getenv("LOOP_TEST_CAPTURE_AGENT") != "1" {
+	if os.Getenv("LOOP_CAPTURE_AGENT") != "1" {
 		return
 	}
 	stdin, _ := io.ReadAll(os.Stdin)
-	captureDir := os.Getenv("LOOP_TEST_CAPTURE_DIR")
+	captureDir := os.Getenv("LOOP_CAPTURE_DIR")
 	_ = os.MkdirAll(captureDir, 0o755)
 	_ = os.WriteFile(filepath.Join(captureDir, "stdin.txt"), stdin, 0o644)
 	_ = os.WriteFile(filepath.Join(captureDir, "env.txt"), []byte(strings.Join(os.Environ(), "\n")), 0o644)
+	if os.Getenv("LOOP_ROLE") != "planner" {
+		os.Exit(1)
+	}
 	result := `{
   "schema_version": 1,
-  "action": "skip_merge",
-  "skip_merge_reason": "Capture agent context.",
-  "should_fully_stop": false,
-  "goal_evaluation": "Captured agent context for test.",
-  "branch": {"initial_name": "wip/0001", "kind": "test", "slug": "capture-agent"},
-  "commits": [],
-  "validation": {"status": "skipped", "commands": []},
-  "artifacts": {},
-  "assumptions": []
+  "summary": "Capture planner context.",
+  "goal_evaluation": "Captured planner context for test.",
+  "tasks": []
 }
 `
 	iterDir, err := resolveIterationDir(context.Background(), globals{}, "", os.Getenv("LOOP_RUN_ID"), os.Getenv("LOOP_ITERATION_ID"))
@@ -221,6 +206,6 @@ func TestHelperProcessCaptureAgent(t *testing.T) {
 		os.Exit(1)
 	}
 	runID, iterationID := artifactdb.ParseIterationDir(iterDir)
-	_ = artifactdb.WriteResultHandoff(artifactdb.GlobalDBPathForIteration(iterDir), runID, iterationID, result)
+	_ = artifactdb.WriteRoleHandoff(artifactdb.GlobalDBPathForIteration(iterDir), runID, iterationID, "task-tree", "", result)
 	os.Exit(0)
 }

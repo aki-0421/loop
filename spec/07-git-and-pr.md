@@ -14,7 +14,7 @@ When a coding task attempt exits before `loop task merge` succeeds, the CLI trea
 
 Task branches are implementation details and are deleted after merge. The iteration branch is integrated through pull request mode or local merge mode.
 
-## Legacy Branch Names
+## Branch Names
 
 The initial branch is numbered and temporary:
 
@@ -23,7 +23,7 @@ wip/0001
 wip/0002
 ```
 
-Older single-agent workflows can rename the branch through the CLI before closing with `--merge`:
+Review agents rename the branch through the CLI before pull request creation:
 
 ```bash
 loop branch rename feat/add-usage-report-command
@@ -64,7 +64,7 @@ Branch slugs:
 
 In role-orchestrated runs, coding agents use `loop task todo complete <n>` to ask the CLI to create commits. Planner tasks do not contain commit metadata. `loop task merge --type <type> <summary>` creates the iteration-branch squash commit for the completed task branch.
 
-Older single-agent workflows can request commits during the iteration by running:
+The `loop commit` command remains available for agent-facing diagnostics and direct iteration utilities:
 
 ```bash
 loop commit --type <type> <short imperative message>
@@ -123,16 +123,6 @@ In role-orchestrated runs, pull request mode is driven by the review agent throu
 8. If checks fail, inspect logs when needed and write `changes_requested` findings instead of approval.
 9. After approval, the CLI verifies the state required by the configured review mode, refreshes the base branch when appropriate, and cleans up local runtime resources.
 
-The older single-agent workflow also uses `loop pr` commands:
-
-1. Generate PR title and body through the agent.
-2. Run `loop pr create` to push the tracked branch and create or reuse the PR.
-3. Run `loop pr checks` to push current commits and wait for checks when configured.
-4. If checks fail, inspect `pr-checks`, fetch logs with `loop pr logs <job-url-or-id>`, fix the failure in the same agent context, commit through `loop commit`, and rerun `loop pr checks`.
-5. Run `loop pr merge` after checks pass. The command runs configured validation, performs a final check wait, and merges through squash merge without asking `gh` to perform local branch cleanup. If the host reports failure after the remote PR has already merged, the command verifies the remote PR state and records the merged state locally. The squash commit subject is the generated PR title with the PR number suffix when available, such as `(#123)`.
-6. Close with `loop iteration close --merge` only after `loop pr merge` records `pr-state.status=merged`.
-7. The run loop pulls the base branch and deletes runtime resources after accepting the merge close. The CLI deletes the origin head branch through Git and prunes remote-tracking refs so stale `origin/<branch>` refs do not linger locally.
-
 Command shape:
 
 ```bash
@@ -157,7 +147,6 @@ When pull request mode has `waitChecks=true`, `loop pr checks` and `loop pr merg
 - `loop pr checks` records full check output in the `pr-checks` artifact and writes only a concise pointer to `errors.log`.
 - The agent fetches detailed job logs with `loop pr logs <job-url-or-id>` when needed.
 - In role-orchestrated mode, the review agent reports failed checks as `changes_requested` findings so repair tasks can be scheduled.
-- In older single-agent mode, the agent fixes the failure in the same context, validates locally, commits through `loop commit`, and reruns `loop pr checks`.
 
 `mergeWhenChecksPass` is retained for configuration compatibility, but PR-mode auto merge is now triggered by `loop pr merge`. In human-review modes, `loop pr merge` is rejected because merging is an external human action.
 

@@ -84,7 +84,7 @@ The durable iteration directory stores audit and replay files plus PR lifecycle 
 - `pr-state`, `pr-checks`, and `pr-check-log`: pull request lifecycle state and check diagnostics written by the CLI.
 - `github-updates`: newly observed GitHub Issue, PR, or comment diffs for an iteration boundary or sleep wake cycle.
 
-Agents should read runtime artifacts through `loop iteration` commands and write role outputs through `loop handoff`. Legacy `plan`, `todo`, and terminal close artifacts remain for compatibility with older single-agent workflows.
+Agents should read runtime artifacts through `loop iteration` commands and write role outputs through `loop handoff`. `plan`, `todo`, and terminal close artifacts remain command-level utilities, while `loop run` uses role handoffs.
 
 After a merge or skip-merge terminal action, the active temp directory is removed. `prompt.md`, `effective-config.yaml`, iteration and task `agent-events.jsonl` files, `errors.log`, PR lifecycle diagnostics, GitHub update diffs, and run state remain for audit and replay.
 

@@ -91,7 +91,7 @@ Responsibilities:
 
 ### Iteration artifact commands
 
-The CLI exposes `loop iteration path/read/write/append` for fixed artifact names and `loop handoff` for role handoff JSON. Role-orchestrated runs use `task-tree`, `task-result`, and `review-result` handoffs, task-local TODO commands, branch rename, and PR commands. Legacy `loop iteration plan`, `loop iteration todo`, `loop iteration close`, and `loop commit` commands remain available for older single-agent workflows and diagnostics.
+The CLI exposes `loop iteration path/read/write/append` for fixed artifact names and `loop handoff` for role handoff JSON. Role-orchestrated runs use `task-tree`, `task-result`, and `review-result` handoffs, task-local TODO commands, branch rename, and PR commands. `loop iteration plan`, `loop iteration todo`, `loop iteration close`, and `loop commit` commands remain available as agent-facing utilities and diagnostics.
 
 ### `internal/workflow`
 
@@ -162,7 +162,7 @@ run-state.json.tmp
 run-state.json
 ```
 
-Ordinary state files use atomic writes. Role handoffs are stored in `.loop/loop.db` through `loop handoff` and copied to durable iteration JSON files for audit. Legacy terminal close handoffs are also stored in `.loop/loop.db`.
+Ordinary state files use atomic writes. Role handoffs are stored in `.loop/loop.db` through `loop handoff` and copied to durable iteration JSON files for audit. Terminal close handoffs are also stored in `.loop/loop.db`.
 
 ## Locking
 

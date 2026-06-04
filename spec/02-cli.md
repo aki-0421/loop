@@ -98,7 +98,6 @@ Flags:
 | `--from-iteration <n>` | latest | Accepted for older scripts with `--resume`; currently ignored |
 | `--keep-branches <mode>` | empty | Accepted for older scripts; cleanup is automatic |
 | `--keep-worktrees <mode>` | empty | Accepted for older scripts; cleanup is automatic |
-| `--dry-run` | false | Build prompt and state files without launching the agent |
 
 Runtime rules:
 
@@ -209,7 +208,7 @@ loop iteration close (--merge|--skip-merge) [--iteration-dir <dir>|--run <run-id
 
 If `--iteration-dir` is omitted, commands resolve the current agent iteration automatically. If `--run` is supplied, the CLI resolves `.loop/runs/<run-id>/iterations/<n>` using the configured log directory; `--iteration latest` selects the newest iteration.
 
-Writable artifacts are `plan`, `todo`, `task-tree`, `review-result`, `pr-title`, and `pr-body`. Read-only artifacts include `runtime`, `instruction`, `prompt`, `effective-config`, `validation`, `events`, `errors`, `github-updates`, `pr-state`, `pr-checks`, and `pr-check-log`. The terminal close is retained only for compatibility with older single-agent workflows.
+Writable artifacts are `plan`, `todo`, `task-tree`, `review-result`, `pr-title`, and `pr-body`. Read-only artifacts include `runtime`, `instruction`, `prompt`, `effective-config`, `validation`, `events`, `errors`, `github-updates`, `pr-state`, `pr-checks`, and `pr-check-log`. Role-orchestrated runs use planner, task, and review handoffs instead of terminal iteration close JSON.
 PR command artifacts `pr-state`, `pr-checks`, and `pr-check-log` are read-only to the agent and written by `loop pr`. `github-updates` is written by the CLI when new GitHub Issue, PR, or comment diffs are observed at an iteration boundary or sleep wake cycle.
 
 `plan` and `todo` use dedicated namespaces instead of generic bulk writes. `loop iteration plan template` prints the CLI-owned plan template, `loop iteration plan write` stores the filled plan, and `loop iteration plan read` reads it. After the plan selects the implementation scope, `loop iteration todo list` prints numbered TODOs; `insert --type <type> <message>`, `edit <n> --type <type> <message>`, and `complete <n>` mutate one TODO item at a time by the 1-based index shown by `list`. TODO `type` and `message` use the same validation as `loop commit`. Generic `loop iteration write plan`, `append plan`, `write todo`, and `append todo` are rejected with guidance to these commands.

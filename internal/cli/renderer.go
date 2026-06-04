@@ -104,10 +104,10 @@ type rendererEvent struct {
 	Detail string
 }
 
-func newRunRenderer(g globals, runID, agentName, repoName, instructionFile, baseBranch, goal, logs string, maxIterations int, dryRun bool) *runRenderer {
+func newRunRenderer(g globals, runID, agentName, repoName, instructionFile, baseBranch, goal, logs string, maxIterations int) *runRenderer {
 	interactive := terminalControlSupported()
 	return &runRenderer{
-		enabled:      !g.JSON && !dryRun,
+		enabled:      !g.JSON,
 		interactive:  interactive,
 		writer:       os.Stderr,
 		started:      time.Now(),

@@ -129,7 +129,7 @@ Pending PR fields:
 
 ## Iteration Close
 
-The iteration close contract is retained for compatibility with older single-agent workflows. Role-orchestrated runs use role handoffs instead.
+Role-orchestrated runs use role handoffs instead of terminal iteration close JSON. The iteration close contract remains for command-level validation.
 
 Required fields:
 
@@ -369,7 +369,7 @@ Iteration record fields:
 | `branch_current` | string | Optional current tracked branch name. |
 | `branch_final` | string | Optional final branch name after integration. |
 | `stage` | string | Required iteration stage. |
-| `result_path` | string | Optional legacy result path. Current runs leave it empty because the close handoff is stored in `.loop/loop.db`. |
+| `result_path` | string | Optional result path. Current runs leave it empty because close handoffs are stored in `.loop/loop.db`. |
 | `summary_sentence` | string | Optional merge summary. |
 | `should_fully_stop` | boolean | Optional final stop decision from the iteration close. |
 

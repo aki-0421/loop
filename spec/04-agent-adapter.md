@@ -74,9 +74,9 @@ The built-in process adapter recognizes these provider streams without reading p
 
 Role-orchestrated agents write planner, task, and review handoffs with `loop handoff`. The CLI validates and stores those handoffs in `.loop/loop.db`, then copies audit JSON into the durable iteration directory. Agents do not commit, rename branches, create PRs, merge PRs, or close iterations in the role-orchestrated workflow.
 
-## Legacy Result Handoff Contract
+## Terminal Close Handoff Contract
 
-Older single-agent workflows can still write the master-DB terminal handoff with `loop iteration close --merge` or `loop iteration close --skip-merge`. The CLI validates it against the iteration close contract in `09-json-contracts.md`.
+Role-orchestrated workflows write planner, task, and review handoffs through `loop handoff`. The terminal iteration close contract remains a command-level validation contract, but `loop run` does not use it.
 
 After a valid terminal handoff is observed, the CLI records the handoff but does not signal or cancel the agent. It waits for the agent process to finish by itself and continues draining stdout/stderr until that natural exit, so final provider events, especially usage events, can be recorded. Force cancellations such as a second Ctrl+C still terminate the process through the normal cancellation path.
 

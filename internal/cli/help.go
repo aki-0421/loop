@@ -488,14 +488,13 @@ func allHelpCommands() []helpCommand {
 				{Name: "--from-iteration <n>", Description: "accepted for older scripts with --resume; currently ignored"},
 				{Name: "--keep-branches <mode>", Description: "accepted for older scripts; cleanup is automatic"},
 				{Name: "--keep-worktrees <mode>", Description: "accepted for older scripts; cleanup is automatic"},
-				{Name: "--dry-run", Description: "build prompt and state files without launching the agent", Default: "false"},
 			},
 		},
 		{
 			Path:        []string{"commit"},
 			Usage:       "loop commit --type <type> <message>",
 			Summary:     "Create a validated iteration commit",
-			Description: commitContractHelpText() + "\n\nCompatibility command for older single-agent workflows. Role-orchestrated runs create commits in the CLI from task-tree metadata.",
+			Description: commitContractHelpText() + "\n\nAgent-facing utility command. Role-orchestrated runs create task commits through task-local TODO completion.",
 			Flags: []helpFlag{
 				{Name: "--type <type>", Description: "commit type: F, T, R, D, S, V, or C"},
 			},
@@ -684,7 +683,7 @@ func allHelpCommands() []helpCommand {
 			Path:        []string{"iteration", "plan"},
 			Usage:       "loop iteration plan <template|read|write> ...",
 			Summary:     "Manage the iteration plan artifact",
-			Description: "Planning gate commands retained for older single-agent workflows. Print the CLI-owned template, fill one implementation scope, and write the plan before repository edits. Keep TODOs in `loop iteration todo`.",
+			Description: "Planning utility commands. Print the CLI-owned template, fill one implementation scope, and write the plan before repository edits. Keep TODOs in `loop iteration todo`.",
 			AgentOnly:   true,
 		},
 		{
@@ -760,7 +759,7 @@ func allHelpCommands() []helpCommand {
 			Path:        []string{"iteration", "close"},
 			Usage:       "loop iteration close (--merge|--skip-merge) [--iteration-dir <dir>|--run <run-id> --iteration <n>] --should-stop <bool> --goal-evaluation <text> [flags]",
 			Summary:     "Close the iteration with merge or skip-merge",
-			Description: "Compatibility close command for older single-agent workflows. Role-orchestrated runs use planner, task, and review handoffs instead of terminal iteration close JSON.",
+			Description: "Write validated terminal iteration close JSON. Role-orchestrated runs use planner, task, and review handoffs instead.",
 			Flags: append(iterationLocatorFlags(),
 				helpFlag{Name: "--merge", Description: "integrate this iteration; requires renamed branch, clean tree, commits, validation, and merged PR in PR mode", Default: "false"},
 				helpFlag{Name: "--skip-merge", Description: "do not incorporate this branch", Default: "false"},

@@ -35,7 +35,7 @@ Some artifacts only exist when that phase happened. `errors.log`, PR artifacts, 
 
 ## Event Streams
 
-- Iteration `agent-events.jsonl` records planner, reviewer, single-agent, and CLI lifecycle events.
+- Iteration `agent-events.jsonl` records planner, coding, review, and CLI lifecycle events.
 - Task `tasks/<sequence>/agent-events.jsonl` records only that coding agent's events.
 - Required event fields are `type` and `ts`. Common metadata includes `iteration_id`, `agent_type`, `task_id`, and `task_dir`.
 - Important event types:

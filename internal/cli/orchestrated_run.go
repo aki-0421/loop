@@ -77,8 +77,6 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 	fromIteration := fs.Int("from-iteration", 0, "accepted for older scripts; currently ignored")
 	keepBranches := fs.String("keep-branches", "", "accepted for older scripts; cleanup is automatic")
 	keepWorktrees := fs.String("keep-worktrees", "", "accepted for older scripts; cleanup is automatic")
-	dryRun := fs.Bool("dry-run", false, "build prompt and state files only")
-	legacy := fs.Bool("legacy", false, "run the pre-orchestration single-agent workflow")
 	if err := fs.Parse(args); err != nil {
 		return codedError{2, err}
 	}
@@ -86,9 +84,6 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 	_ = fromIteration
 	_ = keepBranches
 	_ = keepWorktrees
-	if *legacy {
-		return commandRunLegacy(ctx, g, stripBoolFlag(args, "legacy"))
-	}
 	if fs.NArg() != 1 {
 		return codedError{2, fmt.Errorf("usage: loop run <instruction.md> [flags]")}
 	}
@@ -132,9 +127,6 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 	if err != nil {
 		return codedError{3, err}
 	}
-	if shouldUseLegacyRunForAdapter(cfg) {
-		return commandRunLegacy(ctx, g, args)
-	}
 
 	runner := gitx.Runner{Dir: root}
 	startBranch, err := runner.CurrentBranch(ctx)
@@ -145,14 +137,12 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 		cfg.Git.BaseBranch = startBranch
 	}
 	mainBranch, _ := runner.MainBranch(ctx)
-	if !*dryRun {
-		clean, err := runner.CheckClean(ctx, gitx.CleanOptions{IgnoreRuntime: true})
-		if err != nil {
-			return codedError{1, err}
-		}
-		if !clean.Clean {
-			return codedError{1, fmt.Errorf("working tree is dirty: %s", dirtyList(clean.Dirty))}
-		}
+	clean, err := runner.CheckClean(ctx, gitx.CleanOptions{IgnoreRuntime: true})
+	if err != nil {
+		return codedError{1, err}
+	}
+	if !clean.Clean {
+		return codedError{1, fmt.Errorf("working tree is dirty: %s", dirtyList(clean.Dirty))}
 	}
 	if cfg.Skills.SyncOnRun {
 		if _, err := skills.Sync(root, cfg); err != nil {
@@ -167,7 +157,7 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 	runDir := filepath.Join(root, cfg.Logs.Dir, runID)
 	statePath := filepath.Join(runDir, "run-state.json")
 	state := runstate.New(runID, *goal, cfg.Git.BaseBranch, cfg.Agent.Default)
-	renderer := newRunRenderer(g, runID, cfg.Agent.Default, filepath.Base(root), "", cfg.Git.BaseBranch, *goal, rel(root, runDir), cfg.Run.MaxIterations, *dryRun)
+	renderer := newRunRenderer(g, runID, cfg.Agent.Default, filepath.Base(root), "", cfg.Git.BaseBranch, *goal, rel(root, runDir), cfg.Run.MaxIterations)
 	renderer.Start(ctx)
 	registerRunGracefulShutdownCallback(ctx, renderer.GracefulShutdownRequested)
 	defer func() { renderer.Stop(state.Stage, "") }()
@@ -212,7 +202,6 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 			StatePath:       statePath,
 			State:           &state,
 			Renderer:        renderer,
-			DryRun:          *dryRun,
 		})
 		if err != nil {
 			state.Stage = runstate.StageFailed
@@ -220,9 +209,6 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 			return err
 		}
 		last = result
-		if *dryRun {
-			return printResult(g, map[string]any{"run_id": runID, "prompt": filepath.Join(rel(root, runDir), "iterations", "0001", "prompt.md")}, fmt.Sprintf("Dry run created prompt: %s\n", filepath.Join(rel(root, runDir), "iterations", "0001", "prompt.md")))
-		}
 		if result.Integrated {
 			mergedCount++
 			renderer.Merged(mergedCount)
@@ -265,7 +251,6 @@ type orchestrationRequest struct {
 	StatePath       string
 	State           *runstate.State
 	Renderer        *runRenderer
-	DryRun          bool
 }
 
 func resumeRun(ctx context.Context, g globals, runID string, fromIteration int) error {
@@ -315,7 +300,7 @@ func resumeRun(ctx context.Context, g globals, runID string, fromIteration int) 
 	if _, err := os.Stat(instructionPath); err != nil {
 		return codedError{1, fmt.Errorf("resume instruction artifact: %w", err)}
 	}
-	renderer := newRunRenderer(g, runID, cfg.Agent.Default, filepath.Base(root), "", cfg.Git.BaseBranch, state.Goal, rel(root, runDir), cfg.Run.MaxIterations, false)
+	renderer := newRunRenderer(g, runID, cfg.Agent.Default, filepath.Base(root), "", cfg.Git.BaseBranch, state.Goal, rel(root, runDir), cfg.Run.MaxIterations)
 	renderer.Start(ctx)
 	registerRunGracefulShutdownCallback(ctx, renderer.GracefulShutdownRequested)
 	defer func() { renderer.Stop(state.Stage, "") }()
@@ -555,13 +540,9 @@ func runOrchestratedIteration(ctx context.Context, req orchestrationRequest) (re
 	rootRunner := gitx.Runner{Dir: req.Root}
 	iterationID := runstate.IterationID(req.IterationNumber)
 	iterDir := filepath.Join(req.RunDir, "iterations", iterationID)
-	activeDir := iterDir
-	if !req.DryRun {
-		var err error
-		activeDir, err = createIterationTempDir(req.RunID, iterationID)
-		if err != nil {
-			return iterationWorkflowResult{}, codedError{1, err}
-		}
+	activeDir, err := createIterationTempDir(req.RunID, iterationID)
+	if err != nil {
+		return iterationWorkflowResult{}, codedError{1, err}
 	}
 	initialBranch := gitx.InitialBranchName(req.IterationNumber)
 	iterationWorktree := filepath.Join(req.Root, ".loop", "worktrees", req.RunID, iterationID, "iteration")
@@ -581,20 +562,18 @@ func runOrchestratedIteration(ctx context.Context, req orchestrationRequest) (re
 	paths.WorkDir = req.Root
 	paths.PendingPRs = append([]runstate.PendingPullRequest(nil), req.State.PendingPullRequests...)
 	cleanupRegistered := false
-	if !req.DryRun {
-		defer func() {
-			if retErr != nil && !cleanupRegistered {
-				_ = runstate.AppendEvent(paths.Events, runstate.Event{"type": "run.error_cleanup.started", "branch": "", "worktree": ""})
-				issues := cleanupDisposableIterationFiles(activeDir, paths.Events)
-				event := runstate.Event{"type": "run.error_cleanup.completed", "branch": "", "worktree": ""}
-				if len(issues) > 0 {
-					appendErrorLog(paths.Errors, "iteration file cleanup failed: "+strings.Join(issues, "; "))
-					event["issues"] = issues
-				}
-				_ = runstate.AppendEvent(paths.Events, event)
+	defer func() {
+		if retErr != nil && !cleanupRegistered {
+			_ = runstate.AppendEvent(paths.Events, runstate.Event{"type": "run.error_cleanup.started", "branch": "", "worktree": ""})
+			issues := cleanupDisposableIterationFiles(activeDir, paths.Events)
+			event := runstate.Event{"type": "run.error_cleanup.completed", "branch": "", "worktree": ""}
+			if len(issues) > 0 {
+				appendErrorLog(paths.Errors, "iteration file cleanup failed: "+strings.Join(issues, "; "))
+				event["issues"] = issues
 			}
-		}()
-	}
+			_ = runstate.AppendEvent(paths.Events, event)
+		}
+	}()
 	req.Renderer.Iteration(iterationID)
 	req.State.CurrentIteration = iterationID
 	req.State.Stage = runstate.StagePlanning
@@ -613,15 +592,6 @@ func runOrchestratedIteration(ctx context.Context, req orchestrationRequest) (re
 	}
 	if err := prompt.WritePrompt(paths.Prompt, instructionContent); err != nil {
 		return iterationWorkflowResult{}, codedError{1, err}
-	}
-	if req.DryRun {
-		paths.WorkDir = req.Root
-		if err := writeRuntimeArtifact(paths); err != nil {
-			return iterationWorkflowResult{}, codedError{1, err}
-		}
-	}
-	if req.DryRun {
-		return iterationWorkflowResult{Summary: "dry run"}, nil
 	}
 	if err := writeRuntimeArtifact(paths); err != nil {
 		return iterationWorkflowResult{}, codedError{1, err}
@@ -1965,29 +1935,4 @@ func firstNonNil(errs ...error) error {
 		}
 	}
 	return nil
-}
-
-func shouldUseLegacyRunForAdapter(cfg config.Config) bool {
-	adapter, ok := cfg.Adapter(cfg.Agent.Default)
-	if !ok {
-		return false
-	}
-	for key, value := range adapter.Env {
-		if strings.HasPrefix(key, "LOOP_TEST_") && strings.TrimSpace(value) != "" {
-			return true
-		}
-	}
-	return false
-}
-
-func stripBoolFlag(args []string, name string) []string {
-	out := make([]string, 0, len(args))
-	long := "--" + name
-	for _, arg := range args {
-		if arg == long || strings.HasPrefix(arg, long+"=") {
-			continue
-		}
-		out = append(out, arg)
-	}
-	return out
 }
