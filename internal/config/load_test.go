@@ -47,6 +47,12 @@ run:
 	if cfg.Run.MaxIterations != 11 {
 		t.Fatalf("flag override max iterations = %d", cfg.Run.MaxIterations)
 	}
+	if cfg.Run.AgentIdleTimeoutSeconds != 600 {
+		t.Fatalf("default agent idle timeout = %d, want 600", cfg.Run.AgentIdleTimeoutSeconds)
+	}
+	if cfg.Run.MaxRoleAgentRestarts != 1 {
+		t.Fatalf("default role agent restarts = %d, want 1", cfg.Run.MaxRoleAgentRestarts)
+	}
 	if cfg.Git.BaseBranch != "release" {
 		t.Fatalf("base branch env override = %q", cfg.Git.BaseBranch)
 	}

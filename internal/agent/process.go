@@ -23,6 +23,23 @@ const (
 
 const processCancelWaitDelay = 10 * time.Second
 
+type IdleTimeoutError struct {
+	Timeout      time.Duration
+	LastActivity time.Time
+}
+
+func (e *IdleTimeoutError) Error() string {
+	if e == nil {
+		return "agent idle timeout"
+	}
+	return fmt.Sprintf("agent idle timeout after %s without activity", e.Timeout.Round(time.Millisecond))
+}
+
+func IsIdleTimeout(err error) bool {
+	var idle *IdleTimeoutError
+	return errors.As(err, &idle)
+}
+
 type ProcessAdapter struct {
 	AdapterName string
 	Command     string
@@ -65,13 +82,17 @@ func (a ProcessAdapter) Run(ctx context.Context, req RunRequest) (*RunResult, er
 		ctx, cancel = context.WithTimeout(ctx, req.Timeout)
 		defer cancel()
 	}
+	ctx, cancelCause := context.WithCancelCause(ctx)
+	defer cancelCause(nil)
 	if err := os.MkdirAll(req.IterationDir, 0o755); err != nil {
 		return nil, err
 	}
 	eventLog := runstate.EventLog{Path: req.EventLogPath}
 	eventMetadata := copyEventMetadata(req.EventMetadata)
 	started := time.Now().UTC()
+	activity := newActivityTracker(started)
 	appendAgentEvent(eventLog, req.OnEvent, startedEvent(prepared.Command, prepared.Args, req.PromptText), eventMetadata)
+	activity.Mark(started)
 
 	cmd := exec.CommandContext(ctx, prepared.Command, prepared.Args...)
 	cmd.Dir = req.WorkDir
@@ -80,15 +101,19 @@ func (a ProcessAdapter) Run(ctx context.Context, req RunRequest) (*RunResult, er
 		cmd.Stdin = strings.NewReader(req.PromptText)
 	}
 	configureCommandCancel(cmd)
-	stdoutCapture := newStreamCapture(eventLog, "stdout", req.OnEvent, eventMetadata)
-	stderrCapture := newStreamCapture(eventLog, "stderr", req.OnEvent, eventMetadata)
+	stdoutCapture := newStreamCapture(eventLog, "stdout", req.OnEvent, eventMetadata, activity.Mark)
+	stderrCapture := newStreamCapture(eventLog, "stderr", req.OnEvent, eventMetadata, activity.Mark)
 	cmd.Stdout = stdoutCapture
 	cmd.Stderr = stderrCapture
 
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
+	stopIdleWatch := startIdleWatch(ctx, cancelCause, eventLog, req.OnEvent, eventMetadata, activity, req.IdleTimeout, req.ErrorsLogPath)
 	waitErr := cmd.Wait()
+	if stopIdleWatch != nil {
+		stopIdleWatch()
+	}
 	stdoutCapture.Flush()
 	stderrCapture.Flush()
 	for _, err := range []error{stdoutCapture.Err(), stderrCapture.Err()} {
@@ -103,8 +128,8 @@ func (a ProcessAdapter) Run(ctx context.Context, req RunRequest) (*RunResult, er
 		if exitErr, ok := waitErr.(*exec.ExitError); ok {
 			exitCode = exitErr.ExitCode()
 		}
-		if ctx.Err() == context.DeadlineExceeded {
-			waitErr = ctx.Err()
+		if cause := context.Cause(ctx); cause != nil {
+			waitErr = cause
 		}
 	}
 	finished := time.Now().UTC()
@@ -142,17 +167,19 @@ type streamCapture struct {
 	stream               string
 	onEvent              func(runstate.Event)
 	eventMetadata        map[string]any
+	onActivity           func(time.Time)
 	pending              []byte
 	err                  error
 	pendingCommandStarts map[string]time.Time
 }
 
-func newStreamCapture(eventLog runstate.EventLog, stream string, onEvent func(runstate.Event), eventMetadata map[string]any) *streamCapture {
+func newStreamCapture(eventLog runstate.EventLog, stream string, onEvent func(runstate.Event), eventMetadata map[string]any, onActivity func(time.Time)) *streamCapture {
 	return &streamCapture{
 		eventLog:             eventLog,
 		stream:               stream,
 		onEvent:              onEvent,
 		eventMetadata:        copyEventMetadata(eventMetadata),
+		onActivity:           onActivity,
 		pendingCommandStarts: map[string]time.Time{},
 	}
 }
@@ -204,6 +231,7 @@ func (c *streamCapture) emit(text string) {
 			"text":   summary.ScreenText,
 			"ts":     now.Format(time.RFC3339),
 		}, c.eventMetadata))
+		c.markActivity(now)
 	}
 	for _, event := range summary.AuditEvents {
 		out, keep := c.rewriteCommandLifecycle(event, now)
@@ -223,6 +251,13 @@ func (c *streamCapture) emit(text string) {
 		if c.onEvent != nil {
 			c.onEvent(event)
 		}
+		c.markActivity(now)
+	}
+}
+
+func (c *streamCapture) markActivity(t time.Time) {
+	if c.onActivity != nil {
+		c.onActivity(t)
 	}
 }
 
@@ -239,7 +274,18 @@ func (c *streamCapture) rewriteCommandLifecycle(event runstate.Event, now time.T
 	switch phase {
 	case "started":
 		c.pendingCommandStarts[key] = now
-		return nil, false
+		out := runstate.Event{
+			"type":    "agent.command.started",
+			"stream":  c.stream,
+			"command": strings.TrimSpace(fmt.Sprint(event["command"])),
+		}
+		if args := eventArgsSlice(event["args"]); len(args) > 0 {
+			out["args"] = args
+		}
+		if status := strings.TrimSpace(fmt.Sprint(event["status"])); status != "" && status != "<nil>" {
+			out["status"] = status
+		}
+		return out, true
 	case "completed":
 		startedAt, ok := c.pendingCommandStarts[key]
 		if ok {
@@ -269,6 +315,89 @@ func (c *streamCapture) rewriteCommandLifecycle(event runstate.Event, now time.T
 		return out, true
 	default:
 		return nil, false
+	}
+}
+
+type activityTracker struct {
+	mu   sync.Mutex
+	last time.Time
+}
+
+func newActivityTracker(initial time.Time) *activityTracker {
+	return &activityTracker{last: initial}
+}
+
+func (t *activityTracker) Mark(at time.Time) {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	if at.After(t.last) {
+		t.last = at
+	}
+	t.mu.Unlock()
+}
+
+func (t *activityTracker) Last() time.Time {
+	if t == nil {
+		return time.Time{}
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.last
+}
+
+func startIdleWatch(ctx context.Context, cancel context.CancelCauseFunc, eventLog runstate.EventLog, onEvent func(runstate.Event), metadata map[string]any, activity *activityTracker, timeout time.Duration, errorsPath string) func() {
+	if timeout <= 0 {
+		return nil
+	}
+	done := make(chan struct{})
+	tick := timeout / 10
+	if tick < 250*time.Millisecond {
+		tick = 250 * time.Millisecond
+	}
+	if tick > 30*time.Second {
+		tick = 30 * time.Second
+	}
+	go func() {
+		timer := time.NewTimer(tick)
+		defer timer.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-done:
+				return
+			case <-timer.C:
+				last := activity.Last()
+				idleFor := time.Since(last)
+				if idleFor >= timeout {
+					err := &IdleTimeoutError{Timeout: timeout, LastActivity: last}
+					event := runstate.Event{
+						"type":             "agent.stalled",
+						"idle_timeout_ms":  timeout.Milliseconds(),
+						"idle_for_ms":      idleFor.Milliseconds(),
+						"last_activity_at": last.Format(time.RFC3339),
+						"error":            err.Error(),
+					}
+					appendAgentEvent(eventLog, onEvent, event, metadata)
+					appendErrorLog(errorsPath, fmt.Sprintf("%s; last activity at %s", err.Error(), last.Format(time.RFC3339)))
+					cancel(err)
+					return
+				}
+				next := timeout - idleFor
+				if next <= 0 {
+					next = tick
+				}
+				if next > tick {
+					next = tick
+				}
+				timer.Reset(next)
+			}
+		}
+	}()
+	return func() {
+		close(done)
 	}
 }
 

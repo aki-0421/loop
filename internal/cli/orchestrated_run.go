@@ -268,6 +268,288 @@ type orchestrationRequest struct {
 	DryRun          bool
 }
 
+func resumeRun(ctx context.Context, g globals, runID string, fromIteration int) error {
+	root, err := gitx.RepoRoot(ctx, ".")
+	if err != nil {
+		return codedError{1, fmt.Errorf("not inside a git repository: %w", err)}
+	}
+	baseCfg, err := config.Load(config.LoadOptions{CWD: root, ConfigPath: g.ConfigPath, Overrides: config.Overrides{NoColor: g.NoColor}})
+	if err != nil {
+		return codedError{3, err}
+	}
+	runDir := filepath.Join(root, baseCfg.Logs.Dir, runID)
+	statePath := filepath.Join(runDir, "run-state.json")
+	state, err := runstate.Read(statePath)
+	if err != nil {
+		return codedError{1, err}
+	}
+	if state.Stage == runstate.StageCompleted {
+		return commandStatus(ctx, g, []string{runID})
+	}
+	iterationID := state.CurrentIteration
+	if fromIteration > 0 {
+		iterationID = runstate.IterationID(fromIteration)
+	}
+	if strings.TrimSpace(iterationID) == "" {
+		return codedError{2, errors.New("run has no current iteration to resume")}
+	}
+	if iterationID != state.CurrentIteration {
+		return codedError{2, fmt.Errorf("resume from iteration %s is not supported for run currently at %s", iterationID, state.CurrentIteration)}
+	}
+	iterationNumber, err := parseIterationNumber(iterationID)
+	if err != nil {
+		return codedError{2, err}
+	}
+	iterDir := filepath.Join(runDir, "iterations", iterationID)
+	cfg := baseCfg
+	if _, err := os.Stat(filepath.Join(iterDir, "effective-config.yaml")); err == nil {
+		cfg, err = config.Load(config.LoadOptions{CWD: root, ConfigPath: filepath.Join(iterDir, "effective-config.yaml"), Env: []string{}, Overrides: config.Overrides{NoColor: g.NoColor}})
+		if err != nil {
+			return codedError{3, err}
+		}
+	}
+	if strings.TrimSpace(cfg.Git.BaseBranch) == "" {
+		cfg.Git.BaseBranch = state.BaseBranch
+	}
+	instructionPath := filepath.Join(iterDir, "prompt.md")
+	if _, err := os.Stat(instructionPath); err != nil {
+		return codedError{1, fmt.Errorf("resume instruction artifact: %w", err)}
+	}
+	renderer := newRunRenderer(g, runID, cfg.Agent.Default, filepath.Base(root), "", cfg.Git.BaseBranch, state.Goal, rel(root, runDir), cfg.Run.MaxIterations, false)
+	renderer.Start(ctx)
+	registerRunGracefulShutdownCallback(ctx, renderer.GracefulShutdownRequested)
+	defer func() { renderer.Stop(state.Stage, "") }()
+
+	result, err := resumeOrchestratedIteration(ctx, orchestrationRequest{
+		Globals:         g,
+		Config:          cfg,
+		Root:            root,
+		InstructionPath: instructionPath,
+		RunID:           runID,
+		IterationNumber: iterationNumber,
+		Goal:            state.Goal,
+		RunDir:          runDir,
+		StatePath:       statePath,
+		State:           &state,
+		Renderer:        renderer,
+	})
+	if err != nil {
+		state.Stage = runstate.StageFailed
+		_ = runstate.Write(statePath, state)
+		return err
+	}
+	if result.Integrated {
+		renderer.Merged(1)
+	}
+	if runGracefulShutdownRequested(ctx) {
+		state.Stage = runstate.StageCancelled
+		_ = runstate.Write(statePath, state)
+		return codedError{interruptExitCode, nil}
+	}
+	if result.GoalComplete || state.Stage != runstate.StageCompleted {
+		state.Stage = runstate.StageCompleted
+		_ = runstate.Write(statePath, state)
+	}
+	return printResult(g, map[string]any{"run_id": runID, "status": state.Stage, "summary": result.Summary, "logs": rel(root, runDir)}, fmt.Sprintf("Run: %s\nStatus: %s\nSummary: %s\nLogs: %s\n", runID, state.Stage, result.Summary, rel(root, runDir)))
+}
+
+func parseIterationNumber(iterationID string) (int, error) {
+	n, err := strconv.Atoi(strings.TrimLeft(strings.TrimSpace(iterationID), "0"))
+	if err != nil {
+		return 0, fmt.Errorf("invalid iteration id %q", iterationID)
+	}
+	if n <= 0 {
+		return 0, fmt.Errorf("invalid iteration id %q", iterationID)
+	}
+	return n, nil
+}
+
+func resumeOrchestratedIteration(ctx context.Context, req orchestrationRequest) (result iterationWorkflowResult, retErr error) {
+	cfg := req.Config
+	rootRunner := gitx.Runner{Dir: req.Root}
+	iterationID := runstate.IterationID(req.IterationNumber)
+	iterDir := filepath.Join(req.RunDir, "iterations", iterationID)
+	activeDir, err := createIterationTempDir(req.RunID, iterationID+"-resume")
+	if err != nil {
+		return iterationWorkflowResult{}, codedError{1, err}
+	}
+	record := iterationRecordByID(req.State, iterationID)
+	initialBranch := firstNonEmpty(record.BranchInitial, gitx.InitialBranchName(req.IterationNumber))
+	currentBranch := firstNonEmpty(record.BranchCurrent, record.BranchFinal, initialBranch)
+	iterationWorktree := filepath.Join(req.Root, ".loop", "worktrees", req.RunID, iterationID, "iteration")
+	paths := promptPathsWithActive(iterDir, activeDir)
+	paths.Goal = req.Goal
+	paths.Language = cfg.Language.Default
+	paths.RunID = req.RunID
+	paths.IterationID = iterationID
+	paths.BaseBranch = cfg.Git.BaseBranch
+	paths.InitialBranch = initialBranch
+	paths.IterationBranch = currentBranch
+	paths.CurrentBranch = currentBranch
+	paths.IntegrationMode = cfg.Git.Integration.Mode
+	paths.PRReviewMode = cfg.Git.Integration.PR.ReviewMode
+	paths.PullRequestMode = cfg.Git.Integration.Mode == "pr"
+	paths.RoleOrchestrated = true
+	paths.WorkDir = iterationWorktree
+	paths.IterationWorktree = iterationWorktree
+	paths.PendingPRs = append([]runstate.PendingPullRequest(nil), req.State.PendingPullRequests...)
+	cleanup := &iterationCleanup{
+		RootRunner:        rootRunner,
+		BaseBranch:        cfg.Git.BaseBranch,
+		Branch:            currentBranch,
+		WorktreePath:      iterationWorktree,
+		WorkDir:           iterationWorktree,
+		TaskWorktreesRoot: filepath.Join(req.Root, ".loop", "worktrees", req.RunID, iterationID, "tasks"),
+		TaskBranchPrefix:  "task/" + iterationID + "-",
+		LockDir:           filepath.Join(req.Root, ".loop", "locks", sanitizeTempPart(req.RunID)+"-"+sanitizeTempPart(iterationID)+"-task-merge.lock"),
+		ActiveDir:         activeDir,
+		Active:            true,
+		EventLogPath:      paths.Events,
+		OnEvent:           req.Renderer.AgentEvent,
+	}
+	defer cleanup.OnExit(ctx, req.StatePath, req.State, &retErr)
+	req.Renderer.Iteration(iterationID)
+	req.Renderer.Branch(currentBranch)
+	if err := writeRuntimeArtifact(paths); err != nil {
+		return iterationWorkflowResult{}, codedError{1, err}
+	}
+	if _, err := os.Stat(iterationWorktree); err != nil {
+		return iterationWorkflowResult{}, codedError{1, fmt.Errorf("resume iteration worktree: %w", err)}
+	}
+	resumeStage := req.State.Stage
+	tree, err := readTaskTreeAudit(iterDir)
+	if err != nil {
+		req.State.Stage = runstate.StagePlanning
+		_ = runstate.Write(req.StatePath, *req.State)
+		req.Renderer.Stage(runstate.StagePlanning, "planner agent running")
+		tree, err = runPlannerRole(ctx, cfg, iterationWorktree, paths, req.Renderer.AgentEvent)
+		if err != nil {
+			return iterationWorkflowResult{}, codedError{4, err}
+		}
+		if err := writeTaskTreeAudit(iterDir, tree); err != nil {
+			return iterationWorkflowResult{}, codedError{1, err}
+		}
+	}
+	taskDirs := newTaskDirectoryAllocator(iterDir)
+	currentTaskDirs, err := taskDirs.Ensure(tree.Tasks)
+	if err != nil {
+		return iterationWorkflowResult{}, codedError{1, err}
+	}
+	req.Renderer.TasksPlanned(tree.Tasks)
+	completedTaskResults, allCommits, pendingTasks := loadResumableTaskState(paths, tree.Tasks, currentTaskDirs)
+	if len(pendingTasks) > 0 {
+		req.State.Stage = runstate.StageCoding
+		_ = runstate.Write(req.StatePath, *req.State)
+		req.Renderer.Stage(runstate.StageCoding, "coding tasks")
+		pendingTaskDirs, err := taskDirs.Ensure(pendingTasks)
+		if err != nil {
+			return iterationWorkflowResult{}, codedError{1, err}
+		}
+		taskSet, err := executeTaskSet(ctx, taskSetRequest{
+			Config:            cfg,
+			Root:              req.Root,
+			IterationWorktree: iterationWorktree,
+			IterationBranch:   currentBranch,
+			IterationDir:      iterDir,
+			Paths:             paths,
+			RunID:             req.RunID,
+			IterationID:       iterationID,
+			Tasks:             filterCompletedDependencies(pendingTasks),
+			TaskDirs:          pendingTaskDirs,
+			Renderer:          req.Renderer,
+		})
+		if err != nil {
+			return iterationWorkflowResult{}, codedError{4, err}
+		}
+		if taskSet.Discard != nil {
+			return iterationWorkflowResult{}, codedError{4, fmt.Errorf("resume encountered discarded task %s: %s", taskSet.Discard.Task.ID, taskSet.Discard.Reason)}
+		}
+		completedTaskResults = append(completedTaskResults, taskSet.Results...)
+		allCommits = append(allCommits, taskSet.Commits...)
+	}
+	req.State.Stage = runstate.StageValidating
+	_ = runstate.Write(req.StatePath, *req.State)
+	req.Renderer.Stage(runstate.StageValidating, "running validation")
+	validationResults, validationErr := runConfiguredValidation(ctx, iterationWorktree, paths, cfg.Validation.Commands)
+	if validationErr != nil || validation.StatusFromResults(validationResults) == "failed" {
+		return iterationWorkflowResult{}, codedError{5, firstNonNil(validationErr, errors.New("required validation failed"))}
+	}
+	review, reviewErr := readReviewAudit(iterDir)
+	if reviewErr != nil || resumeStage == runstate.StageReviewing {
+		req.State.Stage = runstate.StageReviewing
+		_ = runstate.Write(req.StatePath, *req.State)
+		req.Renderer.Stage(runstate.StageReviewing, "review agent running")
+		review, err = runReviewRole(ctx, cfg, iterationWorktree, paths, tree, completedTaskResults, validationResults, req.Renderer.AgentEvent)
+		if err != nil {
+			return iterationWorkflowResult{}, codedError{4, err}
+		}
+		if err := writeReviewAudit(iterDir, review); err != nil {
+			return iterationWorkflowResult{}, codedError{1, err}
+		}
+	}
+	if err := refreshTrackedBranch(ctx, iterationWorktree, &paths); err != nil {
+		return iterationWorkflowResult{}, codedError{4, err}
+	}
+	updateOrchestratedBranchState(req, cleanup, paths.CurrentBranch)
+	return finalizeOrchestratedIteration(ctx, req, cleanup, paths, tree, review, allCommits, iterationWorktree, initialBranch)
+}
+
+func iterationRecordByID(state *runstate.State, iterationID string) runstate.IterationRecord {
+	if state == nil {
+		return runstate.IterationRecord{}
+	}
+	for _, record := range state.Iterations {
+		if record.IterationID == iterationID {
+			return record
+		}
+	}
+	return runstate.IterationRecord{}
+}
+
+func loadResumableTaskState(paths pathSet, tasks []workflow.Task, taskDirs map[string]string) ([]workflow.TaskResult, []gitx.Commit, []workflow.Task) {
+	var results []workflow.TaskResult
+	var commits []gitx.Commit
+	var pending []workflow.Task
+	for _, task := range tasks {
+		taskPaths := paths
+		taskPaths.TaskID = task.ID
+		taskPaths.TaskDir = taskDirs[task.ID]
+		result, taskCommits, err := readCompletedCodingRoleResult(taskPaths, task.ID, "", 0)
+		if err == nil && result.Status == "completed" {
+			results = append(results, result)
+			commits = append(commits, taskCommits...)
+			continue
+		}
+		pending = append(pending, task)
+	}
+	return results, commits, pending
+}
+
+func filterCompletedDependencies(tasks []workflow.Task) []workflow.Task {
+	pending := map[string]bool{}
+	for _, task := range tasks {
+		pending[task.ID] = true
+	}
+	out := make([]workflow.Task, 0, len(tasks))
+	for _, task := range tasks {
+		copyTask := task
+		copyTask.DependsOn = filterTaskIDs(copyTask.DependsOn, pending)
+		copyTask.ConflictsWith = filterTaskIDs(copyTask.ConflictsWith, pending)
+		out = append(out, copyTask)
+	}
+	return out
+}
+
+func filterTaskIDs(ids []string, keep map[string]bool) []string {
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if keep[id] {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
 func runOrchestratedIteration(ctx context.Context, req orchestrationRequest) (result iterationWorkflowResult, retErr error) {
 	cfg := req.Config
 	rootRunner := gitx.Runner{Dir: req.Root}
@@ -516,6 +798,14 @@ func runOrchestratedIteration(ctx context.Context, req orchestrationRequest) (re
 		}
 	}
 
+	return finalizeOrchestratedIteration(ctx, req, cleanup, paths, tree, review, allCommits, iterationWorktree, initialBranch)
+}
+
+func finalizeOrchestratedIteration(ctx context.Context, req orchestrationRequest, cleanup *iterationCleanup, paths pathSet, tree workflow.TaskTree, review workflow.ReviewResult, allCommits []gitx.Commit, iterationWorktree, initialBranch string) (iterationWorkflowResult, error) {
+	cfg := req.Config
+	rootRunner := gitx.Runner{Dir: req.Root}
+	iterDir := paths.IterationDir
+	iterationID := paths.IterationID
 	if len(allCommits) == 0 {
 		return iterationWorkflowResult{}, codedError{4, errors.New("iteration tasks did not produce commits")}
 	}
@@ -1195,22 +1485,62 @@ func clearTaskAttemptState(paths pathSet) error {
 
 func runPlannerRole(ctx context.Context, cfg config.Config, workDir string, paths pathSet, onEvent func(runstate.Event)) (workflow.TaskTree, error) {
 	promptText := buildRolePrompt("planner", paths, workflow.Task{}, nil, nil, nil)
-	if err := runRoleAgent(ctx, cfg, workDir, paths, "planner", "", promptText, onEvent); err != nil {
-		return workflow.TaskTree{}, err
+	attempts := roleAgentAttempts(cfg)
+	var lastErr error
+	var lastDecodeErr error
+	for attempt := 1; attempt <= attempts; attempt++ {
+		if attempt > 1 {
+			appendRoleRestartEvent(paths, "planner", "", attempt, lastErr, onEvent)
+		}
+		err := runRoleAgentOnce(ctx, cfg, workDir, paths, "planner", "", promptText, onEvent)
+		handoff, decodeErr := artifactdb.ReadRoleHandoff(artifactdb.GlobalDBPathForIteration(paths.IterationDir), paths.RunID, paths.IterationID, "task-tree", "")
+		if decodeErr == nil {
+			tree, treeErr := workflow.DecodeTaskTree([]byte(handoff.Payload))
+			if treeErr == nil {
+				return tree, nil
+			}
+			decodeErr = treeErr
+		}
+		lastErr = err
+		lastDecodeErr = decodeErr
+		if err == nil || !shouldRestartRoleAgent(err) || attempt == attempts {
+			break
+		}
 	}
-	handoff, err := artifactdb.ReadRoleHandoff(artifactdb.GlobalDBPathForIteration(paths.IterationDir), paths.RunID, paths.IterationID, "task-tree", "")
-	if err != nil {
-		return workflow.TaskTree{}, err
+	if lastErr != nil {
+		return workflow.TaskTree{}, lastErr
 	}
-	return workflow.DecodeTaskTree([]byte(handoff.Payload))
+	return workflow.TaskTree{}, lastDecodeErr
 }
 
 func runCodingRole(ctx context.Context, cfg config.Config, workDir string, paths pathSet, task workflow.Task, branch string, attempt int, onEvent func(runstate.Event)) (workflow.TaskResult, []gitx.Commit, error) {
 	promptText := buildRolePrompt("coding", paths, task, nil, nil, nil)
-	if err := runRoleAgent(ctx, cfg, workDir, paths, "coding", task.ID, promptText, onEvent); err != nil {
-		return workflow.TaskResult{}, nil, err
+	attempts := roleAgentAttempts(cfg)
+	var lastErr error
+	var lastDecodeErr error
+	for roleAttempt := 1; roleAttempt <= attempts; roleAttempt++ {
+		if roleAttempt > 1 {
+			appendRoleRestartEvent(paths, "coding", task.ID, roleAttempt, lastErr, onEvent)
+		}
+		err := runRoleAgentOnce(ctx, cfg, workDir, paths, "coding", task.ID, promptText, onEvent)
+		result, commits, decodeErr := readCompletedCodingRoleResult(paths, task.ID, branch, attempt)
+		if decodeErr == nil {
+			return result, commits, nil
+		}
+		lastErr = err
+		lastDecodeErr = decodeErr
+		if err == nil || !shouldRestartRoleAgent(err) || roleAttempt == attempts {
+			break
+		}
 	}
-	handoff, err := artifactdb.ReadRoleHandoff(artifactdb.GlobalDBPathForIteration(paths.IterationDir), paths.RunID, paths.IterationID, "task-result", task.ID)
+	if lastErr != nil {
+		return workflow.TaskResult{}, nil, lastErr
+	}
+	return workflow.TaskResult{}, nil, lastDecodeErr
+}
+
+func readCompletedCodingRoleResult(paths pathSet, taskID, branch string, attempt int) (workflow.TaskResult, []gitx.Commit, error) {
+	handoff, err := artifactdb.ReadRoleHandoff(artifactdb.GlobalDBPathForIteration(paths.IterationDir), paths.RunID, paths.IterationID, "task-result", taskID)
 	if err != nil {
 		return workflow.TaskResult{}, nil, err
 	}
@@ -1219,21 +1549,21 @@ func runCodingRole(ctx context.Context, cfg config.Config, workDir string, paths
 		return workflow.TaskResult{}, nil, err
 	}
 	resultData, _ := workflow.MarshalIndent(result)
-	if err := writeTaskResultAudit(paths.IterationDir, paths.TaskDir, task.ID, resultData); err != nil {
+	if err := writeTaskResultAudit(paths.IterationDir, paths.TaskDir, taskID, resultData); err != nil {
 		return workflow.TaskResult{}, nil, err
 	}
 	if result.Status == "discarded" {
 		return result, nil, nil
 	}
 	if result.Status != "completed" {
-		return result, nil, fmt.Errorf("task %s ended with status %s", task.ID, result.Status)
+		return result, nil, fmt.Errorf("task %s ended with status %s", taskID, result.Status)
 	}
-	mergeRecord, err := readTaskMergeAudit(paths.TaskDir, task.ID)
+	mergeRecord, err := readTaskMergeAudit(paths.TaskDir, taskID)
 	if err != nil {
-		return result, nil, fmt.Errorf("task %s completed without `loop task merge`: %w", task.ID, err)
+		return result, nil, fmt.Errorf("task %s completed without `loop task merge`: %w", taskID, err)
 	}
 	if len(mergeRecord.TaskCommits) == 0 {
-		return result, nil, fmt.Errorf("task %s merge record did not include task commits", task.ID)
+		return result, nil, fmt.Errorf("task %s merge record did not include task commits", taskID)
 	}
 	_ = attempt
 	_ = branch
@@ -1246,17 +1576,35 @@ func runCodingRole(ctx context.Context, cfg config.Config, workDir string, paths
 
 func runReviewRole(ctx context.Context, cfg config.Config, workDir string, paths pathSet, tree workflow.TaskTree, taskResults []workflow.TaskResult, validationResults []validation.CommandResult, onEvent func(runstate.Event)) (workflow.ReviewResult, error) {
 	promptText := buildRolePrompt("review", paths, workflow.Task{}, tree, taskResults, validationResults)
-	if err := runRoleAgent(ctx, cfg, workDir, paths, "review", "", promptText, onEvent); err != nil {
-		return workflow.ReviewResult{}, err
+	attempts := roleAgentAttempts(cfg)
+	var lastErr error
+	var lastDecodeErr error
+	for attempt := 1; attempt <= attempts; attempt++ {
+		if attempt > 1 {
+			appendRoleRestartEvent(paths, "review", "", attempt, lastErr, onEvent)
+		}
+		err := runRoleAgentOnce(ctx, cfg, workDir, paths, "review", "", promptText, onEvent)
+		handoff, decodeErr := artifactdb.ReadRoleHandoff(artifactdb.GlobalDBPathForIteration(paths.IterationDir), paths.RunID, paths.IterationID, "review-result", "")
+		if decodeErr == nil {
+			review, reviewErr := workflow.DecodeReviewResult([]byte(handoff.Payload))
+			if reviewErr == nil {
+				return review, nil
+			}
+			decodeErr = reviewErr
+		}
+		lastErr = err
+		lastDecodeErr = decodeErr
+		if err == nil || !shouldRestartRoleAgent(err) || attempt == attempts {
+			break
+		}
 	}
-	handoff, err := artifactdb.ReadRoleHandoff(artifactdb.GlobalDBPathForIteration(paths.IterationDir), paths.RunID, paths.IterationID, "review-result", "")
-	if err != nil {
-		return workflow.ReviewResult{}, err
+	if lastErr != nil {
+		return workflow.ReviewResult{}, lastErr
 	}
-	return workflow.DecodeReviewResult([]byte(handoff.Payload))
+	return workflow.ReviewResult{}, lastDecodeErr
 }
 
-func runRoleAgent(ctx context.Context, cfg config.Config, workDir string, paths pathSet, role, taskID, promptText string, onEvent func(runstate.Event)) error {
+func runRoleAgentOnce(ctx context.Context, cfg config.Config, workDir string, paths pathSet, role, taskID, promptText string, onEvent func(runstate.Event)) error {
 	adapterCfg, ok := cfg.Adapter(cfg.Agent.Default)
 	if !ok {
 		return fmt.Errorf("agent adapter not found: %s", cfg.Agent.Default)
@@ -1310,10 +1658,45 @@ func runRoleAgent(ctx context.Context, cfg config.Config, workDir string, paths 
 	_, err := pa.Run(ctx, agent.RunRequest{
 		WorkDir: workDir, Env: env, PromptText: promptText,
 		IterationDir: paths.IterationDir, EventLogPath: paths.Events, ErrorsLogPath: paths.Errors,
+		IdleTimeout:   roleAgentIdleTimeout(cfg),
 		EventMetadata: eventMetadata,
 		OnEvent:       onEvent,
 	})
 	return err
+}
+
+func roleAgentIdleTimeout(cfg config.Config) time.Duration {
+	if cfg.Run.AgentIdleTimeoutSeconds <= 0 {
+		return 0
+	}
+	return time.Duration(cfg.Run.AgentIdleTimeoutSeconds) * time.Second
+}
+
+func roleAgentAttempts(cfg config.Config) int {
+	return cfg.Run.MaxRoleAgentRestarts + 1
+}
+
+func shouldRestartRoleAgent(err error) bool {
+	return agent.IsIdleTimeout(err)
+}
+
+func appendRoleRestartEvent(paths pathSet, role, taskID string, attempt int, previous error, onEvent func(runstate.Event)) {
+	event := runstate.Event{
+		"type":       "agent.restart",
+		"agent_type": role,
+		"attempt":    attempt,
+		"reason":     "recoverable agent process failure",
+	}
+	if strings.TrimSpace(taskID) != "" {
+		event["task_id"] = taskID
+	}
+	if previous != nil {
+		event["previous_error"] = previous.Error()
+	}
+	_ = runstate.AppendEvent(paths.Events, event)
+	if onEvent != nil {
+		onEvent(event)
+	}
 }
 
 func plannerRevisionPrompt(tree workflow.TaskTree, completed []workflow.TaskResult, discarded discardedTask, revision int) string {
@@ -1417,6 +1800,14 @@ func writeTaskTreeAudit(iterDir string, tree workflow.TaskTree) error {
 	return os.WriteFile(filepath.Join(iterDir, "task-tree.json"), data, 0o644)
 }
 
+func readTaskTreeAudit(iterDir string) (workflow.TaskTree, error) {
+	data, err := os.ReadFile(filepath.Join(iterDir, "task-tree.json"))
+	if err != nil {
+		return workflow.TaskTree{}, err
+	}
+	return workflow.DecodeTaskTree(data)
+}
+
 func writeTaskAudit(taskDir string, task workflow.Task) error {
 	data, err := workflow.MarshalIndent(task)
 	if err != nil {
@@ -1431,6 +1822,14 @@ func writeReviewAudit(iterDir string, review workflow.ReviewResult) error {
 		return err
 	}
 	return os.WriteFile(filepath.Join(iterDir, "review-result.json"), data, 0o644)
+}
+
+func readReviewAudit(iterDir string) (workflow.ReviewResult, error) {
+	data, err := os.ReadFile(filepath.Join(iterDir, "review-result.json"))
+	if err != nil {
+		return workflow.ReviewResult{}, err
+	}
+	return workflow.DecodeReviewResult(data)
 }
 
 func ensureEmptyFile(path string) error {

@@ -22,6 +22,8 @@ run:
   maxIterations: 0
   maxParallelTasks: 2
   maxTaskAttempts: 2
+  maxRoleAgentRestarts: 1
+  agentIdleTimeoutSeconds: 600
   maxReviewFixCycles: 3
   maxPlanRevisions: 3
 

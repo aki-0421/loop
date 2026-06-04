@@ -35,6 +35,7 @@ type RunRequest struct {
 	EventLogPath  string
 	ErrorsLogPath string
 	Timeout       time.Duration
+	IdleTimeout   time.Duration
 	EventMetadata map[string]any
 	OnEvent       func(runstate.Event)
 }

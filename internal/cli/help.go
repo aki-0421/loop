@@ -602,9 +602,9 @@ func allHelpCommands() []helpCommand {
 		{
 			Path:    []string{"resume"},
 			Usage:   "loop resume <run-id> [flags]",
-			Summary: "Show stored run state through the resume entry point",
+			Summary: "Resume an interrupted run from its latest durable iteration state",
 			Flags: []helpFlag{
-				{Name: "--from-iteration <n>", Description: "accepted for older scripts; currently ignored", Default: "latest incomplete"},
+				{Name: "--from-iteration <n>", Description: "resume only if this matches the run's current iteration", Default: "latest incomplete"},
 			},
 		},
 		{

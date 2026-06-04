@@ -52,11 +52,13 @@ type AdapterConfig struct {
 }
 
 type RunConfig struct {
-	MaxIterations      int `yaml:"maxIterations" json:"maxIterations"`
-	MaxParallelTasks   int `yaml:"maxParallelTasks" json:"maxParallelTasks"`
-	MaxTaskAttempts    int `yaml:"maxTaskAttempts" json:"maxTaskAttempts"`
-	MaxReviewFixCycles int `yaml:"maxReviewFixCycles" json:"maxReviewFixCycles"`
-	MaxPlanRevisions   int `yaml:"maxPlanRevisions" json:"maxPlanRevisions"`
+	MaxIterations           int `yaml:"maxIterations" json:"maxIterations"`
+	MaxParallelTasks        int `yaml:"maxParallelTasks" json:"maxParallelTasks"`
+	MaxTaskAttempts         int `yaml:"maxTaskAttempts" json:"maxTaskAttempts"`
+	MaxRoleAgentRestarts    int `yaml:"maxRoleAgentRestarts" json:"maxRoleAgentRestarts"`
+	AgentIdleTimeoutSeconds int `yaml:"agentIdleTimeoutSeconds" json:"agentIdleTimeoutSeconds"`
+	MaxReviewFixCycles      int `yaml:"maxReviewFixCycles" json:"maxReviewFixCycles"`
+	MaxPlanRevisions        int `yaml:"maxPlanRevisions" json:"maxPlanRevisions"`
 }
 
 type SkillsConfig struct {
@@ -278,6 +280,12 @@ func Validate(cfg Config) error {
 	if cfg.Run.MaxTaskAttempts <= 0 {
 		errs = append(errs, "run.maxTaskAttempts must be positive")
 	}
+	if cfg.Run.MaxRoleAgentRestarts < 0 {
+		errs = append(errs, "run.maxRoleAgentRestarts must be at least 0")
+	}
+	if cfg.Run.AgentIdleTimeoutSeconds < 0 {
+		errs = append(errs, "run.agentIdleTimeoutSeconds must be at least 0")
+	}
 	if cfg.Run.MaxReviewFixCycles < 0 {
 		errs = append(errs, "run.maxReviewFixCycles must be at least 0")
 	}
@@ -410,6 +418,16 @@ func applyEnv(m map[string]any, env []string) {
 	if v := strings.TrimSpace(values["LOOP_MAX_ITERATIONS"]); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			setPath(m, n, "run", "maxIterations")
+		}
+	}
+	if v := strings.TrimSpace(values["LOOP_AGENT_IDLE_TIMEOUT_SECONDS"]); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			setPath(m, n, "run", "agentIdleTimeoutSeconds")
+		}
+	}
+	if v := strings.TrimSpace(values["LOOP_MAX_ROLE_AGENT_RESTARTS"]); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			setPath(m, n, "run", "maxRoleAgentRestarts")
 		}
 	}
 	if v := strings.TrimSpace(values["LOOP_BASE_BRANCH"]); v != "" {

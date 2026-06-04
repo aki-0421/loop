@@ -147,6 +147,9 @@ func TestProcessAdapterBuildsCommandEventFromLifecycleWithDuration(t *testing.T)
 	if got := strings.Count(string(data), `"type":"agent.command"`); got != 1 {
 		t.Fatalf("agent.command count = %d, want 1:\n%s", got, data)
 	}
+	if got := strings.Count(string(data), `"type":"agent.command.started"`); got != 1 {
+		t.Fatalf("agent.command.started count = %d, want 1:\n%s", got, data)
+	}
 	if !strings.Contains(string(data), `"duration_ms":`) {
 		t.Fatalf("expected duration_ms in command event:\n%s", data)
 	}
@@ -214,6 +217,43 @@ func TestProcessAdapterCancelsProcessGroup(t *testing.T) {
 	assertFileContains(t, filepath.Join(dir, "errors.log"), "agent exited with code")
 	if elapsed := time.Since(started); elapsed > 2*time.Second {
 		t.Fatalf("process group was not cancelled promptly; elapsed=%s", elapsed)
+	}
+}
+
+func TestProcessAdapterCancelsIdleProcess(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell command uses sh")
+	}
+	dir := t.TempDir()
+	adapter := ProcessAdapter{
+		AdapterName: "test",
+		Command:     "sh",
+		Args: []string{"-c", strings.Join([]string{
+			"cat >/dev/null",
+			"printf '%s\\n' '{\"type\":\"agent_message\",\"message\":\"starting long wait\"}'",
+			"sleep 5",
+		}, "; ")},
+		PromptMode: PromptStdin,
+	}
+	started := time.Now()
+	_, err := adapter.Run(context.Background(), RunRequest{
+		WorkDir:       dir,
+		PromptText:    "prompt",
+		IterationDir:  dir,
+		EventLogPath:  filepath.Join(dir, "agent-events.jsonl"),
+		ErrorsLogPath: filepath.Join(dir, "errors.log"),
+		IdleTimeout:   100 * time.Millisecond,
+	})
+	if err == nil {
+		t.Fatal("expected idle timeout")
+	}
+	if !IsIdleTimeout(err) {
+		t.Fatalf("error = %v, want idle timeout", err)
+	}
+	assertFileContains(t, filepath.Join(dir, "agent-events.jsonl"), "agent.stalled")
+	assertFileContains(t, filepath.Join(dir, "errors.log"), "agent idle timeout")
+	if elapsed := time.Since(started); elapsed > 2*time.Second {
+		t.Fatalf("idle process was not cancelled promptly; elapsed=%s", elapsed)
 	}
 }
 

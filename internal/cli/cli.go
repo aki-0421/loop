@@ -1325,7 +1325,7 @@ func commandResume(ctx context.Context, g globals, args []string) error {
 	if fs.NArg() != 1 {
 		return codedError{2, fmt.Errorf("usage: loop resume <run-id>")}
 	}
-	return commandStatus(ctx, g, []string{fs.Arg(0)})
+	return resumeRun(ctx, g, fs.Arg(0), *from)
 }
 
 func commandStatus(ctx context.Context, g globals, args []string) error {

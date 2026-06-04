@@ -12,6 +12,7 @@ import (
 	"github.com/aki-0421/loop/internal/artifactdb"
 	"github.com/aki-0421/loop/internal/gitx"
 	"github.com/aki-0421/loop/internal/runstate"
+	"github.com/aki-0421/loop/internal/workflow"
 )
 
 func TestRoleOrchestratedLocalMergeUsesPlannerCoderReviewer(t *testing.T) {
@@ -97,6 +98,199 @@ git:
 		}
 	}
 	assertBranchMissing(t, repo, "wip/0001")
+}
+
+func TestRoleAgentIdleTimeoutRestartsCodingAgentInSameAttempt(t *testing.T) {
+	ctx := context.Background()
+	repo := newCleanupRepo(t)
+	mustWrite(t, filepath.Join(repo, "task.md"), "# Task\n\nRun the role workflow with an idle restart.\n")
+	agentCommand, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, filepath.Join(repo, ".loop", "config.yaml"), `version: 1
+
+agent:
+  default: rolefake
+  adapters:
+    rolefake:
+      command: `+yamlSingleQuote(agentCommand)+`
+      args: [-test.run=TestHelperProcessRoleAgent, --]
+      prompt: stdin
+      env:
+        LOOP_ROLE_TEST_AGENT: "1"
+        LOOP_ROLE_TEST_AGENT_MODE: coding-idle-restart
+
+run:
+  maxIterations: 1
+  maxTaskAttempts: 1
+  maxRoleAgentRestarts: 1
+  agentIdleTimeoutSeconds: 1
+
+git:
+  baseBranch: develop
+  integration:
+    mode: local_merge
+`)
+	git(t, repo, "add", "task.md", ".loop/config.yaml")
+	git(t, repo, "commit", "-m", "T: add idle restart fixture")
+	withWorkingDir(t, repo)
+
+	if _, err := captureStdout(t, func() error {
+		return commandRun(ctx, globals{Agent: "rolefake", JSON: true, NoColor: true}, []string{"task.md", "--goal", "The fake role workflow is complete."})
+	}); err != nil {
+		t.Fatalf("loop run: %v", err)
+	}
+
+	if data := readText(t, filepath.Join(repo, "loop-fake-role-change.txt")); !strings.Contains(data, "resumed after idle timeout") {
+		t.Fatalf("merged idle restart change missing:\n%s", data)
+	}
+	iterDir := latestIterationDir(t, repo, "0001")
+	taskDir := filepath.Join(iterDir, "tasks", "0001")
+	if got := countEventType(t, taskDir, "agent.started"); got != 2 {
+		t.Fatalf("coding agent starts = %d, want timeout attempt + restart", got)
+	}
+	taskEvents := readText(t, filepath.Join(taskDir, "agent-events.jsonl"))
+	for _, want := range []string{`"type":"agent.stalled"`, `"type":"agent.restart"`} {
+		if !strings.Contains(taskEvents, want) {
+			t.Fatalf("task events missing %s:\n%s", want, taskEvents)
+		}
+	}
+	if strings.Contains(taskEvents, `"type":"task.attempt.discarded"`) {
+		t.Fatalf("role restart should preserve the same task attempt:\n%s", taskEvents)
+	}
+}
+
+func TestResumeRunRestartsReviewingIterationFromDurableArtifacts(t *testing.T) {
+	ctx := context.Background()
+	repo := newCleanupRepo(t)
+	agentCommand, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	configText := `version: 1
+
+agent:
+  default: rolefake
+  adapters:
+    rolefake:
+      command: ` + yamlSingleQuote(agentCommand) + `
+      args: [-test.run=TestHelperProcessRoleAgent, --]
+      prompt: stdin
+      env:
+        LOOP_ROLE_TEST_AGENT: "1"
+
+run:
+  maxIterations: 1
+
+git:
+  baseBranch: develop
+  integration:
+    mode: local_merge
+`
+	mustWrite(t, filepath.Join(repo, "task.md"), "# Task\n\nResume a reviewing iteration.\n")
+	mustWrite(t, filepath.Join(repo, ".loop", "config.yaml"), configText)
+	git(t, repo, "add", "task.md", ".loop/config.yaml")
+	git(t, repo, "commit", "-m", "T: add resume fixture")
+
+	runID := "resume-review-run"
+	iterationID := "0001"
+	runDir := filepath.Join(repo, ".loop", "runs", runID)
+	iterDir := filepath.Join(runDir, "iterations", iterationID)
+	taskDir := filepath.Join(iterDir, "tasks", "0001")
+	worktree := filepath.Join(repo, ".loop", "worktrees", runID, iterationID, "iteration")
+	if err := os.MkdirAll(taskDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	git(t, repo, "worktree", "add", "-b", "wip/0001", worktree, "develop")
+	mustWrite(t, filepath.Join(worktree, "resume-marker.txt"), "resume review\n")
+	git(t, worktree, "add", "resume-marker.txt")
+	git(t, worktree, "commit", "-m", "F: add resume marker")
+	commitSHA := strings.TrimSpace(git(t, worktree, "rev-parse", "HEAD"))
+
+	tree := workflow.TaskTree{
+		SchemaVersion:  1,
+		Summary:        "Resume reviewing iteration",
+		GoalEvaluation: "The resume test has one completed task and needs review.",
+		Tasks: []workflow.Task{{
+			ID:          "fake-task",
+			Title:       "Fake task",
+			Description: "Create the resume marker.",
+			Acceptance:  []string{"resume-marker.txt exists."},
+		}},
+	}
+	if err := writeTaskTreeAudit(iterDir, tree); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeTaskAudit(taskDir, tree.Tasks[0]); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureEmptyFile(filepath.Join(iterDir, "agent-events.jsonl")); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureEmptyFile(filepath.Join(taskDir, "agent-events.jsonl")); err != nil {
+		t.Fatal(err)
+	}
+	result := workflow.TaskResult{
+		SchemaVersion: 1,
+		TaskID:        "fake-task",
+		Status:        "completed",
+		Summary:       "Fake task completed before the crash.",
+	}
+	resultData, err := workflow.MarshalIndent(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := artifactdb.WriteRoleHandoff(artifactdb.GlobalDBPathForIteration(iterDir), runID, iterationID, "task-result", "fake-task", string(resultData)); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeTaskResultAudit(iterDir, taskDir, "fake-task", resultData); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeTaskMergeAudit(taskDir, taskMergeRecord{
+		SchemaVersion:   1,
+		TaskID:          "fake-task",
+		Status:          "merged",
+		Branch:          "task/0001-fake-task-attempt-1",
+		IterationBranch: "wip/0001",
+		TaskCommits:     []taskMergeCommit{{SHA: commitSHA, Subject: "F: add resume marker"}},
+		MergeCommit:     taskMergeCommit{SHA: commitSHA, Subject: "F: add resume marker"},
+		MergedAt:        time.Now().UTC().Format(time.RFC3339),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, filepath.Join(iterDir, "prompt.md"), "# Task\n\nResume a reviewing iteration.\n")
+	mustWrite(t, filepath.Join(iterDir, "effective-config.yaml"), configText)
+	state := runstate.New(runID, "The resume fixture is complete.", "develop", "rolefake")
+	state.CurrentIteration = iterationID
+	state.Stage = runstate.StageReviewing
+	state.Iterations = []runstate.IterationRecord{{
+		IterationID:   iterationID,
+		BranchInitial: "wip/0001",
+		BranchCurrent: "wip/0001",
+		Stage:         string(runstate.StageReviewing),
+	}}
+	if err := runstate.Write(filepath.Join(runDir, "run-state.json"), state); err != nil {
+		t.Fatal(err)
+	}
+	withWorkingDir(t, repo)
+
+	if _, err := captureStdout(t, func() error {
+		return commandResume(ctx, globals{JSON: true, NoColor: true}, []string{runID})
+	}); err != nil {
+		t.Fatalf("loop resume: %v", err)
+	}
+
+	resumed := readLatestRunState(t, repo)
+	if resumed.Stage != runstate.StageCompleted {
+		t.Fatalf("resumed stage = %s, want completed", resumed.Stage)
+	}
+	if data := readText(t, filepath.Join(repo, "resume-marker.txt")); !strings.Contains(data, "resume review") {
+		t.Fatalf("resume marker was not merged:\n%s", data)
+	}
+	if _, err := os.Stat(filepath.Join(iterDir, "review-result.json")); err != nil {
+		t.Fatalf("review-result not written during resume: %v", err)
+	}
 }
 
 func TestRoleOrchestratedCodingAgentResolvesTaskMergeConflict(t *testing.T) {
@@ -942,6 +1136,38 @@ func runRoleTestAgent() int {
 				return 1
 			}
 			if err := writeRoleTaskResult(ctx, taskID, "Fake coding agent completed the second attempt."); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 1
+			}
+			return exitCode(commandTask(ctx, globals{}, []string{"merge", "--type", "F", "complete", taskID}))
+		case "coding-idle-restart":
+			taskDir := os.Getenv("LOOP_TASK_DIR")
+			restartFile := filepath.Join(taskDir, "idle-restart-count.txt")
+			if _, err := os.Stat(restartFile); os.IsNotExist(err) {
+				if err := os.WriteFile(restartFile, []byte("1\n"), 0o644); err != nil {
+					fmt.Fprintln(os.Stderr, err)
+					return 1
+				}
+				if err := startRoleTaskTodo(ctx, taskID, "resume after idle timeout"); err != nil {
+					fmt.Fprintln(os.Stderr, err)
+					return 1
+				}
+				if err := os.WriteFile(filepath.Join(workDir, "loop-fake-role-change.txt"), []byte("partial before idle timeout\n"), 0o644); err != nil {
+					fmt.Fprintln(os.Stderr, err)
+					return 1
+				}
+				time.Sleep(3 * time.Second)
+				return 1
+			}
+			if err := os.WriteFile(filepath.Join(workDir, "loop-fake-role-change.txt"), []byte("resumed after idle timeout\n"), 0o644); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 1
+			}
+			if err := completeRoleTaskTodo(ctx); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 1
+			}
+			if err := writeRoleTaskResult(ctx, taskID, "Fake coding agent resumed after idle timeout."); err != nil {
 				fmt.Fprintln(os.Stderr, err)
 				return 1
 			}
