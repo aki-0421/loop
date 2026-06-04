@@ -53,15 +53,19 @@ type IterationRecord struct {
 }
 
 type PendingPullRequest struct {
-	PR           string   `json:"pr"`
-	Branch       string   `json:"branch"`
-	Base         string   `json:"base"`
-	Title        string   `json:"title,omitempty"`
-	RunID        string   `json:"run_id,omitempty"`
-	IterationID  string   `json:"iteration_id,omitempty"`
-	ChangedFiles []string `json:"changed_files,omitempty"`
-	CreatedAt    string   `json:"created_at,omitempty"`
-	Status       string   `json:"status"`
+	PR                string   `json:"pr"`
+	Branch            string   `json:"branch"`
+	Base              string   `json:"base"`
+	Title             string   `json:"title,omitempty"`
+	RunID             string   `json:"run_id,omitempty"`
+	IterationID       string   `json:"iteration_id,omitempty"`
+	ChangedFiles      []string `json:"changed_files,omitempty"`
+	CreatedAt         string   `json:"created_at,omitempty"`
+	Status            string   `json:"status"`
+	ReviewDecision    string   `json:"review_decision,omitempty"`
+	ReviewFeedback    string   `json:"review_feedback,omitempty"`
+	ReviewFeedbackAt  string   `json:"review_feedback_at,omitempty"`
+	FeedbackHandledAt string   `json:"feedback_handled_at,omitempty"`
 }
 
 func New(runID, goal, baseBranch, agent string) State {

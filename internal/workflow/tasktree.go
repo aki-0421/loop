@@ -20,6 +20,7 @@ type TaskTree struct {
 	GoalEvaluation    string `json:"goal_evaluation"`
 	GoalComplete      bool   `json:"goal_complete,omitempty"`
 	WaitForPendingPRs bool   `json:"wait_for_pending_prs,omitempty"`
+	RepairPullRequest string `json:"repair_pull_request,omitempty"`
 	Tasks             []Task `json:"tasks"`
 }
 
@@ -113,6 +114,12 @@ func ValidateTaskTree(tree TaskTree) []string {
 	}
 	if tree.WaitForPendingPRs && len(tree.Tasks) > 0 {
 		problems = append(problems, "wait_for_pending_prs requires an empty tasks array")
+	}
+	if tree.WaitForPendingPRs && strings.TrimSpace(tree.RepairPullRequest) != "" {
+		problems = append(problems, "repair_pull_request cannot be combined with wait_for_pending_prs")
+	}
+	if strings.TrimSpace(tree.RepairPullRequest) != "" && len(tree.Tasks) == 0 {
+		problems = append(problems, "repair_pull_request requires at least one task")
 	}
 	seen := map[string]Task{}
 	for i, task := range tree.Tasks {

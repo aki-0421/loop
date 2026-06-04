@@ -47,25 +47,28 @@ type prChecksArtifact struct {
 }
 
 type prCommandContext struct {
-	root    string
-	workDir string
-	iterDir string
-	paths   pathSet
-	cfg     config.Config
-	runtime map[string]string
-	branch  string
-	base    string
+	root              string
+	workDir           string
+	iterDir           string
+	paths             pathSet
+	cfg               config.Config
+	runtime           map[string]string
+	branch            string
+	base              string
+	repairPullRequest *runstate.PendingPullRequest
 }
 
 func commandPR(ctx context.Context, g globals, args []string) error {
 	if len(args) == 0 {
-		return codedError{2, fmt.Errorf("usage: loop pr <create|checks|logs|merge> [flags]")}
+		return codedError{2, fmt.Errorf("usage: loop pr <create|checks|feedback|logs|merge> [flags]")}
 	}
 	switch args[0] {
 	case "create":
 		return commandPRCreate(ctx, g, args[1:])
 	case "checks":
 		return commandPRChecks(ctx, g, args[1:])
+	case "feedback":
+		return commandPRFeedback(ctx, g, args[1:])
 	case "logs":
 		return commandPRLogs(ctx, g, args[1:])
 	case "merge":
@@ -89,6 +92,39 @@ func commandPRCreate(ctx context.Context, g globals, args []string) error {
 
 	title := strings.TrimSpace(readArtifactOptional(prCtx.iterDir, "pr-title"))
 	body := strings.TrimSpace(readArtifactOptional(prCtx.iterDir, "pr-body"))
+	if prCtx.repairPullRequest != nil {
+		if strings.TrimSpace(prCtx.repairPullRequest.Branch) != "" && prCtx.repairPullRequest.Branch != prCtx.branch {
+			return codedError{2, fmt.Errorf("repair pull request branch is %q but runtime tracks %q", prCtx.repairPullRequest.Branch, prCtx.branch)}
+		}
+		if strings.TrimSpace(prCtx.repairPullRequest.PR) == "" {
+			return codedError{2, errors.New("repair pull request identifier is required")}
+		}
+		if title == "" {
+			title = prCtx.repairPullRequest.Title
+		}
+		runner := prRunner(prCtx.cfg, prCtx.workDir)
+		if prCtx.cfg.Git.Integration.PR.Push {
+			if _, err := runner.Push(ctx, prCtx.branch); err != nil {
+				return codedError{6, err}
+			}
+		}
+		state := prState{
+			SchemaVersion: 1,
+			Status:        "created",
+			PR:            prCtx.repairPullRequest.PR,
+			Branch:        prCtx.branch,
+			Base:          prCtx.base,
+			Title:         title,
+			CreatedAt:     firstNonEmpty(prCtx.repairPullRequest.CreatedAt, time.Now().UTC().Format(time.RFC3339)),
+		}
+		if body != "" {
+			state.BodyArtifact = "pr-body"
+		}
+		if err := writePRState(prCtx.iterDir, state); err != nil {
+			return codedError{1, err}
+		}
+		return printResult(g, map[string]any{"pr": state.PR, "status": state.Status, "branch": prCtx.branch}, fmt.Sprintf("PR: %s\nStatus: %s\n", state.PR, state.Status))
+	}
 	if isRoleOrchestratedPR(prCtx) {
 		if err := ensureRoleOrchestratedPRArtifacts(prCtx, title, body); err != nil {
 			return codedError{2, err}
@@ -201,6 +237,22 @@ func commandPRChecks(ctx context.Context, g globals, args []string) error {
 		return printResult(g, map[string]any{"pr": state.PR, "status": state.Status}, fmt.Sprintf("PR: %s\nStatus: %s\n", state.PR, state.Status))
 	}
 	return printResult(g, map[string]any{"pr": state.PR, "status": status}, fmt.Sprintf("PR checks: %s\n", status))
+}
+
+func commandPRFeedback(ctx context.Context, g globals, args []string) error {
+	prCtx, err := loadPRCommandContext(ctx, g, "feedback", args, 1)
+	if err != nil {
+		return err
+	}
+	if err := ensurePRMode(prCtx); err != nil {
+		return codedError{2, err}
+	}
+	prID := strings.TrimSpace(argsWithoutPRLocatorFlags(args)[0])
+	feedback, _, err := prRunner(prCtx.cfg, prCtx.root).ViewReviewFeedback(ctx, prID)
+	if err != nil {
+		return codedError{6, err}
+	}
+	return printResult(g, reviewFeedbackResult(feedback), renderPRFeedback(feedback))
 }
 
 func commandPRLogs(ctx context.Context, g globals, args []string) error {
@@ -407,16 +459,52 @@ func loadPRCommandContext(ctx context.Context, g globals, subcommand string, arg
 	paths.PullRequestMode = paths.IntegrationMode == "pr"
 	paths.RoleOrchestrated = strings.EqualFold(strings.TrimSpace(runtime["role_orchestrated"]), "true")
 	paths.WorkDir = workDir
+	repairPR, err := repairPullRequestFromRuntime(resolvedDir)
+	if err != nil {
+		return prCommandContext{}, codedError{1, err}
+	}
+	paths.PendingPRRepair = repairPR
 	return prCommandContext{
-		root:    storageRoot,
-		workDir: workDir,
-		iterDir: resolvedDir,
-		paths:   paths,
-		cfg:     cfg,
-		runtime: runtime,
-		branch:  branch,
-		base:    base,
+		root:              storageRoot,
+		workDir:           workDir,
+		iterDir:           resolvedDir,
+		paths:             paths,
+		cfg:               cfg,
+		runtime:           runtime,
+		branch:            branch,
+		base:              base,
+		repairPullRequest: repairPR,
 	}, nil
+}
+
+func repairPullRequestFromRuntime(iterDir string) (*runstate.PendingPullRequest, error) {
+	raw, err := readRuntimeMap(iterDir)
+	if err != nil {
+		return nil, nil
+	}
+	value, ok := raw["repair_pull_request"]
+	if !ok {
+		return nil, nil
+	}
+	if text, ok := value.(string); ok {
+		text = strings.TrimSpace(text)
+		if text == "" {
+			return nil, nil
+		}
+		return &runstate.PendingPullRequest{PR: text}, nil
+	}
+	data, err := json.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+	var pending runstate.PendingPullRequest
+	if err := json.Unmarshal(data, &pending); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(pending.PR) == "" && strings.TrimSpace(pending.Branch) == "" {
+		return nil, nil
+	}
+	return &pending, nil
 }
 
 func argsWithoutPRLocatorFlags(args []string) []string {
@@ -613,6 +701,28 @@ func remoteBranchExists(ctx context.Context, runner gitx.Runner, branch string) 
 
 func pruneRemoteBranches(ctx context.Context, runner gitx.Runner) {
 	_, _ = runner.Run(ctx, "fetch", "--prune", "origin")
+}
+
+func renderPRFeedback(feedback pr.ReviewFeedback) string {
+	if strings.TrimSpace(feedback.Summary) != "" {
+		return feedback.Summary + "\n"
+	}
+	if strings.TrimSpace(feedback.ReviewDecision) != "" {
+		return "Review decision: " + strings.TrimSpace(feedback.ReviewDecision) + "\n"
+	}
+	return "No review feedback found.\n"
+}
+
+func reviewFeedbackResult(feedback pr.ReviewFeedback) map[string]any {
+	data, err := json.Marshal(feedback)
+	if err != nil {
+		return map[string]any{"review_decision": feedback.ReviewDecision, "summary": feedback.Summary}
+	}
+	out := map[string]any{}
+	if err := json.Unmarshal(data, &out); err != nil {
+		return map[string]any{"review_decision": feedback.ReviewDecision, "summary": feedback.Summary}
+	}
+	return out
 }
 
 func prErrorString(err error) string {

@@ -1851,6 +1851,7 @@ type pathSet struct {
 	TaskDir           string
 	IterationWorktree string
 	PendingPRs        []runstate.PendingPullRequest
+	PendingPRRepair   *runstate.PendingPullRequest
 	AgentPromptExtra  string
 }
 
@@ -1904,6 +1905,9 @@ func writeRuntimeArtifact(paths pathSet) error {
 	}
 	if len(paths.PendingPRs) > 0 {
 		payload["pending_pull_requests"] = paths.PendingPRs
+	}
+	if paths.PendingPRRepair != nil {
+		payload["repair_pull_request"] = paths.PendingPRRepair
 	}
 	if strings.TrimSpace(paths.IterationWorktree) != "" {
 		payload["iteration_worktree"] = paths.IterationWorktree
@@ -1971,6 +1975,10 @@ func runAgent(ctx context.Context, cfg config.Config, root string, paths pathSet
 		"LOOP_PR_REVIEW_MODE":            paths.PRReviewMode,
 		"LOOP_PULL_REQUEST_MODE":         strconv.FormatBool(paths.PullRequestMode),
 		"LOOP_PR_MODE":                   strconv.FormatBool(paths.PullRequestMode),
+	}
+	if paths.PendingPRRepair != nil {
+		env["LOOP_REPAIR_PR"] = paths.PendingPRRepair.PR
+		env["LOOP_REPAIR_PR_BRANCH"] = paths.PendingPRRepair.Branch
 	}
 	_, err := pa.Run(ctx, agent.RunRequest{
 		WorkDir: root, Env: env, PromptText: promptText,

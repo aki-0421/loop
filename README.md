@@ -143,7 +143,7 @@ Agents do not run raw Git or GitHub commands for loop-owned lifecycle work. They
 - Missing information is handled by making a local, explicit assumption and continuing.
 - Important product, policy, or large blocking specification questions are asked with `loop issue ask`, which creates GitHub Issues.
 - After asking a clarification Issue, agents continue unrelated safe work when possible.
-- In `parallel_human_review` mode, PRs waiting for human review are recorded with their titles and changed files, rendered while other work continues, and passed to later planners so they can choose non-overlapping work. If no safe non-overlapping work remains, the planner can return `wait_for_pending_prs=true` with no tasks so `loop` waits for pending PR changes.
+- In `parallel_human_review` mode, PRs waiting for human review are recorded with their titles and changed files, rendered while other work continues, and passed to later planners so they can choose non-overlapping work. At each iteration boundary, `loop` removes merged or closed pending PRs before planning. The planner inspects remaining pending PR feedback through `loop pr feedback <pr>` and can return `repair_pull_request` so the CLI checks out that PR branch for repair after planning. If no safe non-overlapping work remains, the planner can return `wait_for_pending_prs=true` with no tasks so `loop` waits for pending PR changes.
 - In `serial_human_review` mode, `loop` shows a PR review wait screen and polls every 5 minutes until the human merges the current PR before starting another iteration.
 - Without a CLI `--goal`, the run is open-ended: role output cannot mark the full run complete.
 - With a CLI `--goal`, the run stops only after an integrated iteration satisfies that goal.

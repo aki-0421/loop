@@ -69,6 +69,10 @@ func commandBranchRename(ctx context.Context, g globals, args []string) error {
 	if err != nil {
 		return codedError{1, err}
 	}
+	_, repairingPR := runtime["repair_pull_request"]
+	if repairingPR {
+		return codedError{2, fmt.Errorf("pending PR repair iterations keep the existing PR branch; do not run loop branch rename")}
+	}
 	tracked := trackedBranchFromRuntime(runtime, "", "")
 	workDir := firstNonEmpty(runtimeString(runtime, "workdir"), os.Getenv("LOOP_WORKDIR"), root)
 	if workDir == "" {

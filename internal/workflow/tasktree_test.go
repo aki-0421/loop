@@ -69,11 +69,30 @@ func TestDecodeTaskTreeAllowsPendingPRWaitSignal(t *testing.T) {
 	}
 }
 
+func TestDecodeTaskTreeAllowsPendingPRRepairSignal(t *testing.T) {
+	tree, err := DecodeTaskTree([]byte(`{"schema_version":1,"summary":"repair","goal_evaluation":"pending PR needs repair","repair_pull_request":"1","tasks":[{"id":"repair-pr","title":"Repair PR","description":"Address feedback.","depends_on":[],"conflicts_with":[],"acceptance":["Feedback is addressed."]}]}`))
+	if err != nil {
+		t.Fatalf("repair_pull_request task tree should decode: %v", err)
+	}
+	if tree.RepairPullRequest != "1" {
+		t.Fatalf("repair_pull_request = %q, want 1", tree.RepairPullRequest)
+	}
+}
+
 func TestValidateTaskTreeRejectsPendingPRWaitWithTasks(t *testing.T) {
 	tree := validTree()
 	tree.WaitForPendingPRs = true
 	if problems := ValidateTaskTree(tree); len(problems) == 0 {
 		t.Fatal("expected wait_for_pending_prs with tasks to be rejected")
+	}
+}
+
+func TestValidateTaskTreeRejectsPendingPRRepairWithoutTasks(t *testing.T) {
+	tree := validTree()
+	tree.RepairPullRequest = "1"
+	tree.Tasks = nil
+	if problems := ValidateTaskTree(tree); len(problems) == 0 {
+		t.Fatal("expected repair_pull_request without tasks to be rejected")
 	}
 }
 

@@ -19,6 +19,7 @@ Required fields:
 | `goal_evaluation` | string | Current view of the CLI goal. |
 | `goal_complete` | boolean | Optional. True only when a CLI goal exists and the planner believes no more work remains after integration. |
 | `wait_for_pending_prs` | boolean | Optional. Only valid with an empty `tasks` array. In `parallel_human_review` mode, this asks the CLI to wait for pending human-review PR changes when no safe non-overlapping implementation work remains. |
+| `repair_pull_request` | string | Optional. PR number or URL from `pending_pull_requests`. When set, `tasks` describe repair work for that existing human-review PR branch. The CLI checks out the PR branch only after the planner handoff is accepted. |
 | `tasks` | array | Coding tasks with dependencies and conflicts. |
 
 Task fields:
@@ -32,7 +33,7 @@ Task fields:
 | `conflicts_with` | array | Task IDs that must not run concurrently. |
 | `acceptance` | array | Concrete acceptance checks. |
 
-The CLI rejects duplicate IDs, unknown dependencies or conflicts, self-dependencies, self-conflicts, dependency cycles, invalid IDs, `wait_for_pending_prs` combined with tasks, and unknown fields. Planner tasks must not include commit metadata.
+The CLI rejects duplicate IDs, unknown dependencies or conflicts, self-dependencies, self-conflicts, dependency cycles, invalid IDs, `wait_for_pending_prs` combined with tasks, `repair_pull_request` without tasks, `repair_pull_request` combined with `wait_for_pending_prs`, and unknown fields. Planner tasks must not include commit metadata.
 
 ### Task Result
 
@@ -121,6 +122,10 @@ Pending PR fields:
 | `changed_files` | array | Files changed by the PR branch relative to the base branch. Later planners use this to avoid overlapping work. |
 | `created_at` | string | UTC timestamp recorded by `loop pr create`. |
 | `status` | enum | `waiting_for_human` while the PR is pending. |
+| `review_decision` | string | Latest GitHub review decision when known. |
+| `review_feedback` | string | Compact summary of the latest actionable review decision or PR comments. |
+| `review_feedback_at` | string | Timestamp of the latest actionable feedback. |
+| `feedback_handled_at` | string | Latest feedback timestamp already incorporated by a repair iteration. |
 
 ## Iteration Close
 

@@ -148,6 +148,56 @@ exit 1
 	}
 }
 
+func TestGHWrapperViewReviewFeedbackParsesCommentsAndReviews(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "gh.log")
+	r := Runner{Dir: dir, GHPath: fakeScript(t, `#!/bin/sh
+echo "$@" >> "`+logPath+`"
+if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
+cat <<'JSON'
+{
+  "reviewDecision": "CHANGES_REQUESTED",
+  "updatedAt": "2026-06-04T00:02:00Z",
+  "latestReviews": [
+    {
+      "state": "CHANGES_REQUESTED",
+      "body": "Please handle the edge case.",
+      "submittedAt": "2026-06-04T00:01:00Z",
+      "url": "https://example.test/review/1",
+      "author": {"login": "reviewer"}
+    }
+  ],
+  "comments": [
+    {
+      "body": "Also update the docs.",
+      "createdAt": "2026-06-04T00:03:00Z",
+      "url": "https://example.test/comment/1",
+      "author": {"login": "pm"}
+    }
+  ]
+}
+JSON
+  exit 0
+fi
+exit 1
+`)}
+
+	feedback, _, err := r.ViewReviewFeedback(ctx, "1")
+	if err != nil {
+		t.Fatalf("ViewReviewFeedback: %v", err)
+	}
+	if feedback.ReviewDecision != "CHANGES_REQUESTED" || feedback.LatestAt != "2026-06-04T00:03:00Z" {
+		t.Fatalf("feedback = %#v", feedback)
+	}
+	if len(feedback.Items) != 2 {
+		t.Fatalf("feedback items = %#v, want two", feedback.Items)
+	}
+	if !strings.Contains(feedback.Summary, "Please handle the edge case.") || !strings.Contains(feedback.Summary, "Also update the docs.") {
+		t.Fatalf("summary missing feedback:\n%s", feedback.Summary)
+	}
+}
+
 func TestGHWrapperChecksFailure(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()

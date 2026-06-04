@@ -812,6 +812,107 @@ git:
 	}
 }
 
+func TestRoleOrchestratedParallelHumanReviewRepairsFeedbackOnPendingPRBranch(t *testing.T) {
+	ctx := context.Background()
+	repo := newCleanupRepo(t)
+	originParent := t.TempDir()
+	origin := filepath.Join(originParent, "origin.git")
+	git(t, originParent, "init", "--bare", "-b", "develop", origin)
+	git(t, repo, "remote", "add", "origin", origin)
+	git(t, repo, "push", "-u", "origin", "develop")
+	mustWrite(t, filepath.Join(repo, "task.md"), "# Task\n\nCreate a human-reviewed PR, then repair review feedback.\n")
+	agentCommand, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, filepath.Join(repo, ".loop", "config.yaml"), `version: 1
+
+agent:
+  default: rolehumanfeedback
+  adapters:
+    rolehumanfeedback:
+      command: `+yamlSingleQuote(agentCommand)+`
+      args: [-test.run=TestHelperProcessRoleAgent, --]
+      prompt: stdin
+      env:
+        LOOP_ROLE_TEST_AGENT: "1"
+        LOOP_ROLE_TEST_AGENT_MODE: "pr-human-feedback-repair"
+
+run:
+  maxIterations: 2
+
+git:
+  baseBranch: develop
+  integration:
+    mode: pr
+    pr:
+      push: true
+      waitChecks: true
+      checksStartupDelaySeconds: 0
+      checksDiscoveryTimeoutSeconds: 0
+      checksPollIntervalSeconds: 1
+      reviewMode: parallel_human_review
+`)
+	git(t, repo, "add", "task.md", ".loop/config.yaml")
+	git(t, repo, "commit", "-m", "T: add human review feedback fixture")
+	git(t, repo, "push")
+	ghDir := t.TempDir()
+	ghLog := filepath.Join(ghDir, "gh.log")
+	createdPath := filepath.Join(ghDir, "created")
+	writeReviewFeedbackFakeGH(t, ghDir, ghLog, createdPath)
+	t.Setenv("PATH", ghDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	withWorkingDir(t, repo)
+
+	if _, err := captureStdout(t, func() error {
+		return commandRun(ctx, globals{Agent: "rolehumanfeedback", JSON: true, NoColor: true}, []string{"task.md"})
+	}); err != nil {
+		t.Fatalf("loop run should repair pending PR feedback: %v", err)
+	}
+
+	state := readLatestRunState(t, repo)
+	if state.Stage != runstate.StageCompleted {
+		t.Fatalf("run stage = %s, want completed", state.Stage)
+	}
+	if len(state.Iterations) != 2 {
+		t.Fatalf("iterations = %d, want 2", len(state.Iterations))
+	}
+	if state.Iterations[1].BranchCurrent != "feat/human-pending-pr" {
+		t.Fatalf("second iteration branch = %q, want pending PR branch", state.Iterations[1].BranchCurrent)
+	}
+	if len(state.PendingPullRequests) != 1 {
+		t.Fatalf("pending PRs = %#v, want one waiting PR", state.PendingPullRequests)
+	}
+	pending := state.PendingPullRequests[0]
+	if pending.Status != "waiting_for_human" || pending.Branch != "feat/human-pending-pr" {
+		t.Fatalf("pending PR after repair = %#v", pending)
+	}
+	if pending.FeedbackHandledAt != "2026-06-04T00:03:00Z" {
+		t.Fatalf("feedback handled at = %q, want latest feedback timestamp", pending.FeedbackHandledAt)
+	}
+	if got := git(t, repo, "show", "origin/feat/human-pending-pr:review-feedback.txt"); got != "feedback repair\n" {
+		t.Fatalf("remote PR branch repair file = %q", got)
+	}
+	secondTaskTree := readText(t, filepath.Join(repo, ".loop", "runs", state.RunID, "iterations", "0002", "task-tree.json"))
+	if !strings.Contains(secondTaskTree, `"id": "human-pr-feedback"`) {
+		t.Fatalf("second task tree missing PR feedback task:\n%s", secondTaskTree)
+	}
+	secondEvents := readText(t, filepath.Join(repo, ".loop", "runs", state.RunID, "iterations", "0002", "agent-events.jsonl"))
+	if !strings.Contains(secondEvents, "pr.human_review.repair_started") {
+		t.Fatalf("second events missing repair start:\n%s", secondEvents)
+	}
+	gh := readText(t, ghLog)
+	if !strings.Contains(gh, "pr view 1 --json reviewDecision,latestReviews,comments,updatedAt") {
+		t.Fatalf("fake gh log missing review feedback lookup:\n%s", gh)
+	}
+	if got := strings.Count(gh, "pr create "); got != 1 {
+		t.Fatalf("repair flow should not create a second PR; pr create count = %d\n%s", got, gh)
+	}
+	if strings.Contains(gh, "pr merge") {
+		t.Fatalf("human review repair should not merge:\n%s", gh)
+	}
+	assertBranchMissing(t, repo, "feat/human-pending-pr")
+}
+
 func TestHelperProcessRoleAgent(t *testing.T) {
 	if os.Getenv("LOOP_ROLE_TEST_AGENT") != "1" {
 		return
@@ -923,7 +1024,7 @@ func runRoleTestAgent() int {
   ]
 }`
 			return exitCode(commandHandoff(ctx, globals{}, []string{"write", "task-tree", "--value", payload}))
-		case "pr-human-pending", "pr-human-pending-then-wait":
+		case "pr-human-pending", "pr-human-pending-then-wait", "pr-human-feedback-repair":
 			if os.Getenv("LOOP_ROLE_TEST_AGENT_MODE") == "pr-human-pending-then-wait" && os.Getenv("LOOP_ITERATION_ID") == "0002" {
 				payload := `{
   "schema_version": 1,
@@ -931,6 +1032,33 @@ func runRoleTestAgent() int {
   "goal_evaluation": "The pending PR reserves the remaining safe work.",
   "wait_for_pending_prs": true,
   "tasks": []
+}`
+				return exitCode(commandHandoff(ctx, globals{}, []string{"write", "task-tree", "--value", payload}))
+			}
+			if os.Getenv("LOOP_ROLE_TEST_AGENT_MODE") == "pr-human-feedback-repair" && os.Getenv("LOOP_ITERATION_ID") == "0002" {
+				if localBranchExists(ctx, gitx.Runner{Dir: os.Getenv("LOOP_WORKDIR")}, "wip/0002") {
+					fmt.Fprintln(os.Stderr, "planner ran after wip/0002 was created")
+					return 1
+				}
+				if err := commandPR(ctx, globals{JSON: true, NoColor: true}, []string{"feedback", "1"}); err != nil {
+					fmt.Fprintln(os.Stderr, err)
+					return exitCode(err)
+				}
+				payload := `{
+  "schema_version": 1,
+  "summary": "Address human PR feedback",
+  "goal_evaluation": "Fake planner selected a task for pending PR review feedback.",
+  "repair_pull_request": "1",
+  "tasks": [
+    {
+      "id": "human-pr-feedback",
+      "title": "Human PR feedback",
+      "description": "Address the review feedback on the existing human-reviewed PR.",
+      "depends_on": [],
+      "conflicts_with": [],
+      "acceptance": ["review-feedback.txt contains the feedback repair value."]
+    }
+  ]
 }`
 				return exitCode(commandHandoff(ctx, globals{}, []string{"write", "task-tree", "--value", payload}))
 			}
@@ -1198,12 +1326,20 @@ func runRoleTestAgent() int {
 				return 1
 			}
 			return exitCode(commandTask(ctx, globals{}, []string{"merge", "--type", "F", "complete", taskID}))
-		case "pr-human-pending", "pr-human-pending-then-wait":
-			if err := startRoleTaskTodo(ctx, taskID, "run human review PR task"); err != nil {
+		case "pr-human-pending", "pr-human-pending-then-wait", "pr-human-feedback-repair":
+			message := "run human review PR task"
+			filename := "pending-human-pr.txt"
+			value := "pending\n"
+			if taskID == "human-pr-feedback" {
+				message = "run human review feedback repair"
+				filename = "review-feedback.txt"
+				value = "feedback repair\n"
+			}
+			if err := startRoleTaskTodo(ctx, taskID, message); err != nil {
 				fmt.Fprintln(os.Stderr, err)
 				return 1
 			}
-			if err := os.WriteFile(filepath.Join(workDir, "pending-human-pr.txt"), []byte("pending\n"), 0o644); err != nil {
+			if err := os.WriteFile(filepath.Join(workDir, filename), []byte(value), 0o644); err != nil {
 				fmt.Fprintln(os.Stderr, err)
 				return 1
 			}
@@ -1238,7 +1374,7 @@ func runRoleTestAgent() int {
 		if os.Getenv("LOOP_ROLE_TEST_AGENT_MODE") == "pr-rename-repair" {
 			return runPRRenameRepairReviewAgent(ctx)
 		}
-		if os.Getenv("LOOP_ROLE_TEST_AGENT_MODE") == "pr-human-pending" || os.Getenv("LOOP_ROLE_TEST_AGENT_MODE") == "pr-human-pending-then-wait" {
+		if os.Getenv("LOOP_ROLE_TEST_AGENT_MODE") == "pr-human-pending" || os.Getenv("LOOP_ROLE_TEST_AGENT_MODE") == "pr-human-pending-then-wait" || os.Getenv("LOOP_ROLE_TEST_AGENT_MODE") == "pr-human-feedback-repair" {
 			return runPRHumanPendingReviewAgent(ctx)
 		}
 		payload := `{
@@ -1344,9 +1480,12 @@ func runPRRenameRepairReviewAgent(ctx context.Context) int {
 
 func runPRHumanPendingReviewAgent(ctx context.Context) int {
 	iterDir := os.Getenv("LOOP_ITERATION_DIR")
-	if err := commandBranch(ctx, globals{}, []string{"rename", "--kind", "feat", "human pending PR"}); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return exitCode(err)
+	repairPR := strings.TrimSpace(os.Getenv("LOOP_REPAIR_PR"))
+	if repairPR == "" {
+		if err := commandBranch(ctx, globals{}, []string{"rename", "--kind", "feat", "human pending PR"}); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return exitCode(err)
+		}
 	}
 	if err := artifactdb.Write(iterDir, "pr-title", "Run human-review PR\n"); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -1450,6 +1589,75 @@ if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
 fi
 
 if [ "$1" = "pr" ] && [ "$2" = "create" ]; then
+  echo "1"
+  exit 0
+fi
+
+if [ "$1" = "pr" ] && [ "$2" = "checks" ]; then
+  echo "checks passed"
+  exit 0
+fi
+
+if [ "$1" = "pr" ] && [ "$2" = "merge" ]; then
+  exit 1
+fi
+
+exit 0
+`
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeReviewFeedbackFakeGH(t *testing.T, dir, logPath, createdPath string) {
+	t.Helper()
+	path := filepath.Join(dir, "gh")
+	script := `#!/bin/sh
+echo "$@" >> ` + shellQuote(logPath) + `
+
+if [ "$1" = "--version" ]; then
+  echo "gh version fake"
+  exit 0
+fi
+
+if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
+  if [ "$5" = "url" ]; then
+    exit 1
+  fi
+  if [ "$5" = "state,mergedAt,url" ]; then
+    printf 'OPEN\t\thttps://github.com/acme/app/pull/1\n'
+    exit 0
+  fi
+  if [ "$5" = "reviewDecision,latestReviews,comments,updatedAt" ]; then
+cat <<'JSON'
+{
+  "reviewDecision": "CHANGES_REQUESTED",
+  "updatedAt": "2026-06-04T00:03:00Z",
+  "latestReviews": [
+    {
+      "state": "CHANGES_REQUESTED",
+      "body": "Please add the feedback repair file.",
+      "submittedAt": "2026-06-04T00:02:00Z",
+      "url": "https://github.com/acme/app/pull/1#pullrequestreview-1",
+      "author": {"login": "reviewer"}
+    }
+  ],
+  "comments": [
+    {
+      "body": "Also rerun checks on the same PR branch.",
+      "createdAt": "2026-06-04T00:03:00Z",
+      "url": "https://github.com/acme/app/pull/1#issuecomment-1",
+      "author": {"login": "pm"}
+    }
+  ]
+}
+JSON
+    exit 0
+  fi
+fi
+
+if [ "$1" = "pr" ] && [ "$2" = "create" ]; then
+  echo "created" > ` + shellQuote(createdPath) + `
   echo "1"
   exit 0
 fi

@@ -113,7 +113,7 @@ Runtime rules:
 - The CLI runs validation, then the review agent writes a `review-result` handoff.
 - Validation failures and review findings become repair tasks until approval or the configured fix-cycle limit.
 - In PR mode with `reviewMode=auto_merge`, review agents rename the branch, create PR title/body artifacts from the template, create/check/merge the PR through loop commands, and approve only after `pr-state.status=merged`.
-- With `reviewMode=parallel_human_review`, review agents create the PR and run checks, then approve only after `pr-state.status=waiting_for_human`; the CLI records the PR, branch, title, and changed files as pending review context, renders pending PR numbers and titles while continuing other work, cleans local worktrees and branches while preserving the remote PR branch, and starts the next iteration from the base branch. Planners must avoid pending PR changed files and dependent work. If no safe non-overlapping work remains, planners can return `wait_for_pending_prs=true` with an empty task tree so the CLI enters PR review wait mode.
+- With `reviewMode=parallel_human_review`, review agents create the PR and run checks, then approve only after `pr-state.status=waiting_for_human`; the CLI records the PR, branch, title, and changed files as pending review context, renders pending PR numbers and titles while continuing other work, cleans local worktrees and branches while preserving the remote PR branch, and starts the next iteration from the base branch. At iteration boundaries, the CLI removes merged or closed pending PRs before planning. Planners inspect remaining PR feedback with `loop pr feedback <pr>` and can return `repair_pull_request` with tasks so the CLI checks out that PR branch after planning. If no safe non-overlapping work remains, planners can return `wait_for_pending_prs=true` with an empty task tree so the CLI enters PR review wait mode.
 - With `reviewMode=serial_human_review`, review agents create the PR and run checks, then approve only after `pr-state.status=waiting_for_human`; the CLI shows a PR review wait screen and polls every 5 minutes for an external human merge before cleanup or the next iteration. `--human-review` selects this mode.
 - `goal_complete=true` can stop the run only after successful integration and only when `--goal` is non-empty.
 
@@ -271,11 +271,12 @@ Manage the current iteration pull request through agent-facing CLI commands.
 ```bash
 loop pr create [--iteration-dir <dir>|--run <run-id> --iteration <n>]
 loop pr checks [--iteration-dir <dir>|--run <run-id> --iteration <n>]
+loop pr feedback <pr> [--iteration-dir <dir>|--run <run-id> --iteration <n>]
 loop pr logs <job-url-or-id> [--iteration-dir <dir>|--run <run-id> --iteration <n>]
 loop pr merge [--iteration-dir <dir>|--run <run-id> --iteration <n>]
 ```
 
-`loop pr create` reads `pr-title` and `pr-body`, pushes the tracked branch when configured, creates or reuses the pull request, and writes `pr-state`. `loop pr checks` pushes current commits, waits for checks, writes `pr-checks`, and exits non-zero on failed checks with only a concise `errors.log` pointer. `loop pr logs` writes `pr-check-log`. `loop pr merge` runs configured validation, performs a final check wait, merges through `gh`, and records `pr-state.status=merged`.
+`loop pr create` reads `pr-title` and `pr-body`, pushes the tracked branch when configured, creates or reuses the pull request, and writes `pr-state`. `loop pr checks` pushes current commits, waits for checks, writes `pr-checks`, and exits non-zero on failed checks with only a concise `errors.log` pointer. `loop pr feedback` fetches review decisions, latest reviews, comments, and updated time for planner decisions. `loop pr logs` writes `pr-check-log`. `loop pr merge` runs configured validation, performs a final check wait, merges through `gh`, and records `pr-state.status=merged`.
 
 ## `loop issue`
 

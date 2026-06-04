@@ -522,9 +522,9 @@ func allHelpCommands() []helpCommand {
 		},
 		{
 			Path:        []string{"pr"},
-			Usage:       "loop pr <create|checks|logs|merge> ...",
+			Usage:       "loop pr <create|checks|feedback|logs|merge> ...",
 			Summary:     "Create, check, inspect, and merge the current iteration pull request",
-			Description: "Agent-facing PR lifecycle commands. In role-orchestrated PR mode, the review agent writes PR artifacts and uses these commands for creation, checks, logs, and merge.",
+			Description: "Agent-facing PR lifecycle commands. In role-orchestrated PR mode, agents use these commands for creation, checks, review feedback inspection, logs, and merge.",
 			Agent:       true,
 			AgentOnly:   true,
 		},
@@ -542,6 +542,15 @@ func allHelpCommands() []helpCommand {
 			Usage:       "loop pr checks [--iteration-dir <dir>|--run <run-id> --iteration <n>]",
 			Summary:     "Push current commits and wait for pull request checks",
 			Description: "Writes pr-checks. Failed checks exit non-zero with concise errors; inspect pr-checks or fetch job logs before rerunning checks or writing changes_requested findings.",
+			Flags:       iterationLocatorFlags(),
+			Agent:       true,
+			AgentOnly:   true,
+		},
+		{
+			Path:        []string{"pr", "feedback"},
+			Usage:       "loop pr feedback <pr> [--iteration-dir <dir>|--run <run-id> --iteration <n>]",
+			Summary:     "Inspect pull request review decisions and comments",
+			Description: "Fetches reviewDecision, latestReviews, comments, and updatedAt through gh so planners can decide whether a pending human-review PR needs repair.",
 			Flags:       iterationLocatorFlags(),
 			Agent:       true,
 			AgentOnly:   true,
@@ -1015,7 +1024,7 @@ func handoffWriteHelpText() string {
 }
 
 func taskTreeSchemaHelpText() string {
-	return "task-tree={schema_version:1,summary:string,goal_evaluation:string,goal_complete?:bool,wait_for_pending_prs?:bool,tasks:[{id,title,description,depends_on:[],conflicts_with:[],acceptance:[]}]}; ids start with a lowercase letter and contain lowercase letters, digits, or hyphens; wait_for_pending_prs requires an empty tasks array."
+	return "task-tree={schema_version:1,summary:string,goal_evaluation:string,goal_complete?:bool,wait_for_pending_prs?:bool,repair_pull_request?:string,tasks:[{id,title,description,depends_on:[],conflicts_with:[],acceptance:[]}]}; ids start with a lowercase letter and contain lowercase letters, digits, or hyphens; wait_for_pending_prs requires an empty tasks array; repair_pull_request selects an existing pending PR branch and requires tasks."
 }
 
 func taskResultSchemaHelpText() string {

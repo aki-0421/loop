@@ -3,6 +3,7 @@ package pr
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -40,6 +41,23 @@ type PullRequestState struct {
 	State    string
 	MergedAt string
 	URL      string
+}
+
+type ReviewFeedback struct {
+	ReviewDecision string               `json:"review_decision"`
+	UpdatedAt      string               `json:"updated_at,omitempty"`
+	LatestAt       string               `json:"latest_at,omitempty"`
+	Summary        string               `json:"summary,omitempty"`
+	Items          []ReviewFeedbackItem `json:"items,omitempty"`
+}
+
+type ReviewFeedbackItem struct {
+	Kind      string `json:"kind"`
+	State     string `json:"state,omitempty"`
+	Author    string `json:"author,omitempty"`
+	Body      string `json:"body,omitempty"`
+	URL       string `json:"url,omitempty"`
+	CreatedAt string `json:"created_at,omitempty"`
 }
 
 type CommandError struct {
@@ -147,6 +165,139 @@ func (r Runner) ViewState(ctx context.Context, pr string) (PullRequestState, Com
 		state.URL = strings.TrimSpace(fields[2])
 	}
 	return state, result, nil
+}
+
+func (r Runner) ViewReviewFeedback(ctx context.Context, pr string) (ReviewFeedback, CommandResult, error) {
+	if strings.TrimSpace(pr) == "" {
+		return ReviewFeedback{}, CommandResult{}, errors.New("pr identifier is required")
+	}
+	result, err := r.run(ctx, r.ghPath(), "gh", "pr", "view", pr, "--json", "reviewDecision,latestReviews,comments,updatedAt")
+	if err != nil {
+		return ReviewFeedback{}, result, err
+	}
+	feedback, err := parseReviewFeedback(result.Stdout)
+	if err != nil {
+		return ReviewFeedback{}, result, err
+	}
+	return feedback, result, nil
+}
+
+func parseReviewFeedback(data string) (ReviewFeedback, error) {
+	var payload struct {
+		ReviewDecision string `json:"reviewDecision"`
+		UpdatedAt      string `json:"updatedAt"`
+		LatestReviews  []struct {
+			State       string `json:"state"`
+			Body        string `json:"body"`
+			SubmittedAt string `json:"submittedAt"`
+			URL         string `json:"url"`
+			Author      struct {
+				Login string `json:"login"`
+			} `json:"author"`
+		} `json:"latestReviews"`
+		Comments []struct {
+			Body      string `json:"body"`
+			CreatedAt string `json:"createdAt"`
+			URL       string `json:"url"`
+			Author    struct {
+				Login string `json:"login"`
+			} `json:"author"`
+		} `json:"comments"`
+	}
+	if err := json.Unmarshal([]byte(data), &payload); err != nil {
+		return ReviewFeedback{}, err
+	}
+	feedback := ReviewFeedback{
+		ReviewDecision: strings.TrimSpace(payload.ReviewDecision),
+		UpdatedAt:      strings.TrimSpace(payload.UpdatedAt),
+	}
+	for _, review := range payload.LatestReviews {
+		state := strings.TrimSpace(review.State)
+		if !strings.EqualFold(state, "CHANGES_REQUESTED") {
+			continue
+		}
+		item := ReviewFeedbackItem{
+			Kind:      "review",
+			State:     state,
+			Author:    strings.TrimSpace(review.Author.Login),
+			Body:      strings.TrimSpace(review.Body),
+			URL:       strings.TrimSpace(review.URL),
+			CreatedAt: strings.TrimSpace(review.SubmittedAt),
+		}
+		feedback.Items = append(feedback.Items, item)
+	}
+	for _, comment := range payload.Comments {
+		body := strings.TrimSpace(comment.Body)
+		if body == "" {
+			continue
+		}
+		item := ReviewFeedbackItem{
+			Kind:      "comment",
+			Author:    strings.TrimSpace(comment.Author.Login),
+			Body:      body,
+			URL:       strings.TrimSpace(comment.URL),
+			CreatedAt: strings.TrimSpace(comment.CreatedAt),
+		}
+		feedback.Items = append(feedback.Items, item)
+	}
+	sort.Slice(feedback.Items, func(i, j int) bool {
+		return feedback.Items[i].CreatedAt < feedback.Items[j].CreatedAt
+	})
+	for _, item := range feedback.Items {
+		if item.CreatedAt > feedback.LatestAt {
+			feedback.LatestAt = item.CreatedAt
+		}
+	}
+	if feedback.LatestAt == "" && strings.EqualFold(feedback.ReviewDecision, "CHANGES_REQUESTED") {
+		feedback.LatestAt = feedback.UpdatedAt
+	}
+	feedback.Summary = summarizeReviewFeedback(feedback)
+	return feedback, nil
+}
+
+func summarizeReviewFeedback(feedback ReviewFeedback) string {
+	var lines []string
+	if feedback.ReviewDecision != "" {
+		lines = append(lines, "Review decision: "+feedback.ReviewDecision)
+	}
+	start := 0
+	if len(feedback.Items) > 3 {
+		start = len(feedback.Items) - 3
+	}
+	for _, item := range feedback.Items[start:] {
+		kind := firstNonEmpty(item.Kind, "feedback")
+		author := firstNonEmpty(item.Author, "unknown")
+		at := strings.TrimSpace(item.CreatedAt)
+		prefix := kind + " from " + author
+		if at != "" {
+			prefix += " at " + at
+		}
+		body := strings.TrimSpace(item.Body)
+		if body == "" && item.State != "" {
+			body = item.State
+		}
+		if body != "" {
+			lines = append(lines, prefix+": "+truncateFeedbackBody(body, 500))
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+func truncateFeedbackBody(body string, limit int) string {
+	body = strings.Join(strings.Fields(body), " ")
+	if limit <= 0 || len(body) <= limit {
+		return body
+	}
+	return strings.TrimSpace(body[:limit]) + "..."
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }
 
 type CreateOptions struct {

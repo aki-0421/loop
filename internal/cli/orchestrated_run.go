@@ -572,30 +572,33 @@ func runOrchestratedIteration(ctx context.Context, req orchestrationRequest) (re
 	paths.IterationID = iterationID
 	paths.BaseBranch = cfg.Git.BaseBranch
 	paths.InitialBranch = initialBranch
-	paths.IterationBranch = initialBranch
-	paths.CurrentBranch = initialBranch
+	paths.IterationBranch = ""
+	paths.CurrentBranch = cfg.Git.BaseBranch
 	paths.IntegrationMode = cfg.Git.Integration.Mode
 	paths.PRReviewMode = cfg.Git.Integration.PR.ReviewMode
 	paths.PullRequestMode = cfg.Git.Integration.Mode == "pr"
 	paths.RoleOrchestrated = true
-	paths.WorkDir = iterationWorktree
-	paths.IterationWorktree = iterationWorktree
+	paths.WorkDir = req.Root
 	paths.PendingPRs = append([]runstate.PendingPullRequest(nil), req.State.PendingPullRequests...)
 	cleanupRegistered := false
 	if !req.DryRun {
 		defer func() {
 			if retErr != nil && !cleanupRegistered {
-				if issues := cleanupDisposableIterationFiles(activeDir, paths.Events); len(issues) > 0 {
+				_ = runstate.AppendEvent(paths.Events, runstate.Event{"type": "run.error_cleanup.started", "branch": "", "worktree": ""})
+				issues := cleanupDisposableIterationFiles(activeDir, paths.Events)
+				event := runstate.Event{"type": "run.error_cleanup.completed", "branch": "", "worktree": ""}
+				if len(issues) > 0 {
 					appendErrorLog(paths.Errors, "iteration file cleanup failed: "+strings.Join(issues, "; "))
+					event["issues"] = issues
 				}
+				_ = runstate.AppendEvent(paths.Events, event)
 			}
 		}()
 	}
 	req.Renderer.Iteration(iterationID)
-	req.Renderer.Branch(initialBranch)
 	req.State.CurrentIteration = iterationID
-	req.State.Stage = runstate.StageBranchCreated
-	req.State.Iterations = append(req.State.Iterations, runstate.IterationRecord{IterationID: iterationID, BranchInitial: initialBranch, BranchCurrent: initialBranch, Stage: string(req.State.Stage)})
+	req.State.Stage = runstate.StagePlanning
+	req.State.Iterations = append(req.State.Iterations, runstate.IterationRecord{IterationID: iterationID, BranchInitial: initialBranch, Stage: string(req.State.Stage)})
 	_ = runstate.Write(req.StatePath, *req.State)
 
 	if err := os.MkdirAll(iterDir, 0o755); err != nil {
@@ -620,39 +623,15 @@ func runOrchestratedIteration(ctx context.Context, req orchestrationRequest) (re
 	if req.DryRun {
 		return iterationWorkflowResult{Summary: "dry run"}, nil
 	}
-	if err := os.MkdirAll(filepath.Dir(iterationWorktree), 0o755); err != nil {
-		return iterationWorkflowResult{}, codedError{1, err}
-	}
-	if _, err := rootRunner.Run(ctx, "worktree", "add", "-b", initialBranch, iterationWorktree, cfg.Git.BaseBranch); err != nil {
-		return iterationWorkflowResult{}, codedError{1, err}
-	}
-	paths.WorkDir = iterationWorktree
-	paths.IterationWorktree = iterationWorktree
 	if err := writeRuntimeArtifact(paths); err != nil {
 		return iterationWorkflowResult{}, codedError{1, err}
 	}
 	_ = artifactdb.ClearRoleHandoffs(artifactdb.GlobalDBPathForIteration(iterDir), req.RunID, iterationID)
-	cleanup := &iterationCleanup{
-		RootRunner:        rootRunner,
-		BaseBranch:        cfg.Git.BaseBranch,
-		Branch:            initialBranch,
-		WorktreePath:      iterationWorktree,
-		WorkDir:           iterationWorktree,
-		TaskWorktreesRoot: filepath.Join(req.Root, ".loop", "worktrees", req.RunID, iterationID, "tasks"),
-		TaskBranchPrefix:  "task/" + iterationID + "-",
-		LockDir:           filepath.Join(req.Root, ".loop", "locks", sanitizeTempPart(req.RunID)+"-"+sanitizeTempPart(iterationID)+"-task-merge.lock"),
-		ActiveDir:         activeDir,
-		Active:            true,
-		EventLogPath:      paths.Events,
-		OnEvent:           req.Renderer.AgentEvent,
-	}
-	cleanupRegistered = true
-	defer cleanup.OnExit(ctx, req.StatePath, req.State, &retErr)
 
 	req.State.Stage = runstate.StagePlanning
 	_ = runstate.Write(req.StatePath, *req.State)
 	req.Renderer.Stage(runstate.StagePlanning, "planner agent running")
-	tree, err := runPlannerRole(ctx, cfg, iterationWorktree, paths, req.Renderer.AgentEvent)
+	tree, err := runPlannerRole(ctx, cfg, req.Root, paths, req.Renderer.AgentEvent)
 	if err != nil {
 		return iterationWorkflowResult{}, codedError{4, err}
 	}
@@ -679,14 +658,10 @@ func runOrchestratedIteration(ctx context.Context, req orchestrationRequest) (re
 			req.State.Iterations[len(req.State.Iterations)-1].ShouldFullyStop = false
 			req.State.Stage = runstate.StagePullRequest
 			_ = runstate.Write(req.StatePath, *req.State)
-			issues := cleanup.cleanup(ctx)
-			if activeIssues := cleanupDisposableIterationFiles(paths.ActiveDir, paths.Events); len(activeIssues) > 0 {
-				issues = append(issues, activeIssues...)
-			}
+			issues := cleanupDisposableIterationFiles(paths.ActiveDir, paths.Events)
 			if len(issues) > 0 {
 				appendErrorLog(paths.Errors, "pending PR wait cleanup failed: "+strings.Join(issues, "; "))
 			}
-			cleanup.Active = false
 			if err := waitForPendingPullRequestUpdate(runGracefulContext(ctx), req.Root, cfg, req.State, req.StatePath, paths, req.Renderer); err != nil {
 				if runGracefulShutdownRequested(ctx) {
 					return iterationWorkflowResult{}, codedError{interruptExitCode, nil}
@@ -695,13 +670,67 @@ func runOrchestratedIteration(ctx context.Context, req orchestrationRequest) (re
 			}
 			return iterationWorkflowResult{Summary: tree.Summary, GoalComplete: false, GoalEvaluation: tree.GoalEvaluation}, nil
 		}
-		_ = cleanup.cleanup(ctx)
 		if issues := cleanupDisposableIterationFiles(paths.ActiveDir, paths.Events); len(issues) > 0 {
 			appendErrorLog(paths.Errors, "iteration file cleanup failed: "+strings.Join(issues, "; "))
 		}
-		cleanup.Active = false
 		return iterationWorkflowResult{Summary: tree.Summary, GoalComplete: goalComplete, GoalEvaluation: tree.GoalEvaluation}, nil
 	}
+
+	pendingPRRepair, err := pendingPullRequestRepairFromTree(req.State.PendingPullRequests, tree)
+	if err != nil {
+		return iterationWorkflowResult{}, codedError{4, err}
+	}
+	if pendingPRRepair != nil && (cfg.Git.Integration.Mode != "pr" || cfg.Git.Integration.PR.ReviewMode != config.ReviewModeParallelHumanReview) {
+		return iterationWorkflowResult{}, codedError{4, errors.New("repair_pull_request requires parallel_human_review PR mode")}
+	}
+	currentBranch := initialBranch
+	if pendingPRRepair != nil {
+		currentBranch = pendingPRRepair.Branch
+		paths.PendingPRRepair = pendingPRRepair
+		paths.AgentPromptExtra = pendingPRRepairPrompt(*pendingPRRepair)
+	}
+	paths.IterationBranch = currentBranch
+	paths.CurrentBranch = currentBranch
+	paths.BranchRenamed = currentBranch != initialBranch
+	paths.WorkDir = iterationWorktree
+	paths.IterationWorktree = iterationWorktree
+	req.Renderer.Branch(currentBranch)
+	req.State.Stage = runstate.StageBranchCreated
+	req.State.Iterations[len(req.State.Iterations)-1].BranchCurrent = currentBranch
+	req.State.Iterations[len(req.State.Iterations)-1].Stage = string(req.State.Stage)
+	_ = runstate.Write(req.StatePath, *req.State)
+	if err := os.MkdirAll(filepath.Dir(iterationWorktree), 0o755); err != nil {
+		return iterationWorkflowResult{}, codedError{1, err}
+	}
+	if pendingPRRepair != nil {
+		if err := addPendingPRRepairWorktree(ctx, rootRunner, strings.TrimSpace(pendingPRRepair.Branch), iterationWorktree); err != nil {
+			return iterationWorkflowResult{}, codedError{1, err}
+		}
+		_ = runstate.AppendEvent(paths.Events, runstate.Event{"type": "pr.human_review.repair_started", "pr": pendingPRRepair.PR, "branch": pendingPRRepair.Branch})
+	} else {
+		if _, err := rootRunner.Run(ctx, "worktree", "add", "-b", initialBranch, iterationWorktree, cfg.Git.BaseBranch); err != nil {
+			return iterationWorkflowResult{}, codedError{1, err}
+		}
+	}
+	if err := writeRuntimeArtifact(paths); err != nil {
+		return iterationWorkflowResult{}, codedError{1, err}
+	}
+	cleanup := &iterationCleanup{
+		RootRunner:        rootRunner,
+		BaseBranch:        cfg.Git.BaseBranch,
+		Branch:            currentBranch,
+		WorktreePath:      iterationWorktree,
+		WorkDir:           iterationWorktree,
+		TaskWorktreesRoot: filepath.Join(req.Root, ".loop", "worktrees", req.RunID, iterationID, "tasks"),
+		TaskBranchPrefix:  "task/" + iterationID + "-",
+		LockDir:           filepath.Join(req.Root, ".loop", "locks", sanitizeTempPart(req.RunID)+"-"+sanitizeTempPart(iterationID)+"-task-merge.lock"),
+		ActiveDir:         activeDir,
+		Active:            true,
+		EventLogPath:      paths.Events,
+		OnEvent:           req.Renderer.AgentEvent,
+	}
+	cleanupRegistered = true
+	defer cleanup.OnExit(ctx, req.StatePath, req.State, &retErr)
 
 	var allCommits []gitx.Commit
 	var completedTaskResults []workflow.TaskResult
@@ -851,7 +880,19 @@ func finalizeOrchestratedIteration(ctx context.Context, req orchestrationRequest
 				return iterationWorkflowResult{}, codedError{6, errors.New("approved human-review PR must run `loop pr checks` and leave pr-state.status=waiting_for_human")}
 			}
 			changedFiles, _ := changedFilesForBranch(ctx, gitx.Runner{Dir: iterationWorktree}, cfg.Git.BaseBranch, finalBranch)
-			upsertPendingPullRequest(req.State, pendingPullRequestFromState(req.RunID, iterationID, state, changedFiles))
+			pending := pendingPullRequestFromState(req.RunID, iterationID, state, changedFiles)
+			if paths.PendingPRRepair != nil && paths.PendingPRRepair.PR == pending.PR {
+				if feedback, _, err := prRunner(cfg, iterationWorktree).ViewReviewFeedback(ctx, pending.PR); err == nil {
+					pending.ReviewDecision = feedback.ReviewDecision
+					pending.ReviewFeedback = feedback.Summary
+					pending.ReviewFeedbackAt = feedback.LatestAt
+					pending.FeedbackHandledAt = firstNonEmpty(feedback.LatestAt, paths.PendingPRRepair.FeedbackHandledAt)
+				} else {
+					pending.FeedbackHandledAt = firstNonEmpty(paths.PendingPRRepair.ReviewFeedbackAt, paths.PendingPRRepair.FeedbackHandledAt)
+					pending.ReviewDecision = paths.PendingPRRepair.ReviewDecision
+				}
+			}
+			upsertPendingPullRequest(req.State, pending)
 			req.Renderer.PendingPullRequests(req.State.PendingPullRequests)
 			if err := finalizePendingHumanPR(ctx, rootRunner, cleanup, iterationWorktree, req.Root, cfg, finalBranch); err != nil {
 				return iterationWorkflowResult{}, codedError{6, err}
@@ -1073,6 +1114,35 @@ func removePendingPullRequest(state *runstate.State, prID string) {
 	state.PendingPullRequests = out
 }
 
+func pendingPullRequestRepairFromTree(pending []runstate.PendingPullRequest, tree workflow.TaskTree) (*runstate.PendingPullRequest, error) {
+	requested := strings.TrimSpace(tree.RepairPullRequest)
+	if requested == "" {
+		return nil, nil
+	}
+	for i := range pending {
+		if pullRequestMatches(pending[i].PR, requested) {
+			if strings.TrimSpace(pending[i].Branch) == "" {
+				return nil, fmt.Errorf("repair_pull_request %s has no recorded branch", requested)
+			}
+			copy := pending[i]
+			return &copy, nil
+		}
+	}
+	return nil, fmt.Errorf("repair_pull_request %s is not a pending pull request", requested)
+}
+
+func pullRequestMatches(recorded, requested string) bool {
+	recorded = strings.TrimSpace(recorded)
+	requested = strings.TrimSpace(requested)
+	if recorded == "" || requested == "" {
+		return false
+	}
+	if recorded == requested {
+		return true
+	}
+	return pullRequestDisplayID(recorded) == pullRequestDisplayID(requested)
+}
+
 func refreshPendingPullRequests(ctx context.Context, root string, cfg config.Config, state *runstate.State, renderer *runRenderer) bool {
 	if state == nil {
 		return false
@@ -1124,7 +1194,10 @@ func refreshPendingPullRequests(ctx context.Context, root string, cfg config.Con
 			changed = true
 			continue
 		default:
-			pending.Status = "waiting_for_human"
+			if pending.Status != "waiting_for_human" {
+				pending.Status = "waiting_for_human"
+				changed = true
+			}
 			out = append(out, pending)
 		}
 	}
@@ -1205,6 +1278,26 @@ func waitForPendingPullRequestUpdate(ctx context.Context, root string, cfg confi
 			return nil
 		}
 	}
+}
+
+func addPendingPRRepairWorktree(ctx context.Context, runner gitx.Runner, branch, worktree string) error {
+	branch = strings.TrimSpace(branch)
+	if branch == "" {
+		return errors.New("pending PR branch is required")
+	}
+	if localBranchExists(ctx, runner, branch) {
+		_, err := runner.Run(ctx, "worktree", "add", worktree, branch)
+		return err
+	}
+	if remoteBranchExists(ctx, runner, branch) {
+		if _, err := runner.Run(ctx, "fetch", "origin", branch+":refs/heads/"+branch); err != nil {
+			return err
+		}
+		_, err := runner.Run(ctx, "worktree", "add", worktree, branch)
+		return err
+	}
+	_, err := runner.Run(ctx, "worktree", "add", worktree, branch)
+	return err
 }
 
 func changedFilesForBranch(ctx context.Context, runner gitx.Runner, base, branch string) ([]string, error) {
@@ -1645,6 +1738,10 @@ func runRoleAgentOnce(ctx context.Context, cfg config.Config, workDir string, pa
 		"LOOP_PR_MODE":                   strconv.FormatBool(paths.PullRequestMode),
 		"LOOP_ROLE_ORCHESTRATED":         strconv.FormatBool(paths.RoleOrchestrated),
 	}
+	if paths.PendingPRRepair != nil {
+		env["LOOP_REPAIR_PR"] = paths.PendingPRRepair.PR
+		env["LOOP_REPAIR_PR_BRANCH"] = paths.PendingPRRepair.Branch
+	}
 	if strings.TrimSpace(paths.TaskDir) != "" {
 		env["LOOP_TASK_DIR"] = paths.TaskDir
 	}
@@ -1699,6 +1796,11 @@ func appendRoleRestartEvent(paths pathSet, role, taskID string, attempt int, pre
 	}
 }
 
+func pendingPRRepairPrompt(pending runstate.PendingPullRequest) string {
+	data, _ := json.MarshalIndent(pending, "", "  ")
+	return "Selected pending pull request feedback must be addressed in this iteration. Plan and implement only the work needed to satisfy the PR review feedback, then rerun the existing PR checks on the same branch.\n\nSelected pull request:\n\n```json\n" + string(data) + "\n```"
+}
+
 func plannerRevisionPrompt(tree workflow.TaskTree, completed []workflow.TaskResult, discarded discardedTask, revision int) string {
 	payload := map[string]any{
 		"revision":       revision,
@@ -1722,10 +1824,16 @@ func buildRolePrompt(role string, paths pathSet, task workflow.Task, tree any, t
 	b.WriteString("Read runtime context with `loop iteration read runtime` and the instruction with `loop iteration read instruction`.\n")
 	b.WriteString("Do not run Git or GitHub commands directly; use loop-owned commands for commits, branch renames, pull requests, handoffs, and task merges.\n")
 	b.WriteString("Use `loop help agent handoff write` for the current handoff schema and command flags if needed.\n")
+	if paths.PendingPRRepair != nil {
+		b.WriteString("This iteration resumes an existing human-review pull request branch. Address only the selected PR feedback and keep the work on the existing PR branch.\n")
+	}
 	if len(paths.PendingPRs) > 0 {
 		data, _ := json.MarshalIndent(paths.PendingPRs, "", "  ")
-		b.WriteString("Runtime includes review-pending pull requests. Treat their changed_files as reserved work and avoid planning tasks that are likely to overlap, conflict with, or depend on those changes until the PRs merge.\n")
-		b.WriteString("If every safe implementation area is blocked by review-pending PRs, write an empty task tree with `wait_for_pending_prs: true` so the CLI enters PR review wait mode instead of inventing overlapping work.\n")
+		if paths.PendingPRRepair == nil {
+			b.WriteString("Runtime includes review-pending pull requests. Before planning unrelated implementation work, inspect open pending PRs from oldest to newest with `loop pr feedback <pr>` and compare the latest feedback timestamp with each record's feedback_handled_at. If an unhandled review comment or change-request review needs code changes, return a task tree with `repair_pull_request` set to that PR and tasks that address only that feedback.\n")
+			b.WriteString("For pending PRs that do not need repair, treat their changed_files as reserved work and avoid planning tasks that are likely to overlap, conflict with, or depend on those changes until the PRs merge.\n")
+			b.WriteString("If every safe implementation area is blocked by review-pending PRs, write an empty task tree with `wait_for_pending_prs: true` so the CLI enters PR review wait mode instead of inventing overlapping work.\n")
+		}
 		b.WriteString("\nReview-pending pull requests:\n\n```json\n" + string(data) + "\n```\n")
 	}
 	switch role {
@@ -1756,7 +1864,11 @@ func buildRolePrompt(role string, paths pathSet, task workflow.Task, tree any, t
 		if paths.PullRequestMode {
 			switch paths.PRReviewMode {
 			case config.ReviewModeParallelHumanReview, config.ReviewModeSerialHumanReview:
-				b.WriteString("\nIn human-review pull request mode, before writing an approved review-result you must rename the iteration branch with `loop branch rename`, read the template with `loop iteration read pr-template`, write `pr-title` and `pr-body`, run `loop pr create`, and run `loop pr checks`. Do not run `loop pr merge`; after checks pass, `pr-state.status` must be `waiting_for_human` so a human can review and merge externally. If checks fail, inspect logs as needed and write `changes_requested` findings instead of approving.\n")
+				if paths.PendingPRRepair != nil {
+					b.WriteString("\nIn existing human-review PR repair mode, do not rename the branch. Read the template with `loop iteration read pr-template`, write updated `pr-title` and `pr-body` artifacts when useful, run `loop pr create` so the CLI binds to the existing PR, and run `loop pr checks`. Do not run `loop pr merge`; after checks pass, `pr-state.status` must be `waiting_for_human` so a human can review and merge externally. If checks fail, inspect logs as needed and write `changes_requested` findings instead of approving.\n")
+				} else {
+					b.WriteString("\nIn human-review pull request mode, before writing an approved review-result you must rename the iteration branch with `loop branch rename`, read the template with `loop iteration read pr-template`, write `pr-title` and `pr-body`, run `loop pr create`, and run `loop pr checks`. Do not run `loop pr merge`; after checks pass, `pr-state.status` must be `waiting_for_human` so a human can review and merge externally. If checks fail, inspect logs as needed and write `changes_requested` findings instead of approving.\n")
+				}
 			default:
 				b.WriteString("\nIn pull request mode, before writing an approved review-result you must rename the iteration branch with `loop branch rename`, read the template with `loop iteration read pr-template`, write `pr-title` and `pr-body`, run `loop pr create`, run `loop pr checks`, and run `loop pr merge`. If checks fail, inspect logs as needed and write `changes_requested` findings instead of approving.\n")
 			}
