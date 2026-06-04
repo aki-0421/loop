@@ -860,7 +860,7 @@ func (r *runRenderer) frame(width, height int) []string {
 	r.mu.Unlock()
 
 	tasks := append([]taskItem(nil), snapshot.Tasks...)
-	refreshActiveTaskTodos(tasks)
+	refreshVisibleTaskTodos(tasks)
 	if currentTask := firstOpenTask(tasks); currentTask != "" {
 		snapshot.Current = currentTask
 	}
@@ -952,22 +952,32 @@ func firstOpenTask(tasks []taskItem) string {
 	return ""
 }
 
-func refreshActiveTaskTodos(tasks []taskItem) {
+func refreshVisibleTaskTodos(tasks []taskItem) {
 	active := activeTaskIndex(tasks)
-	if active < 0 || active >= len(tasks) {
-		return
+	for i := range tasks {
+		if !shouldRenderTaskTodos(tasks[i], i, active) {
+			continue
+		}
+		items := readTaskTodosForDisplay(tasks[i].TaskDir)
+		if len(items) == 0 {
+			continue
+		}
+		tasks[i].Todos = items
 	}
-	taskDir := strings.TrimSpace(tasks[active].TaskDir)
+}
+
+func readTaskTodosForDisplay(taskDir string) []taskTodoDisplay {
+	taskDir = strings.TrimSpace(taskDir)
 	if taskDir == "" {
-		return
+		return nil
 	}
 	data, err := os.ReadFile(taskTodoPath(taskDir))
 	if err != nil {
-		return
+		return nil
 	}
 	var todos taskTodoFile
 	if err := json.Unmarshal(data, &todos); err != nil {
-		return
+		return nil
 	}
 	items := make([]taskTodoDisplay, 0, len(todos.Items))
 	for _, item := range todos.Items {
@@ -975,12 +985,11 @@ func refreshActiveTaskTodos(tasks []taskItem) {
 		if err != nil {
 			subject = strings.TrimSpace(item.Title)
 		}
-		if subject == "" {
-			continue
+		if subject != "" {
+			items = append(items, taskTodoDisplay{Status: item.Status, Text: subject})
 		}
-		items = append(items, taskTodoDisplay{Status: item.Status, Text: subject})
 	}
-	tasks[active].Todos = items
+	return items
 }
 
 func (r *runRenderer) line(label, message string) {

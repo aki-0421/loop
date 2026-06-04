@@ -469,7 +469,7 @@ func taskListBlock(s rendererSnapshot, symbols dashboardSymbols, screenWidth, bl
 		}
 		text := ellipsize(item.Text, available)
 		rows = append(rows, taskLine{line: padRightPreserve(marker, markerWidth) + gap + text})
-		if i == active {
+		if shouldRenderTaskTodos(item, i, active) {
 			for _, todo := range item.Todos {
 				todoMarker := styledTodoMarker(s, symbols, todo)
 				todoGap := "  "
@@ -510,6 +510,15 @@ func taskListBlock(s rendererSnapshot, symbols dashboardSymbols, screenWidth, bl
 		lines = append(lines, centeredBlockLine(row.line, screenWidth, blockWidth))
 	}
 	return lines
+}
+
+func shouldRenderTaskTodos(item taskItem, index, active int) bool {
+	switch item.Status {
+	case "active", "blocked", "retrying":
+		return true
+	default:
+		return index == active
+	}
 }
 
 func pendingPullRequestBlock(s rendererSnapshot, symbols dashboardSymbols, screenWidth, blockWidth, limit int) []string {

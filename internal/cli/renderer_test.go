@@ -2,6 +2,9 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -397,6 +400,50 @@ func TestRunRendererShowsActiveTaskTodosIndented(t *testing.T) {
 	assertFrameBounds(t, lines, 100, 24)
 }
 
+func TestRunRendererShowsTodosForParallelActiveTasks(t *testing.T) {
+	t.Setenv("LOOP_ASCII", "")
+	t.Setenv("TERM", "xterm-256color")
+	now := time.Now()
+	root := t.TempDir()
+	apiDir := filepath.Join(root, "api")
+	invoiceDir := filepath.Join(root, "invoice")
+	writeTaskTodosForRendererTest(t, apiDir, "api", []taskTodoItem{
+		{Status: "done", Type: "F", Title: "Scope department users", Acceptance: []string{"Department users are scoped."}, CommitMessage: "secure department users API scope", CommitSHA: "abc123", CommitSubject: "F: secure department users API scope"},
+		{Status: "active", Type: "F", Title: "Restore vendor filter", Acceptance: []string{"Vendor filters restore scoped IDs."}, CommitMessage: "scope vendor filter id restoration"},
+	})
+	writeTaskTodosForRendererTest(t, invoiceDir, "invoice", []taskTodoItem{
+		{Status: "active", Type: "F", Title: "Secure upload route", Acceptance: []string{"Uploads are tenant scoped."}, CommitMessage: "secure vendor invoice upload route"},
+		{Status: "pending", Type: "T", Title: "Cover invoice permissions", Acceptance: []string{"Permission tests cover invoices."}, CommitMessage: "cover vendor invoice permissions"},
+	})
+	renderer := &runRenderer{
+		started: now.Add(-time.Minute),
+		tasks: []taskItem{
+			{ID: "api", Status: "active", Text: "Secure department users and vendor filter APIs", TaskDir: apiDir},
+			{ID: "invoice", Status: "active", Text: "Secure vendor invoice upload and download routes", TaskDir: invoiceDir},
+			{ID: "audit", Status: "pending", Text: "Audit remaining scope gaps and run quality gates"},
+		},
+		inputTokens:  100,
+		outputTokens: 50,
+		latestMsg:    "Working parallel task TODOs.",
+	}
+
+	frameLines := renderer.frame(120, 28)
+	frame := stripANSISequences(strings.Join(frameLines, "\n"))
+	for _, want := range []string{
+		"Secure department users and vendor filter APIs",
+		"F: secure department users API scope",
+		"F: scope vendor filter id restoration",
+		"Secure vendor invoice upload and download routes",
+		"F: secure vendor invoice upload route",
+		"T: cover vendor invoice permissions",
+	} {
+		if !strings.Contains(frame, want) {
+			t.Fatalf("parallel task TODO frame missing %q:\n%s", want, frame)
+		}
+	}
+	assertFrameBounds(t, frameLines, 120, 28)
+}
+
 func TestRunRendererPlannerShowsCompactStatusAndTruncatedCommand(t *testing.T) {
 	t.Setenv("LOOP_ASCII", "1")
 	var out bytes.Buffer
@@ -521,6 +568,20 @@ func containsAny(text string, wants []string) bool {
 		}
 	}
 	return false
+}
+
+func writeTaskTodosForRendererTest(t *testing.T, taskDir, taskID string, items []taskTodoItem) {
+	t.Helper()
+	if err := os.MkdirAll(taskDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(taskTodoFile{SchemaVersion: 1, TaskID: taskID, Items: items})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(taskTodoPath(taskDir), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func assertFrameBounds(t *testing.T, lines []string, width, height int) {
