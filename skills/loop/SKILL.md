@@ -1,6 +1,6 @@
 ---
 name: loop
-description: Execute one role inside the loop CLI orchestrator. Use when the CLI asks you to act as planner, coding, or review agent and return strict handoff JSON while using loop-owned commands for Git integration.
+description: Execute one role inside the loop CLI orchestrator. Use when the CLI asks you to act as planner, coding, QA review, or merge agent and return strict handoff JSON while using loop-owned commands for role-owned lifecycle actions.
 version: 1
 ---
 
@@ -12,7 +12,7 @@ You are running inside the `loop` harness. The CLI owns worktrees, validation, c
 
 - Do not run `git add`, `git commit`, branch rename/switch commands, `gh pr`, `loop commit`, or `loop iteration close`.
 - Coding agents must use `loop task todo`; commit TODOs create task-branch commits, no_commit TODOs record clean validation or inspection work, and `loop task merge` merges the completed task branch. Do not exit a completed task before that command succeeds.
-- Review agents must use `loop branch rename`, `loop iteration read pr-template`, `loop iteration write pr-title`, `loop iteration write pr-body`, and `loop pr` commands in PR mode.
+- QA review agents must not run branch or PR lifecycle commands. Merge agents must use `loop branch rename`, `loop iteration read pr-template`, `loop iteration write pr-title`, `loop iteration write pr-body`, and `loop pr` commands in PR mode.
 - If you exit before `loop task merge` succeeds, the orchestrator treats the attempt as unmerged, discards that task branch/worktree, and may retry the task in a fresh coding session.
 - Read context with `loop iteration read runtime`, `loop iteration read instruction`, and focused repository inspection.
 - Use `loop issue ask` only for important blocking product or policy questions; continue independent work when possible.
@@ -126,7 +126,9 @@ Use `status: "completed"` only when the task implementation is ready to merge an
 
 ## Review Role
 
-Review the iteration branch after coding and validation. Inspect the diff, task tree, task results, and validation evidence. Focus on whether the integrated code matches the planner's task tree and acceptance criteria, whether the coding-agent results accurately describe the implemented work, and whether you can write an accurate PR title and body from that evidence. If CI or PR checks fail, request changes with concrete repair findings so the coding loop can fix them and return for review.
+Review the iteration branch after coding and validation. Inspect the diff, task tree, task results, validation evidence, browser/UI behavior when relevant, and cross-task acceptance criteria. Focus on whether the integrated code matches the planner's task tree and acceptance criteria, whether the coding-agent results accurately describe the implemented work, and whether code quality is acceptable.
+
+Do not rename branches, create pull requests, run PR checks, merge PRs, or write PR title/body artifacts. Those actions belong to the merge role after QA approval. Do not use `changes_requested` for PR check failures.
 
 ```bash
 loop handoff write review-result --file review-result.json
@@ -145,7 +147,13 @@ Review-result shape:
 }
 ```
 
-In PR mode, inspect `LOOP_PR_REVIEW_MODE` or `loop iteration read runtime` before approval.
+Use `status: "approved"` only when the iteration goals are satisfied, code quality is acceptable, and the integrated branch satisfies the task tree and acceptance criteria. Use `changes_requested` with concrete implementation, QA, validation, or acceptance findings that can be converted into repair tasks. Set `goal_complete` only when a CLI goal exists and the integrated code would satisfy it after successful integration.
+
+## Merge Role
+
+Handle PR lifecycle after QA approval. Do not perform a second code-quality review. Use the task results and approved review evidence to write accurate PR title/body artifacts, then use only loop-owned branch and PR commands.
+
+Inspect `LOOP_PR_REVIEW_MODE` or `loop iteration read runtime` before choosing the merge path.
 
 When `LOOP_PR_REVIEW_MODE=auto_merge`, rename the branch, read the PR template, write PR artifacts, create the PR, wait for checks, and merge:
 
@@ -159,7 +167,7 @@ loop pr checks
 loop pr merge
 ```
 
-When `LOOP_PR_REVIEW_MODE=parallel_human_review` or `serial_human_review`, do the same PR preparation but do not run `loop pr merge`:
+When `LOOP_PR_REVIEW_MODE=parallel_human_review` or `serial_human_review`, do the same PR preparation and checks but do not run `loop pr merge`:
 
 ```bash
 loop branch rename --kind feat concise-branch-subject
@@ -170,4 +178,23 @@ loop pr create
 loop pr checks
 ```
 
-Use `status: "approved"` only when the iteration goals are satisfied, code quality is acceptable, and PR mode has the state required by the review mode: `pr-state.status=merged` for `auto_merge`, or `pr-state.status=waiting_for_human` for human-review modes. Use `changes_requested` with concrete `findings` that can be converted into repair tasks, including failed CI findings. Set `goal_complete` only when a CLI goal exists and the integrated or human-review-ready PR would satisfy it.
+If `loop pr checks` fails, inspect `pr-checks`, `pr-check-log`, or `loop pr logs` as needed and write `merge-result` with `status: "pr_check_failed"` plus concrete repair findings. Do not write `changes_requested` for PR check failures.
+
+```bash
+loop handoff write merge-result --file merge-result.json
+```
+
+Merge-result shape:
+
+```json
+{
+  "schema_version": 1,
+  "status": "merged",
+  "summary": "Merge lifecycle conclusion.",
+  "pr": "https://github.com/org/repo/pull/123",
+  "branch": "feat/example",
+  "findings": []
+}
+```
+
+Use `status: "merged"` only when `pr-state.status=merged`. Use `status: "waiting_for_human"` only when human-review PR checks passed and `pr-state.status=waiting_for_human`. Use `status: "blocked"` when PR lifecycle cannot continue without human intervention for a non-check reason. Use `status: "failed"` for unrecoverable merge-agent failures.

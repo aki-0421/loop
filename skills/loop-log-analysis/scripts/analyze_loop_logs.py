@@ -278,6 +278,7 @@ def summarize_artifacts(iter_dir: Path) -> dict[str, Any]:
     names = [
         "task-tree.json",
         "review-result.json",
+        "merge-result.json",
         "validation.md",
         "errors.log",
         "pr-state.json",

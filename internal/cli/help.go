@@ -273,6 +273,7 @@ func agentHelpArtifacts() []helpArtifact {
 		"pr-state":         true,
 		"prompt":           true,
 		"review-result":    true,
+		"merge-result":     true,
 		"runtime":          true,
 		"task-tree":        true,
 		"validation":       true,
@@ -385,7 +386,8 @@ func renderAgentHelp(commands []helpCommand) string {
 	b.WriteString("rule:write strict role handoff JSON with `loop handoff write`; unknown fields are rejected.\n")
 	b.WriteString("planner:write one AI sprint-sized task-tree for a coherent independently mergeable PR; use few meaningful task boundaries, dependencies, and conflicts.\n")
 	b.WriteString("coding:create task TODOs before edits; process start/change/complete serially; write task-result; run `loop task merge`; resolve conflicts before exit.\n")
-	b.WriteString("review:inspect diff, task results, and validation; in PR mode rename branch, write PR title/body, create/check/merge or wait for human review per runtime mode before approval.\n")
+	b.WriteString("review:inspect diff, task results, validation, browser QA, and acceptance criteria; write review-result only and do not run PR lifecycle commands.\n")
+	b.WriteString("merge:after review approval, handle only PR lifecycle with loop branch/pr commands; write merge-result and use pr_check_failed for PR check failures.\n")
 	for _, cmd := range commands {
 		fmt.Fprintf(&b, "cmd:%s;%s\n", compactUsage(cmd.Usage), compactText(cmd.Summary))
 	}
@@ -498,7 +500,7 @@ func allHelpCommands() []helpCommand {
 			Path:        []string{"run"},
 			Usage:       "loop run <instruction.md> [flags]",
 			Summary:     "Run one or more automated coding iterations",
-			Description: "Runs the CLI-owned role workflow: planner, coding agents, review agent, validation, pull request creation, checks, optional post-hoc review waiting, merge, and cleanup.",
+			Description: "Runs the CLI-owned role workflow: planner, coding agents, QA review agent, validation, merge agent pull request lifecycle, optional post-hoc review waiting, merge, and cleanup.",
 			Flags: []helpFlag{
 				{Name: "--goal <text>", Description: "natural-language stop condition"},
 				{Name: "--max-iterations <n>", Description: "maximum iterations; 0 means unlimited", Default: "config value"},
@@ -562,7 +564,7 @@ func allHelpCommands() []helpCommand {
 			Path:        []string{"pr", "checks"},
 			Usage:       "loop pr checks [--iteration-dir <dir>|--run <run-id> --iteration <n>]",
 			Summary:     "Push current commits and wait for pull request checks",
-			Description: "Writes pr-checks. Failed checks exit non-zero with concise errors; inspect pr-checks or fetch job logs before rerunning checks or writing changes_requested findings.",
+			Description: "Writes pr-checks. Failed checks exit non-zero with concise errors; inspect pr-checks or fetch job logs before rerunning checks or writing pr_check_failed findings.",
 			Flags:       iterationLocatorFlags(),
 			Agent:       true,
 			AgentOnly:   true,
@@ -781,7 +783,7 @@ func allHelpCommands() []helpCommand {
 			Path:        []string{"iteration", "close"},
 			Usage:       "loop iteration close (--merge|--skip-merge) [--iteration-dir <dir>|--run <run-id> --iteration <n>] --should-stop <bool> --goal-evaluation <text> [flags]",
 			Summary:     "Close the iteration with merge or skip-merge",
-			Description: "Write validated terminal iteration close JSON. Role-orchestrated runs use planner, task, and review handoffs instead.",
+			Description: "Write validated terminal iteration close JSON. Role-orchestrated runs use planner, task, review, and merge handoffs instead.",
 			Flags: append(iterationLocatorFlags(),
 				helpFlag{Name: "--merge", Description: "integrate this iteration; requires renamed branch, clean tree, commits, validation, and merged PR in PR mode", Default: "false"},
 				helpFlag{Name: "--skip-merge", Description: "do not incorporate this branch", Default: "false"},
@@ -800,13 +802,13 @@ func allHelpCommands() []helpCommand {
 			Path:        []string{"handoff"},
 			Usage:       "loop handoff <write|read|list> ...",
 			Summary:     "Read and write role handoff JSON",
-			Description: "Role agents use handoffs to return planner task trees, coding task results, and review decisions to the CLI-owned orchestrator.",
+			Description: "Role agents use handoffs to return planner task trees, coding task results, QA review decisions, and merge results to the CLI-owned orchestrator.",
 			Agent:       true,
 			AgentOnly:   true,
 		},
 		{
 			Path:        []string{"handoff", "write"},
-			Usage:       "loop handoff write <task-tree|task-result|review-result> [--task <id>] [--file <path>|--value <json>]",
+			Usage:       "loop handoff write <task-tree|task-result|review-result|merge-result> [--task <id>] [--file <path>|--value <json>]",
 			Summary:     "Write and validate one role handoff",
 			Description: handoffWriteHelpText(),
 			Flags: append(iterationLocatorFlags(),
@@ -819,7 +821,7 @@ func allHelpCommands() []helpCommand {
 		},
 		{
 			Path:        []string{"handoff", "read"},
-			Usage:       "loop handoff read <task-tree|task-result|review-result> [--task <id>]",
+			Usage:       "loop handoff read <task-tree|task-result|review-result|merge-result> [--task <id>]",
 			Summary:     "Read one role handoff",
 			Description: "Reads the DB-backed handoff for the current run and iteration.",
 			Flags: append(iterationLocatorFlags(),
@@ -830,7 +832,7 @@ func allHelpCommands() []helpCommand {
 		},
 		{
 			Path:        []string{"handoff", "list"},
-			Usage:       "loop handoff list [--kind <task-tree|task-result|review-result>]",
+			Usage:       "loop handoff list [--kind <task-tree|task-result|review-result|merge-result>]",
 			Summary:     "List role handoffs for the current iteration",
 			Description: "Prints handoff kinds and task ids.",
 			Flags: append(iterationLocatorFlags(),
@@ -1072,13 +1074,14 @@ func commitTypeHelpText() string {
 
 func handoffWriteHelpText() string {
 	return strings.Join([]string{
-		"Planner agents write `task-tree`, coding agents write `task-result` with `--task`, and review agents write `review-result`.",
+		"Planner agents write `task-tree`, coding agents write `task-result` with `--task`, QA review agents write `review-result`, and merge agents write `merge-result`.",
 		"Use `--file <path>` for normal handoffs; `--value <json>` is only for short literal JSON.",
 		"JSON is strict and unknown fields are rejected.",
 		"Authoritative schemas:",
 		taskTreeSchemaHelpText(),
 		taskResultSchemaHelpText(),
 		reviewResultSchemaHelpText(),
+		mergeResultSchemaHelpText(),
 	}, " ")
 }
 
@@ -1092,6 +1095,10 @@ func taskResultSchemaHelpText() string {
 
 func reviewResultSchemaHelpText() string {
 	return "review-result={schema_version:1,status:approved|changes_requested|failed,summary:string,goal_evaluation:string,goal_complete?:bool,findings?:[{id,task_id?,title,description,acceptance:[]}]}."
+}
+
+func mergeResultSchemaHelpText() string {
+	return "merge-result={schema_version:1,status:merged|waiting_for_human|pr_check_failed|blocked|failed,summary:string,pr?:string,branch?:string,findings?:[{id,task_id?,title,description,acceptance:[]}]}; pr_check_failed requires findings."
 }
 
 func iterationLocatorFlags() []helpFlag {

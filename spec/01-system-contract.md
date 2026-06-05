@@ -6,11 +6,12 @@
 
 1. Read a persistent Markdown instruction file.
 2. Load recent GitHub PR, Issue, and comment context from the local `.loop/loop.db` cache.
-3. Run the configured adapter as planner, coding, and review agents with compact role prompts.
+3. Run the configured adapter as planner, coding, QA review, and merge agents with compact role prompts.
 4. Validate the planner task tree, schedule coding tasks by dependency and conflict metadata, and run coding agents in CLI-created worktrees.
 5. Require coding agents to create initial task-local TODOs before editing, allow pending follow-up TODOs after the fixed completed/current boundary, complete commit TODOs as CLI-created task-branch commits, complete no_commit TODOs only when they leave no repository changes, then complete `loop task merge` to merge the task branch into the iteration branch while preserving task commit history.
-6. Require review agents to rename the iteration branch, create PR text from the template, create/check/merge the pull request through `loop pr`, or perform local merge mode when configured.
-7. Repeat until role output reports `goal_complete=true` for a CLI-provided goal, the iteration limit is reached, or a terminal error is recorded.
+6. Require QA review agents to approve or return repair findings based on the integrated branch, task tree, validation evidence, and cross-task acceptance criteria.
+7. In PR mode, require merge agents to rename the iteration branch, create PR text from the template, create/check/merge the pull request through `loop pr`, or return `pr_check_failed` findings for failed PR checks.
+8. Repeat until role output reports `goal_complete=true` for a CLI-provided goal, the iteration limit is reached, or a terminal error is recorded.
 
 ## Fully automated default
 
@@ -23,7 +24,7 @@ Runs are fully automated:
 - Missing information is handled by making a local, explicit assumption and continuing.
 - After creating a clarification Issue, agents continue unrelated work when possible. The review or planner handoff reports when external context prevents useful progress.
 - GitHub sleep mode polls GitHub Issue/PR updates and starts the next iteration when new context appears. In an interactive terminal, any keypress triggers an immediate fetch. Sleep mode is an explicit skip-merge choice and does not reuse the goal-completion stop decision.
-- Local merge, pull, cleanup, and run-state inspection are performed by the CLI according to configuration. In pull request mode, review agents drive PR creation, check waiting, check failure handling, and PR merge through loop commands. `--human-review` pauses after PR creation for external post-hoc review or merge updates.
+- Local merge, pull, cleanup, and run-state inspection are performed by the CLI according to configuration. In pull request mode, merge agents drive PR creation, check waiting, check failure handling, and PR merge through loop commands. `--human-review` pauses after PR creation for external post-hoc review or merge updates.
 
 ## Iteration Scope
 
@@ -64,8 +65,9 @@ The agent owns:
 
 - Planner task-tree content.
 - Code edits for assigned coding tasks.
-- Task-result and review-result handoffs.
+- Task-result, review-result, and merge-result handoffs.
 - Review findings that can become repair tasks.
+- PR check findings that can become repair tasks.
 - Validation command selection when not configured by the repository.
 
 ## Skill-based customization

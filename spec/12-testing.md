@@ -57,6 +57,7 @@ Environment controls:
 | `LOOP_ROLE=planner` | Write a deterministic `task-tree` handoff. |
 | `LOOP_ROLE=coding` | Create a task TODO, stage and inspect it through `loop task todo stage`, commit it through `loop task todo complete`, write a `task-result` handoff, and complete `loop task merge`. |
 | `LOOP_ROLE=review` | Write an approved `review-result` handoff. |
+| `LOOP_ROLE=merge` | Write a terminal `merge-result` handoff or a `pr_check_failed` repair finding. |
 | `LOOP_FAKE_AGENT_SEQUENCE` | Comma-separated modes consumed by successive agent invocations. |
 | `LOOP_FAKE_AGENT_COUNT_FILE` | Counter file used with `LOOP_FAKE_AGENT_SEQUENCE` across process invocations. |
 

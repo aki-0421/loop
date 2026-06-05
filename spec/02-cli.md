@@ -107,11 +107,11 @@ Runtime rules:
 - The planner agent writes an AI sprint-level `task-tree` handoff for one coherent PR-sized development goal.
 - The CLI schedules non-conflicting ready tasks and runs coding agents in task worktrees.
 - Coding agents create initial task-local TODOs before editing, add pending follow-up TODOs after the fixed boundary when needed, complete commit TODOs as CLI-created task-branch commits, complete no_commit TODOs only when they leave no repository changes, write `task-result` handoffs, run `loop task merge`, and resolve conflicts before exiting.
-- The CLI runs validation, then the review agent writes a `review-result` handoff.
+- The CLI runs validation, then the QA review agent writes a `review-result` handoff.
 - Validation failures and review findings become repair tasks until approval or the configured fix-cycle limit.
-- In PR mode with `reviewMode=auto_merge`, review agents rename the branch, create PR title/body artifacts from the template, create/check/merge the PR through loop commands, and approve only after `pr-state.status=merged`.
-- With `reviewMode=parallel_human_review`, review agents create the PR and run checks, then approve only after `pr-state.status=waiting_for_human`; the CLI records the PR, branch, title, and changed files as pending review context, renders pending PR numbers and titles while continuing other work, cleans local worktrees and branches while preserving the remote PR branch, and starts the next iteration from the base branch. At iteration boundaries, the CLI removes merged or closed pending PRs before planning. Planners inspect remaining PR feedback with `loop pr feedback <pr>` and can return `repair_pull_request` with tasks so the CLI checks out that PR branch after planning. If no safe non-overlapping work remains, planners can return `wait_for_pending_prs=true` with an empty task tree so the CLI enters PR review wait mode.
-- With `reviewMode=serial_human_review`, review agents create the PR and run checks, then approve only after `pr-state.status=waiting_for_human`; the CLI shows a PR review wait screen and polls every 5 minutes for an external human merge before cleanup or the next iteration. `--human-review` selects this mode.
+- In PR mode with `reviewMode=auto_merge`, merge agents rename the branch, create PR title/body artifacts from the template, create/check/merge the PR through loop commands, and write `merge-result.status=merged` only after `pr-state.status=merged`.
+- With `reviewMode=parallel_human_review`, merge agents create the PR and run checks, then write `merge-result.status=waiting_for_human` only after `pr-state.status=waiting_for_human`; the CLI records the PR, branch, title, and changed files as pending review context, renders pending PR numbers and titles while continuing other work, cleans local worktrees and branches while preserving the remote PR branch, and starts the next iteration from the base branch. At iteration boundaries, the CLI removes merged or closed pending PRs before planning. Planners inspect remaining PR feedback with `loop pr feedback <pr>` and can return `repair_pull_request` with tasks so the CLI checks out that PR branch after planning. If no safe non-overlapping work remains, planners can return `wait_for_pending_prs=true` with an empty task tree so the CLI enters PR review wait mode.
+- With `reviewMode=serial_human_review`, merge agents create the PR and run checks, then write `merge-result.status=waiting_for_human` only after `pr-state.status=waiting_for_human`; the CLI shows a PR review wait screen and polls every 5 minutes for an external human merge before cleanup or the next iteration. `--human-review` selects this mode.
 - `goal_complete=true` can stop the run only after successful integration and only when `--goal` is non-empty.
 
 Example:
@@ -206,7 +206,7 @@ loop iteration close (--merge|--skip-merge) [--iteration-dir <dir>|--run <run-id
 
 If `--iteration-dir` is omitted, commands resolve the current agent iteration automatically. If `--run` is supplied, the CLI resolves `.loop/runs/<run-id>/iterations/<n>` using the configured log directory; `--iteration latest` selects the newest iteration.
 
-Writable artifacts are `plan`, `todo`, `task-tree`, `review-result`, `pr-title`, and `pr-body`. Read-only artifacts include `runtime`, `instruction`, `prompt`, `effective-config`, `validation`, `events`, `errors`, `github-updates`, `pr-state`, `pr-checks`, and `pr-check-log`. Role-orchestrated runs use planner, task, and review handoffs instead of terminal iteration close JSON.
+Writable artifacts are `plan`, `todo`, `task-tree`, `review-result`, `merge-result`, `pr-title`, and `pr-body`. Read-only artifacts include `runtime`, `instruction`, `prompt`, `effective-config`, `validation`, `events`, `errors`, `github-updates`, `pr-state`, `pr-checks`, and `pr-check-log`. Role-orchestrated runs use planner, task, review, and merge handoffs instead of terminal iteration close JSON.
 PR command artifacts `pr-state`, `pr-checks`, and `pr-check-log` are read-only to the agent and written by `loop pr`. `github-updates` is written by the CLI when new GitHub Issue, PR, or comment diffs are observed at an iteration boundary or sleep wake cycle.
 
 `plan` and `todo` use dedicated namespaces instead of generic bulk writes. `loop iteration plan template` prints the CLI-owned plan template, `loop iteration plan write` stores the filled plan, and `loop iteration plan read` reads it. After the plan selects the implementation scope, `loop iteration todo list` prints numbered TODOs; `insert --type <type> <message>`, `edit <n> --type <type> <message>`, and `complete <n>` mutate one TODO item at a time by the 1-based index shown by `list`. TODO `type` and `message` use the same validation as `loop commit`. Generic `loop iteration write plan`, `append plan`, `write todo`, and `append todo` are rejected with guidance to these commands.
@@ -220,12 +220,12 @@ PR command artifacts `pr-state`, `pr-checks`, and `pr-check-log` are read-only t
 Write and inspect role handoff JSON for role-orchestrated runs.
 
 ```bash
-loop handoff write <task-tree|task-result|review-result> [--task <id>] [--file <path>|--value <json>]
-loop handoff read <task-tree|task-result|review-result> [--task <id>]
-loop handoff list [--kind <task-tree|task-result|review-result>]
+loop handoff write <task-tree|task-result|review-result|merge-result> [--task <id>] [--file <path>|--value <json>]
+loop handoff read <task-tree|task-result|review-result|merge-result> [--task <id>]
+loop handoff list [--kind <task-tree|task-result|review-result|merge-result>]
 ```
 
-`task-tree` is written by the planner. `task-result` is written by coding agents and requires `--task`. `review-result` is written by the review agent. The CLI validates each JSON payload and rejects unknown fields before storing the handoff in `.loop/loop.db` and writing durable audit copies in the iteration directory.
+`task-tree` is written by the planner. `task-result` is written by coding agents and requires `--task`. `review-result` is written by the QA review agent. `merge-result` is written by the merge agent. The CLI validates each JSON payload and rejects unknown fields before storing the handoff in `.loop/loop.db` and writing durable audit copies in the iteration directory.
 
 ## `loop task`
 

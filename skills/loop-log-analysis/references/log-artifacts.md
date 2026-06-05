@@ -15,6 +15,7 @@
           agent-events.jsonl
           task-tree.json
           review-result.json
+          merge-result.json
           validation.md
           validation-output-<name>.log
           errors.log
@@ -48,7 +49,7 @@ Some artifacts only exist when that phase happened. `errors.log`, PR artifacts, 
   - `validation.command.completed`: validation command result with `exit_code`.
   - `task.attempt.discarded`: coding attempt was discarded before retry.
   - `task.merge.completed`: task branch merged into the iteration branch.
-  - `git.branch.renamed`: review agent renamed the tracked branch.
+  - `git.branch.renamed`: merge agent renamed the tracked branch.
   - `pr.merge.recovered`: PR merge state was recovered after host-side merge.
   - `iteration.active_temp.cleanup.completed`: disposable active artifacts were removed.
 
@@ -59,7 +60,7 @@ Some artifacts only exist when that phase happened. `errors.log`, PR artifacts, 
 3. Count `agent.started` and `agent.exited` by `agent_type`; missing exits can indicate interruption.
 4. Review non-zero exits from `agent.exited` and `validation.command.completed`.
 5. Inspect discarded task attempts and retry counts before blaming the final task result.
-6. In PR mode, inspect `pr-state.json`, `pr-checks.json`, and `pr-check-log.txt` before concluding review failed.
+6. In PR mode, inspect `merge-result.json`, `pr-state.json`, `pr-checks.json`, and `pr-check-log.txt` before concluding review or merge failed.
 7. Use `validation-output-*.log` only for the focused command that failed; do not paste large logs into the final answer.
 
 ## Token Usage

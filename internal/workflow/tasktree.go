@@ -52,6 +52,15 @@ type ReviewResult struct {
 	Findings       []ReviewFinding `json:"findings,omitempty"`
 }
 
+type MergeResult struct {
+	SchemaVersion int             `json:"schema_version"`
+	Status        string          `json:"status"`
+	Summary       string          `json:"summary"`
+	PR            string          `json:"pr,omitempty"`
+	Branch        string          `json:"branch,omitempty"`
+	Findings      []ReviewFinding `json:"findings,omitempty"`
+}
+
 type ReviewFinding struct {
 	ID          string   `json:"id"`
 	TaskID      string   `json:"task_id,omitempty"`
@@ -96,6 +105,17 @@ func DecodeReviewResult(data []byte) (ReviewResult, error) {
 		return result, err
 	}
 	if problems := ValidateReviewResult(result); len(problems) > 0 {
+		return result, &ValidationError{Problems: problems}
+	}
+	return result, nil
+}
+
+func DecodeMergeResult(data []byte) (MergeResult, error) {
+	var result MergeResult
+	if err := decodeStrict(data, &result); err != nil {
+		return result, err
+	}
+	if problems := ValidateMergeResult(result); len(problems) > 0 {
 		return result, &ValidationError{Problems: problems}
 	}
 	return result, nil
@@ -191,6 +211,38 @@ func ValidateReviewResult(result ReviewResult) []string {
 	}
 	if strings.TrimSpace(result.GoalEvaluation) == "" {
 		problems = append(problems, "goal_evaluation is required")
+	}
+	for i, finding := range result.Findings {
+		prefix := fmt.Sprintf("findings[%d]", i)
+		if !validTaskID(finding.ID) {
+			problems = append(problems, prefix+".id must start with a lowercase letter and contain only lowercase letters, digits, or hyphens")
+		}
+		if strings.TrimSpace(finding.Title) == "" {
+			problems = append(problems, prefix+".title is required")
+		}
+		if strings.TrimSpace(finding.Description) == "" {
+			problems = append(problems, prefix+".description is required")
+		}
+		if len(finding.Acceptance) == 0 {
+			problems = append(problems, prefix+".acceptance must have at least one item")
+		}
+	}
+	return problems
+}
+
+func ValidateMergeResult(result MergeResult) []string {
+	var problems []string
+	if result.SchemaVersion != SchemaVersion {
+		problems = append(problems, "schema_version must be 1")
+	}
+	if !oneOf(result.Status, "merged", "waiting_for_human", "pr_check_failed", "blocked", "failed") {
+		problems = append(problems, "status must be merged, waiting_for_human, pr_check_failed, blocked, or failed")
+	}
+	if strings.TrimSpace(result.Summary) == "" {
+		problems = append(problems, "summary is required")
+	}
+	if result.Status == "pr_check_failed" && len(result.Findings) == 0 {
+		problems = append(problems, "findings must have at least one item when status is pr_check_failed")
 	}
 	for i, finding := range result.Findings {
 		prefix := fmt.Sprintf("findings[%d]", i)

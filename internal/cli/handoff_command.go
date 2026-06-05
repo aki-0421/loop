@@ -58,11 +58,11 @@ func commandHandoffWrite(ctx context.Context, g globals, args []string) error {
 		*iterDir = *dirAlias
 	}
 	if fs.NArg() != 1 {
-		return codedError{2, fmt.Errorf("usage: loop handoff write <task-tree|task-result|review-result> [--task <id>] [--file <path>|--value <json>]")}
+		return codedError{2, fmt.Errorf("usage: loop handoff write <task-tree|task-result|review-result|merge-result> [--task <id>] [--file <path>|--value <json>]")}
 	}
 	kind := normalizeHandoffKind(fs.Arg(0))
 	if kind == "" {
-		return codedError{2, fmt.Errorf("handoff kind must be task-tree, task-result, or review-result")}
+		return codedError{2, fmt.Errorf("handoff kind must be task-tree, task-result, review-result, or merge-result")}
 	}
 	resolvedDir, err := resolveIterationDir(ctx, g, *iterDir, *runID, *iteration)
 	if err != nil {
@@ -122,7 +122,7 @@ func commandHandoffRead(ctx context.Context, g globals, args []string) error {
 		*iterDir = *dirAlias
 	}
 	if fs.NArg() != 1 {
-		return codedError{2, fmt.Errorf("usage: loop handoff read <task-tree|task-result|review-result> [--task <id>]")}
+		return codedError{2, fmt.Errorf("usage: loop handoff read <task-tree|task-result|review-result|merge-result> [--task <id>]")}
 	}
 	kind := normalizeHandoffKind(fs.Arg(0))
 	task := ""
@@ -214,6 +214,12 @@ func validateRoleHandoff(kind, taskID string, data []byte) ([]byte, error) {
 			return nil, err
 		}
 		return workflow.MarshalIndent(result)
+	case "merge-result":
+		result, err := workflow.DecodeMergeResult(data)
+		if err != nil {
+			return nil, err
+		}
+		return workflow.MarshalIndent(result)
 	default:
 		return nil, fmt.Errorf("unknown handoff kind %q", kind)
 	}
@@ -226,6 +232,8 @@ func writeRoleHandoffAudit(iterDir, kind, taskID string, data []byte) error {
 		path = filepath.Join(iterDir, "task-tree.json")
 	case "review-result":
 		path = filepath.Join(iterDir, "review-result.json")
+	case "merge-result":
+		path = filepath.Join(iterDir, "merge-result.json")
 	case "task-result":
 		return writeTaskResultAudit(iterDir, strings.TrimSpace(os.Getenv("LOOP_TASK_DIR")), taskID, data)
 	default:
@@ -316,6 +324,8 @@ func normalizeHandoffKind(kind string) string {
 		return "task-result"
 	case "review-result", "review_result", "review":
 		return "review-result"
+	case "merge-result", "merge_result", "merge":
+		return "merge-result"
 	default:
 		return ""
 	}
@@ -362,6 +372,8 @@ func defaultHandoffFileName(kind string) string {
 		return "task-result.json"
 	case "review-result":
 		return "review-result.json"
+	case "merge-result":
+		return "merge-result.json"
 	default:
 		return ""
 	}

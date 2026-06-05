@@ -16,12 +16,12 @@ Each iteration is CLI-owned:
 4. Schedule ready coding tasks by `depends_on` and `conflicts_with`, with at most `run.maxParallelTasks` active tasks.
 5. For each coding task attempt, create a task branch and worktree from the current iteration branch, run the coding agent, require it to create and complete task-local TODOs before merging, validate its `task-result`, require `loop task merge --type <type> <summary>`, remove the task worktree, and continue only after the task branch has been merged into the iteration branch with its commits preserved.
 6. Run configured validation commands from the iteration worktree.
-7. Run the review agent with the task tree, task results, validation status, and repository diff available.
-8. If validation fails or review returns `changes_requested`, create repair tasks and repeat coding, validation, and review until approval or `run.maxReviewFixCycles` is exhausted.
-9. In PR mode, require the review agent to rename the branch, write PR title/body artifacts, create the PR, wait for checks, and merge through `loop pr` before approval. In local mode, perform local merge after approval.
+7. Run the QA review agent with the task tree, task results, validation status, browser/UI context when relevant, and repository diff available.
+8. If validation fails or QA review returns `changes_requested`, create repair tasks and repeat coding, validation, and review until approval or `run.maxReviewFixCycles` is exhausted.
+9. In PR mode, run the merge agent after QA approval. The merge agent renames the branch, writes PR title/body artifacts, creates the PR, waits for checks, and merges or hands off for human review through `loop pr`. If PR checks fail, it writes `merge-result.status=pr_check_failed` with repair findings. In local mode, perform local merge after QA approval.
 10. Clean task and iteration worktrees and continue until `goal_complete=true`, the iteration limit is reached, or a terminal error occurs.
 
-Agents do not run Git or GitHub commands directly. Coding agents create initial task-local TODOs before editing, may add or reorder pending follow-up TODOs after the fixed done/active/cancelled boundary during implementation, stage and inspect active commit TODOs through `loop task todo stage`, complete commit TODOs through CLI-created task-branch commits, complete no_commit TODOs only when they leave no repository changes, and use `loop task merge` to merge the completed task branch into the iteration branch while preserving task commit history. Review agents use `loop branch rename` and `loop pr` commands for PR integration.
+Agents do not run Git or GitHub commands directly. Coding agents create initial task-local TODOs before editing, may add or reorder pending follow-up TODOs after the fixed done/active/cancelled boundary during implementation, stage and inspect active commit TODOs through `loop task todo stage`, complete commit TODOs through CLI-created task-branch commits, complete no_commit TODOs only when they leave no repository changes, and use `loop task merge` to merge the completed task branch into the iteration branch while preserving task commit history. QA review agents do not run PR lifecycle commands. Merge agents use `loop branch rename` and `loop pr` commands for PR integration.
 
 If a coding agent exits without completing `loop task merge`, the CLI does not merge or salvage that task branch. It discards the unmerged attempt branch and worktree, clears stale task handoff and task TODO state, records a discard event, and starts the next attempt in a fresh branch and worktree until `run.maxTaskAttempts` is exhausted. When attempts are exhausted, or when the agent explicitly runs `loop task discard --reason`, the planner runs again with the discarded task and current plan context; replanning is capped by `run.maxPlanRevisions`.
 
@@ -46,6 +46,7 @@ Durable iteration files include:
     task-merge.json
     agent-events.jsonl
   review-result.json
+  merge-result.json
   pr-state.json
   pr-checks.json
   errors.log
@@ -82,29 +83,35 @@ Review agents write:
 loop handoff write review-result --file review-result.json
 ```
 
-The CLI rejects unknown JSON fields, removed planner/review commit metadata, and invalid dependency, conflict, status, or goal values before proceeding.
+Merge agents write:
+
+```bash
+loop handoff write merge-result --file merge-result.json
+```
+
+The CLI rejects unknown JSON fields, removed planner/review/merge commit metadata, and invalid dependency, conflict, status, or goal values before proceeding.
 
 ## Validation And Repair
 
 Configured validation runs after all currently scheduled coding tasks are merged into the iteration branch. Required validation failures do not integrate. When fix cycles remain, the CLI creates a validation repair task and reruns the coding/review loop.
 
-Review findings are converted into repair tasks. A review agent must provide enough finding detail for the CLI to create tasks with acceptance criteria.
+Review findings and PR check findings are converted into repair tasks. Review and merge agents must provide enough finding detail for the CLI to create tasks with acceptance criteria.
 
 ## Integration
 
 Pull request mode is the primary integration path:
 
-- The review agent renames the branch with `loop branch rename` before PR creation.
-- With `git.integration.pr.reviewMode=auto_merge`, the review agent reads `loop iteration read pr-template`, writes `pr-title` and `pr-body`, then runs `loop pr create`, `loop pr checks`, and `loop pr merge`.
-- With `git.integration.pr.reviewMode=parallel_human_review`, the review agent creates the PR and runs checks but does not merge. `loop pr checks` records `pr-state.status=waiting_for_human`; the CLI records the pending PR title, number, and changed files in run state and later runtime context, renders the pending PRs while continuing other work, cleans local resources, preserves the remote PR branch, and continues from the base branch so the planner can choose non-overlapping work. At each iteration boundary, the CLI removes pending PRs that have merged or closed before planning. The planner runs before any iteration worktree branch is created, inspects remaining pending PR feedback with `loop pr feedback <pr>` from oldest to newest, and can return `repair_pull_request` with repair tasks. After accepting that handoff, the CLI checks out the selected PR branch, runs the repair tasks, pushes the repaired branch, reruns checks, and returns the PR to `waiting_for_human`. If pending PRs reserve every safe implementation area, the planner can return `wait_for_pending_prs=true` with no tasks to put the CLI into PR review wait mode.
-- With `git.integration.pr.reviewMode=serial_human_review`, the review agent creates the PR and runs checks but does not merge. The CLI shows a PR review wait screen and polls every 5 minutes for an external human merge before cleanup and before starting another iteration.
-- If checks fail, the review agent writes `changes_requested` findings instead of approving.
+- The merge agent renames the branch with `loop branch rename` before PR creation.
+- With `git.integration.pr.reviewMode=auto_merge`, the merge agent reads `loop iteration read pr-template`, writes `pr-title` and `pr-body`, then runs `loop pr create`, `loop pr checks`, and `loop pr merge`.
+- With `git.integration.pr.reviewMode=parallel_human_review`, the merge agent creates the PR and runs checks but does not merge. `loop pr checks` records `pr-state.status=waiting_for_human`; the CLI records the pending PR title, number, and changed files in run state and later runtime context, renders the pending PRs while continuing other work, cleans local resources, preserves the remote PR branch, and continues from the base branch so the planner can choose non-overlapping work. At each iteration boundary, the CLI removes pending PRs that have merged or closed before planning. The planner runs before any iteration worktree branch is created, inspects remaining pending PR feedback with `loop pr feedback <pr>` from oldest to newest, and can return `repair_pull_request` with repair tasks. After accepting that handoff, the CLI checks out the selected PR branch, runs the repair tasks, pushes the repaired branch, reruns checks, and returns the PR to `waiting_for_human`. If pending PRs reserve every safe implementation area, the planner can return `wait_for_pending_prs=true` with no tasks to put the CLI into PR review wait mode.
+- With `git.integration.pr.reviewMode=serial_human_review`, the merge agent creates the PR and runs checks but does not merge. The CLI shows a PR review wait screen and polls every 5 minutes for an external human merge before cleanup and before starting another iteration.
+- If checks fail, the merge agent writes `pr_check_failed` findings in `merge-result` instead of using QA `changes_requested`.
 
 Local merge mode remains available for local-only repositories and tests. It squash-merges the approved iteration branch into the base branch.
 
 ## Stop Condition
 
-`goal_complete=true` in planner or review output can stop the run only when the user supplied a non-empty CLI `--goal`. The CLI stops after successful integration. Without a CLI goal, role output cannot mark the full run complete.
+`goal_complete=true` in planner or QA review output can stop the run only when the user supplied a non-empty CLI `--goal`. The CLI stops after successful integration. Without a CLI goal, role output cannot mark the full run complete.
 
 ## Cancellation Cleanup
 

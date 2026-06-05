@@ -107,6 +107,29 @@ func TestValidateTaskResultRequiresDiscardReason(t *testing.T) {
 	}
 }
 
+func TestValidateMergeResultRequiresFindingsForPRCheckFailed(t *testing.T) {
+	result := MergeResult{SchemaVersion: SchemaVersion, Status: "pr_check_failed", Summary: "Checks failed."}
+	if problems := ValidateMergeResult(result); len(problems) == 0 {
+		t.Fatal("expected pr_check_failed without findings to be rejected")
+	}
+	result.Findings = []ReviewFinding{{
+		ID:          "repair-ci",
+		Title:       "Repair CI",
+		Description: "Fix the failing PR check.",
+		Acceptance:  []string{"PR checks pass."},
+	}}
+	if problems := ValidateMergeResult(result); len(problems) != 0 {
+		t.Fatalf("valid pr_check_failed result rejected: %v", problems)
+	}
+}
+
+func TestDecodeMergeResultRejectsUnknownFields(t *testing.T) {
+	_, err := DecodeMergeResult([]byte(`{"schema_version":1,"status":"merged","summary":"Merged.","extra":true}`))
+	if err == nil {
+		t.Fatal("expected unknown merge-result field to be rejected")
+	}
+}
+
 func validTree() TaskTree {
 	return TaskTree{
 		SchemaVersion:  SchemaVersion,

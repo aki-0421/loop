@@ -118,17 +118,17 @@ Modes:
 | Mode | Behavior |
 | --- | --- |
 | `local_merge` | Squash merge the approved iteration branch into the base branch locally. |
-| `pr` | The review agent creates, checks, and merges the pull request through loop-owned PR commands; the CLI verifies merged state before cleanup. |
+| `pr` | The merge agent creates, checks, and merges the pull request through loop-owned PR commands after QA review approval; the CLI verifies merged state before cleanup. |
 
-Pull request mode is the built-in default and uses `gh` commands. In role-orchestrated mode, the review agent reads the PR template, writes `pr-title` and `pr-body`, and then invokes `loop pr create`.
+Pull request mode is the built-in default and uses `gh` commands. In role-orchestrated mode, the merge agent reads the PR template, writes `pr-title` and `pr-body`, and then invokes `loop pr create`.
 
 Pull request review modes:
 
 | Mode | Behavior |
 | --- | --- |
-| `auto_merge` | Fully autonomous mode. The review agent creates the PR, waits for checks, runs `loop pr merge`, and approval requires `pr-state.status=merged`. |
-| `parallel_human_review` | Trust-ramped parallel mode. The review agent creates the PR and waits for checks, `loop pr checks` records `pr-state.status=waiting_for_human`, and the CLI preserves the remote PR for human review while continuing later iterations from the base branch. Runtime context includes pending PR titles, branches, and changed files so planners can avoid overlapping work. At iteration boundaries, the CLI removes merged or closed pending PRs, then planners inspect remaining PR feedback with `loop pr feedback <pr>` and can return `repair_pull_request` to resume that PR branch after planning; when no safe non-overlapping work remains, planners can return `wait_for_pending_prs=true` with no tasks to enter PR review wait mode. |
-| `serial_human_review` | Strict manual mode. The review agent creates the PR and waits for checks, `loop pr checks` records `pr-state.status=waiting_for_human`, and the CLI shows a PR review wait screen and polls every 5 minutes until a human merges the PR externally before cleanup or the next iteration. |
+| `auto_merge` | Fully autonomous mode. The merge agent creates the PR, waits for checks, runs `loop pr merge`, and `merge-result.status=merged` requires `pr-state.status=merged`. |
+| `parallel_human_review` | Trust-ramped parallel mode. The merge agent creates the PR and waits for checks, `loop pr checks` records `pr-state.status=waiting_for_human`, and the CLI preserves the remote PR for human review while continuing later iterations from the base branch. Runtime context includes pending PR titles, branches, and changed files so planners can avoid overlapping work. At iteration boundaries, the CLI removes merged or closed pending PRs, then planners inspect remaining PR feedback with `loop pr feedback <pr>` and can return `repair_pull_request` to resume that PR branch after planning; when no safe non-overlapping work remains, planners can return `wait_for_pending_prs=true` with no tasks to enter PR review wait mode. |
+| `serial_human_review` | Strict manual mode. The merge agent creates the PR and waits for checks, `loop pr checks` records `pr-state.status=waiting_for_human`, and the CLI shows a PR review wait screen and polls every 5 minutes until a human merges the PR externally before cleanup or the next iteration. |
 
 Pull request check timing:
 
@@ -145,7 +145,7 @@ Pull request check timing:
 
 If no checks are reported after the discovery timeout, the check wait is treated as skipped.
 
-`git.integration.pr.mergeWhenChecksPass` is accepted for compatibility with older configs, but role-orchestrated PR merges are initiated by the review agent with `loop pr merge` after checks pass.
+`git.integration.pr.mergeWhenChecksPass` is accepted for compatibility with older configs, but role-orchestrated PR merges are initiated by the merge agent with `loop pr merge` after checks pass.
 
 ## `validation`
 

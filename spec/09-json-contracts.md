@@ -64,6 +64,21 @@ Required fields:
 
 Each finding has `id`, optional `task_id`, `title`, `description`, and `acceptance`. Findings must be specific enough for the CLI to create repair tasks.
 
+### Merge Result
+
+Required fields:
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `schema_version` | integer | Current value is `1`. |
+| `status` | enum | `merged`, `waiting_for_human`, `pr_check_failed`, `blocked`, or `failed`. |
+| `summary` | string | Merge lifecycle summary. |
+| `pr` | string | Optional PR URL or number. |
+| `branch` | string | Optional PR branch. |
+| `findings` | array | Repair-task findings when `status=pr_check_failed`. |
+
+`pr_check_failed` requires at least one finding. Findings use the same shape as review findings and must be specific enough for the CLI to create repair tasks. PR check failures are reported here, not as review `changes_requested`.
+
 ## Task TODOs
 
 `loop task todo` writes `tasks/<sequence>/task-todo.json`. Coding agents must create initial TODOs before editing the task worktree. Pending TODOs can be inserted, moved, removed, or cancelled. Done, active, and cancelled TODOs are fixed; later additions and moves must stay after the last fixed TODO. TODOs are processed serially. `commit` TODOs are staged with `loop task todo stage <n>` and completed by `loop task todo complete <n>`, which creates the task-branch commit from staged changes before marking the item done. `no_commit` TODOs skip staging and are marked done by `loop task todo complete <n>` only when the task worktree has no repository changes. Cancelled TODOs are skipped by serial start, stage, completion, and merge checks.

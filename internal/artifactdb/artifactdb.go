@@ -142,6 +142,7 @@ var artifactFileNames = map[string]string{
 	"todo":               "todo.md",
 	"task-tree":          "task-tree.json",
 	"review-result":      "review-result.json",
+	"merge-result":       "merge-result.json",
 	"validation":         "validation.md",
 	"pr-title":           "pr-title.txt",
 	"pr-body":            "pr-body.md",

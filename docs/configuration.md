@@ -92,7 +92,7 @@ Review modes:
 
 | Mode | Behavior |
 | --- | --- |
-| `auto_merge` | Fully autonomous default. The review agent creates, checks, and merges the PR through loop commands. |
+| `auto_merge` | Fully autonomous default. The merge agent creates, checks, and merges the PR through loop commands after QA review approval. |
 | `parallel_human_review` | Human reviews and merges PRs externally while `loop` continues later iterations from the base branch. Pending PR branches and changed files are passed to planners so they can avoid overlapping work; planners can inspect feedback and choose a pending PR branch for repair. |
 | `serial_human_review` | Human reviews and merges each PR externally, and `loop` waits for that merge before starting another iteration. |
 

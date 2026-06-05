@@ -428,21 +428,22 @@ type minimalGitConfig struct {
 }
 
 type iterationCleanup struct {
-	Active            bool
-	Integrated        bool
-	DirectIntegrating bool
-	RootRunner        gitx.Runner
-	BaseBranch        string
-	BaseHead          string
-	Branch            string
-	WorkDir           string
-	WorktreePath      string
-	TaskWorktreesRoot string
-	TaskBranchPrefix  string
-	LockDir           string
-	ActiveDir         string
-	EventLogPath      string
-	OnEvent           func(runstate.Event)
+	Active                   bool
+	Integrated               bool
+	DirectIntegrating        bool
+	PreserveIterationOnError bool
+	RootRunner               gitx.Runner
+	BaseBranch               string
+	BaseHead                 string
+	Branch                   string
+	WorkDir                  string
+	WorktreePath             string
+	TaskWorktreesRoot        string
+	TaskBranchPrefix         string
+	LockDir                  string
+	ActiveDir                string
+	EventLogPath             string
+	OnEvent                  func(runstate.Event)
 }
 
 func (c *iterationCleanup) OnCancel(parent context.Context, statePath string, state *runstate.State) {
@@ -517,6 +518,9 @@ func (c *iterationCleanup) cleanup(ctx context.Context) []string {
 	}
 	if c.TaskBranchPrefix != "" {
 		c.cleanupTaskBranches(ctx, record)
+	}
+	if c.PreserveIterationOnError && !c.DirectIntegrating {
+		return issues
 	}
 
 	if c.DirectIntegrating {

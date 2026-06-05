@@ -19,7 +19,7 @@
 
 `loop` is for repositories where you want an AI agent to keep moving.
 
-It is not a chat wrapper that asks for permission at every uncertain edge. It is a controlled autonomous development harness: one Markdown instruction file becomes a sequence of planner, coding, and review agent runs. Each iteration is an AI sprint-sized pull request. The CLI creates branches and worktrees, asks the planner to choose a coherent mergeable sprint, schedules coding tasks, validates the result, has the review agent create/check/merge the PR through loop-owned commands, records the evidence, and then starts the next iteration when the run should continue.
+It is not a chat wrapper that asks for permission at every uncertain edge. It is a controlled autonomous development harness: one Markdown instruction file becomes a sequence of planner, coding, QA review, and merge agent runs. Each iteration is an AI sprint-sized pull request. The CLI creates branches and worktrees, asks the planner to choose a coherent mergeable sprint, schedules coding tasks, validates the result, asks the QA review agent to check the integrated branch, has the merge agent create/check/merge the PR through loop-owned commands, records the evidence, and then starts the next iteration when the run should continue.
 
 The philosophy is autonomy with rails. Agents are expected to read the repository, make explicit local assumptions, use GitHub Issues for important blocking questions, and leave behind the same things good human work leaves behind: small commits, clear branches, validation evidence, pull request context, and durable logs.
 
@@ -119,7 +119,7 @@ loop run task.md \
   --pr
 ```
 
-With a non-empty `--goal`, planner and review handoffs may report `goal_complete=true`; the CLI stops only after the satisfying iteration has integrated successfully.
+With a non-empty `--goal`, planner and QA review handoffs may report `goal_complete=true`; the CLI stops only after the satisfying iteration has integrated successfully.
 
 ## The Model
 
@@ -130,9 +130,10 @@ With a non-empty `--goal`, planner and review handoffs may report `goal_complete
 3. The CLI creates isolated task worktrees and runs non-conflicting coding agents in parallel.
 4. Coding agents create initial task-local TODOs before editing, then may add pending follow-up TODOs after the fixed completed/current boundary as work is discovered. Commit TODOs become CLI-created task-branch commits; no_commit TODOs record clean validation, inspection, or handoff work without creating commits. Completed task branches are merged into the iteration branch through `loop task merge` with their commits preserved.
 5. Configured validation runs from the iteration worktree.
-6. The review agent checks the integrated branch against the task tree, validation evidence, and PR requirements. In PR mode it renames the branch, writes PR text, creates the PR, waits for checks, and follows the configured review mode for merge or human review.
-7. Validation failures and review findings become repair tasks until approval or the fix-cycle limit.
-8. After a successful merge or human-review handoff, `loop` cleans up local worktrees and branches, records the result, and starts the next iteration when the run should continue.
+6. The QA review agent checks the integrated branch against the task tree, validation evidence, browser/UI behavior when relevant, and cross-task acceptance criteria. It writes `review-result` only; it does not run PR lifecycle commands.
+7. In PR mode, the merge agent owns branch rename, PR text, PR creation, checks, merge, or human-review handoff. PR check failures are reported as `merge-result.status=pr_check_failed`, not as QA `changes_requested`.
+8. Validation failures, QA review findings, and PR check findings become repair tasks until approval or the fix-cycle limit.
+9. After a successful merge or human-review handoff, `loop` cleans up local worktrees and branches, records the result, and starts the next iteration when the run should continue.
 
 Agents do not run raw Git or GitHub commands for loop-owned lifecycle work. They use `loop` commands so commits, merges, PRs, checks, cleanup, and audit state stay consistent.
 
@@ -188,7 +189,7 @@ See the [configuration guide](docs/configuration.md) for common overrides and [t
 .loop/loop.db
 ```
 
-Durable iteration artifacts include the instruction snapshot, effective config, event logs, task tree, task results, task merge audits, validation evidence, review result, PR state, PR checks, errors, and GitHub update summaries. Disposable active-work files are cleaned up after the iteration.
+Durable iteration artifacts include the instruction snapshot, effective config, event logs, task tree, task results, task merge audits, validation evidence, review result, merge result, PR state, PR checks, errors, and GitHub update summaries. Disposable active-work files are cleaned up after the iteration.
 
 ## Development
 

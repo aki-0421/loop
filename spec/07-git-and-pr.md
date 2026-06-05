@@ -111,17 +111,17 @@ After commit, the CLI deletes the iteration branch, removes the worktree, checks
 
 ## Pull Request Mode
 
-In role-orchestrated runs, pull request mode is driven by the review agent through loop-owned commands after validation passes:
+In role-orchestrated runs, pull request mode is driven by the merge agent through loop-owned commands after validation passes and the QA review agent approves:
 
-1. Review the iteration branch diff, task results, and validation evidence.
+1. Read the approved review result, task results, and validation evidence for PR text and lifecycle context.
 2. Rename the iteration branch away from `wip/<iteration>` with `loop branch rename`.
 3. Read the PR template with `loop iteration read pr-template` and write `pr-title` and `pr-body`.
 4. Run `loop pr create` and `loop pr checks`.
-5. In `auto_merge` review mode, run `loop pr merge` and approve only after `pr-state.status=merged`.
-6. In `parallel_human_review` review mode, do not run `loop pr merge`; approve only after `loop pr checks` records `pr-state.status=waiting_for_human`. The CLI cleans local resources, keeps the remote PR branch, records the pending PR title, number, and changed files, renders pending PR status while continuing other work, and starts later iterations from the base branch. At each iteration boundary, the CLI removes pending PRs that have merged or closed before planning. Planner runtime context includes the remaining pending PR records; the planner inspects their comments and review decisions from oldest to newest with `loop pr feedback <pr>`. When a PR needs repair, the planner returns `repair_pull_request` with repair tasks. The CLI then checks out the selected PR branch, runs the repair tasks, pushes the repaired branch, reruns checks, and leaves the PR waiting for human review again. If no safe non-overlapping work remains, the planner may return `wait_for_pending_prs=true` with an empty task tree so the CLI waits for pending PR changes.
-7. In `serial_human_review` review mode, do not run `loop pr merge`; approve only after `loop pr checks` records `pr-state.status=waiting_for_human`. The CLI shows PR review wait status, polls every 5 minutes until an external human merge is observed, then pulls the base branch and cleans local resources before any next iteration.
-8. If checks fail, inspect logs when needed and write `changes_requested` findings instead of approval.
-9. After approval, the CLI verifies the state required by the configured review mode, refreshes the base branch when appropriate, and cleans up local runtime resources.
+5. In `auto_merge` review mode, run `loop pr merge` and write `merge-result.status=merged` only after `pr-state.status=merged`.
+6. In `parallel_human_review` review mode, do not run `loop pr merge`; write `merge-result.status=waiting_for_human` only after `loop pr checks` records `pr-state.status=waiting_for_human`. The CLI cleans local resources, keeps the remote PR branch, records the pending PR title, number, and changed files, renders pending PR status while continuing other work, and starts later iterations from the base branch. At each iteration boundary, the CLI removes pending PRs that have merged or closed before planning. Planner runtime context includes the remaining pending PR records; the planner inspects their comments and review decisions from oldest to newest with `loop pr feedback <pr>`. When a PR needs repair, the planner returns `repair_pull_request` with repair tasks. The CLI then checks out the selected PR branch, runs the repair tasks, pushes the repaired branch, reruns checks, and leaves the PR waiting for human review again. If no safe non-overlapping work remains, the planner may return `wait_for_pending_prs=true` with an empty task tree so the CLI waits for pending PR changes.
+7. In `serial_human_review` review mode, do not run `loop pr merge`; write `merge-result.status=waiting_for_human` only after `loop pr checks` records `pr-state.status=waiting_for_human`. The CLI shows PR review wait status, polls every 5 minutes until an external human merge is observed, then pulls the base branch and cleans local resources before any next iteration.
+8. If checks fail, inspect logs when needed and write `merge-result.status=pr_check_failed` with concrete repair findings.
+9. After a terminal merge result, the CLI verifies the state required by the configured review mode, refreshes the base branch when appropriate, and cleans up local runtime resources.
 
 Command shape:
 
@@ -146,7 +146,7 @@ When pull request mode has `waitChecks=true`, `loop pr checks` and `loop pr merg
 
 - `loop pr checks` records full check output in the `pr-checks` artifact and writes only a concise pointer to `errors.log`.
 - The agent fetches detailed job logs with `loop pr logs <job-url-or-id>` when needed.
-- In role-orchestrated mode, the review agent reports failed checks as `changes_requested` findings so repair tasks can be scheduled.
+- In role-orchestrated mode, the merge agent reports failed checks as `pr_check_failed` findings in `merge-result` so repair tasks can be scheduled without conflating PR check failures with QA review changes.
 
 `mergeWhenChecksPass` is retained for configuration compatibility, but PR-mode auto merge is now triggered by `loop pr merge`. In human-review modes, `loop pr merge` is rejected because merging is an external human action.
 

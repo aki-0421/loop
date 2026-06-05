@@ -54,9 +54,10 @@ func TestAgentContextHelpCommandShowsCompactList(t *testing.T) {
 		"rule:read runtime and instruction with `loop iteration read runtime` and `loop iteration read instruction` before acting.",
 		"planner:write one AI sprint-sized task-tree",
 		"coding:create task TODOs before edits",
-		"review:inspect diff, task results, and validation",
+		"review:inspect diff, task results, validation, browser QA",
+		"merge:after review approval",
 		"cmd:loop branch rename",
-		"cmd:loop handoff write task-tree|task-result|review-result",
+		"cmd:loop handoff write task-tree|task-result|review-result|merge-result",
 		"cmd:loop iteration path|read|write",
 		"cmd:loop iteration read artifact",
 		"cmd:loop iteration write artifact",
@@ -136,12 +137,13 @@ func TestAgentContextHelpCommandShowsHandoffWriteSchemas(t *testing.T) {
 		t.Fatalf("loop help handoff write: %v", err)
 	}
 	for _, want := range []string{
-		"cmd:loop handoff write task-tree|task-result|review-result",
+		"cmd:loop handoff write task-tree|task-result|review-result|merge-result",
 		"task-tree={schema_version:1,summary:string,goal_evaluation:string",
 		"depends_on:[]",
 		"conflicts_with:[]",
 		"task-result={schema_version:1,task_id:string,status:completed|discarded|failed",
 		"review-result={schema_version:1,status:approved|changes_requested|failed",
+		"merge-result={schema_version:1,status:merged|waiting_for_human|pr_check_failed",
 		"--file path",
 		"--value json",
 	} {

@@ -37,6 +37,38 @@ func TestIterationCleanupRemovesCancelledWorktreeAndBranch(t *testing.T) {
 	assertBranchMissing(t, repo, "wip/0001")
 }
 
+func TestIterationCleanupPreservesOpenPRWorktreeAndBranchOnError(t *testing.T) {
+	ctx := context.Background()
+	repo := newCleanupRepo(t)
+	runner := gitx.Runner{Dir: repo}
+	worktree := filepath.Join(repo, ".loop", "worktrees", "run", "0001", "iteration")
+	taskWorktree := filepath.Join(repo, ".loop", "worktrees", "run", "0001", "tasks", "repair", "attempt-1")
+	git(t, repo, "worktree", "add", "-b", "feat/open-pr", worktree, "develop")
+	git(t, repo, "worktree", "add", "-b", "task/0001-repair-attempt-1", taskWorktree, "develop")
+
+	cleanup := iterationCleanup{
+		Active:                   true,
+		PreserveIterationOnError: true,
+		RootRunner:               runner,
+		BaseBranch:               "develop",
+		Branch:                   "feat/open-pr",
+		WorktreePath:             worktree,
+		TaskWorktreesRoot:        filepath.Join(repo, ".loop", "worktrees", "run", "0001", "tasks"),
+		TaskBranchPrefix:         "task/0001-",
+	}
+	if issues := cleanup.cleanup(ctx); len(issues) > 0 {
+		t.Fatalf("cleanup issues: %v", issues)
+	}
+	if _, err := os.Stat(worktree); err != nil {
+		t.Fatalf("iteration worktree should be preserved: %v", err)
+	}
+	assertBranchExists(t, repo, "feat/open-pr")
+	if _, err := os.Stat(taskWorktree); !os.IsNotExist(err) {
+		t.Fatalf("task worktree should be removed, err=%v", err)
+	}
+	assertBranchMissing(t, repo, "task/0001-repair-attempt-1")
+}
+
 func TestIterationCleanupResetsCancelledBranchInMainWorktree(t *testing.T) {
 	ctx := context.Background()
 	repo := newCleanupRepo(t)

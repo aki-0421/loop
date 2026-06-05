@@ -123,6 +123,13 @@ func runFakeRoleAgent() int {
 			result.GoalEvaluation = "The fake role workflow completed the supplied goal."
 		}
 		return writeFakeRoleHandoff("review-result", "", result)
+	case "merge":
+		result := workflow.MergeResult{
+			SchemaVersion: workflow.SchemaVersion,
+			Status:        "merged",
+			Summary:       "Fake merge agent merged the iteration.",
+		}
+		return writeFakeRoleHandoff("merge-result", "", result)
 	default:
 		return 1
 	}

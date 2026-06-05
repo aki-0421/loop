@@ -1459,12 +1459,6 @@ func runRoleTestAgent() int {
 		}
 		return exitCode(commandTask(ctx, globals{}, []string{"merge", "--type", "F", "complete", taskID}))
 	case "review":
-		if os.Getenv("LOOP_ROLE_TEST_AGENT_MODE") == "pr-rename-repair" {
-			return runPRRenameRepairReviewAgent(ctx)
-		}
-		if os.Getenv("LOOP_ROLE_TEST_AGENT_MODE") == "pr-human-pending" || os.Getenv("LOOP_ROLE_TEST_AGENT_MODE") == "pr-human-pending-then-wait" || os.Getenv("LOOP_ROLE_TEST_AGENT_MODE") == "pr-human-feedback-repair" {
-			return runPRHumanPendingReviewAgent(ctx)
-		}
 		payload := `{
   "schema_version": 1,
   "status": "approved",
@@ -1473,6 +1467,19 @@ func runRoleTestAgent() int {
   "goal_complete": true
 }`
 		return exitCode(commandHandoff(ctx, globals{}, []string{"write", "review-result", "--value", payload}))
+	case "merge":
+		if os.Getenv("LOOP_ROLE_TEST_AGENT_MODE") == "pr-rename-repair" {
+			return runPRRenameRepairMergeAgent(ctx)
+		}
+		if os.Getenv("LOOP_ROLE_TEST_AGENT_MODE") == "pr-human-pending" || os.Getenv("LOOP_ROLE_TEST_AGENT_MODE") == "pr-human-pending-then-wait" || os.Getenv("LOOP_ROLE_TEST_AGENT_MODE") == "pr-human-feedback-repair" {
+			return runPRHumanPendingMergeAgent(ctx)
+		}
+		payload := `{
+  "schema_version": 1,
+  "status": "merged",
+  "summary": "Fake merge agent merged the iteration."
+}`
+		return exitCode(commandHandoff(ctx, globals{}, []string{"write", "merge-result", "--value", payload}))
 	default:
 		fmt.Fprintf(os.Stderr, "unknown role %q\n", role)
 		return 1
@@ -1508,11 +1515,11 @@ func completeRoleTaskTodo(ctx context.Context) error {
 	return commandTask(ctx, globals{}, []string{"todo", "complete", "1"})
 }
 
-func runPRRenameRepairReviewAgent(ctx context.Context) int {
+func runPRRenameRepairMergeAgent(ctx context.Context) int {
 	iterDir := os.Getenv("LOOP_ITERATION_DIR")
-	reviewCount := filepath.Join(iterDir, "review-count.txt")
-	_, firstErr := os.Stat(reviewCount)
-	_ = os.WriteFile(reviewCount, []byte("seen\n"), 0o644)
+	mergeCount := filepath.Join(iterDir, "merge-count.txt")
+	_, firstErr := os.Stat(mergeCount)
+	_ = os.WriteFile(mergeCount, []byte("seen\n"), 0o644)
 	if os.IsNotExist(firstErr) {
 		if err := commandBranch(ctx, globals{}, []string{"rename", "--kind", "feat", "role-pr-repair"}); err != nil {
 			fmt.Fprintln(os.Stderr, err)
@@ -1536,9 +1543,8 @@ func runPRRenameRepairReviewAgent(ctx context.Context) int {
 		}
 		payload := `{
   "schema_version": 1,
-  "status": "changes_requested",
-  "summary": "Fake review requested a PR check repair.",
-  "goal_evaluation": "The fake PR check failed after branch rename.",
+  "status": "pr_check_failed",
+  "summary": "Fake merge agent requested a PR check repair.",
   "findings": [
     {
       "id": "repair-pr-check",
@@ -1549,7 +1555,7 @@ func runPRRenameRepairReviewAgent(ctx context.Context) int {
     }
   ]
 }`
-		return exitCode(commandHandoff(ctx, globals{}, []string{"write", "review-result", "--value", payload}))
+		return exitCode(commandHandoff(ctx, globals{}, []string{"write", "merge-result", "--value", payload}))
 	}
 	if err := commandPR(ctx, globals{}, []string{"checks"}); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -1561,15 +1567,13 @@ func runPRRenameRepairReviewAgent(ctx context.Context) int {
 	}
 	payload := `{
   "schema_version": 1,
-  "status": "approved",
-  "summary": "Fake review approved the repaired PR.",
-  "goal_evaluation": "The renamed PR branch was repaired and merged.",
-  "goal_complete": true
+  "status": "merged",
+  "summary": "Fake merge agent merged the repaired PR."
 }`
-	return exitCode(commandHandoff(ctx, globals{}, []string{"write", "review-result", "--value", payload}))
+	return exitCode(commandHandoff(ctx, globals{}, []string{"write", "merge-result", "--value", payload}))
 }
 
-func runPRHumanPendingReviewAgent(ctx context.Context) int {
+func runPRHumanPendingMergeAgent(ctx context.Context) int {
 	iterDir := os.Getenv("LOOP_ITERATION_DIR")
 	repairPR := strings.TrimSpace(os.Getenv("LOOP_REPAIR_PR"))
 	if repairPR == "" {
@@ -1596,12 +1600,10 @@ func runPRHumanPendingReviewAgent(ctx context.Context) int {
 	}
 	payload := `{
   "schema_version": 1,
-  "status": "approved",
-  "summary": "Fake review left the PR waiting for human review.",
-  "goal_evaluation": "The PR is ready for human review but not merged.",
-  "goal_complete": true
+  "status": "waiting_for_human",
+  "summary": "Fake merge agent left the PR waiting for human review."
 }`
-	return exitCode(commandHandoff(ctx, globals{}, []string{"write", "review-result", "--value", payload}))
+	return exitCode(commandHandoff(ctx, globals{}, []string{"write", "merge-result", "--value", payload}))
 }
 
 func writeFailOnceThenPassingFakeGH(t *testing.T, dir, logPath, checksPath string) {

@@ -476,7 +476,35 @@ func resumeOrchestratedIteration(ctx context.Context, req orchestrationRequest) 
 		return iterationWorkflowResult{}, codedError{4, err}
 	}
 	updateOrchestratedBranchState(req, cleanup, paths.CurrentBranch)
-	return finalizeOrchestratedIteration(ctx, req, cleanup, paths, tree, review, allCommits, iterationWorktree, initialBranch)
+	if review.Status != "approved" {
+		return iterationWorkflowResult{}, codedError{4, fmt.Errorf("resume review status is %s; start a new run to schedule repair tasks", review.Status)}
+	}
+	var merge workflow.MergeResult
+	if cfg.Git.Integration.Mode == "pr" {
+		var mergeErr error
+		merge, mergeErr = readMergeAudit(iterDir)
+		if mergeErr != nil || resumeStage == runstate.StagePullRequest {
+			req.State.Stage = runstate.StagePullRequest
+			_ = runstate.Write(req.StatePath, *req.State)
+			req.Renderer.Stage(runstate.StagePullRequest, "merge agent running")
+			merge, err = runMergeRole(ctx, cfg, iterationWorktree, paths, tree, completedTaskResults, validationResults, req.Renderer.AgentEvent)
+			preserveIterationIfOpenPR(paths, cleanup)
+			if err != nil {
+				return iterationWorkflowResult{}, codedError{6, err}
+			}
+			if err := writeMergeAudit(iterDir, merge); err != nil {
+				return iterationWorkflowResult{}, codedError{1, err}
+			}
+			if err := refreshTrackedBranch(ctx, iterationWorktree, &paths); err != nil {
+				return iterationWorkflowResult{}, codedError{4, err}
+			}
+			updateOrchestratedBranchState(req, cleanup, paths.CurrentBranch)
+		}
+		if merge.Status == "pr_check_failed" {
+			return iterationWorkflowResult{}, codedError{4, errors.New("resume merge-result is pr_check_failed; start a new run to schedule PR check repair tasks")}
+		}
+	}
+	return finalizeOrchestratedIteration(ctx, req, cleanup, paths, tree, review, merge, allCommits, iterationWorktree, initialBranch)
 }
 
 func iterationRecordByID(state *runstate.State, iterationID string) runstate.IterationRecord {
@@ -706,6 +734,7 @@ func runOrchestratedIteration(ctx context.Context, req orchestrationRequest) (re
 	var completedTaskResults []workflow.TaskResult
 	pendingTasks := append([]workflow.Task(nil), tree.Tasks...)
 	var review workflow.ReviewResult
+	var merge workflow.MergeResult
 	planRevisions := 0
 	for cycle := 0; cycle <= cfg.Run.MaxReviewFixCycles; cycle++ {
 		currentTaskDirs, err := taskDirs.Ensure(pendingTasks)
@@ -786,7 +815,43 @@ func runOrchestratedIteration(ctx context.Context, req orchestrationRequest) (re
 			return iterationWorkflowResult{}, codedError{1, err}
 		}
 		if review.Status == "approved" {
-			break
+			if cfg.Git.Integration.Mode != "pr" {
+				break
+			}
+			req.State.Stage = runstate.StagePullRequest
+			_ = runstate.Write(req.StatePath, *req.State)
+			req.Renderer.Stage(runstate.StagePullRequest, "merge agent running")
+			merge, err = runMergeRole(ctx, cfg, iterationWorktree, paths, tree, completedTaskResults, validationResults, req.Renderer.AgentEvent)
+			preserveIterationIfOpenPR(paths, cleanup)
+			if err != nil {
+				return iterationWorkflowResult{}, codedError{6, err}
+			}
+			if err := refreshTrackedBranch(ctx, iterationWorktree, &paths); err != nil {
+				return iterationWorkflowResult{}, codedError{4, err}
+			}
+			updateOrchestratedBranchState(req, cleanup, paths.CurrentBranch)
+			if err := writeMergeAudit(iterDir, merge); err != nil {
+				return iterationWorkflowResult{}, codedError{1, err}
+			}
+			if merge.Status == "merged" || merge.Status == "waiting_for_human" {
+				break
+			}
+			if merge.Status == "pr_check_failed" {
+				if cycle >= cfg.Run.MaxReviewFixCycles {
+					preserveIterationIfOpenPR(paths, cleanup)
+					return iterationWorkflowResult{}, codedError{4, fmt.Errorf("pull request checks did not pass after %d repair cycles", cfg.Run.MaxReviewFixCycles)}
+				}
+				pendingTasks = repairTasksFromMerge(merge)
+				if len(pendingTasks) == 0 {
+					return iterationWorkflowResult{}, codedError{4, errors.New("merge reported pr_check_failed without repair findings")}
+				}
+				continue
+			}
+			if merge.Status == "blocked" {
+				preserveIterationIfOpenPR(paths, cleanup)
+				return iterationWorkflowResult{}, codedError{6, errors.New(firstNonEmpty(merge.Summary, "merge agent blocked"))}
+			}
+			return iterationWorkflowResult{}, codedError{6, errors.New(firstNonEmpty(merge.Summary, "merge agent failed"))}
 		}
 		if cycle >= cfg.Run.MaxReviewFixCycles {
 			return iterationWorkflowResult{}, codedError{4, fmt.Errorf("review did not approve after %d fix cycles", cfg.Run.MaxReviewFixCycles)}
@@ -797,10 +862,10 @@ func runOrchestratedIteration(ctx context.Context, req orchestrationRequest) (re
 		}
 	}
 
-	return finalizeOrchestratedIteration(ctx, req, cleanup, paths, tree, review, allCommits, iterationWorktree, initialBranch)
+	return finalizeOrchestratedIteration(ctx, req, cleanup, paths, tree, review, merge, allCommits, iterationWorktree, initialBranch)
 }
 
-func finalizeOrchestratedIteration(ctx context.Context, req orchestrationRequest, cleanup *iterationCleanup, paths pathSet, tree workflow.TaskTree, review workflow.ReviewResult, allCommits []gitx.Commit, iterationWorktree, initialBranch string) (iterationWorkflowResult, error) {
+func finalizeOrchestratedIteration(ctx context.Context, req orchestrationRequest, cleanup *iterationCleanup, paths pathSet, tree workflow.TaskTree, review workflow.ReviewResult, merge workflow.MergeResult, allCommits []gitx.Commit, iterationWorktree, initialBranch string) (iterationWorkflowResult, error) {
 	cfg := req.Config
 	rootRunner := gitx.Runner{Dir: req.Root}
 	iterDir := paths.IterationDir
@@ -817,6 +882,9 @@ func finalizeOrchestratedIteration(ctx context.Context, req orchestrationRequest
 	integrated := false
 	pendingPR := false
 	if cfg.Git.Integration.Mode == "pr" {
+		if strings.TrimSpace(merge.Status) == "" {
+			return iterationWorkflowResult{}, codedError{6, errors.New("approved PR-mode review must be followed by a merge-result handoff")}
+		}
 		state, ok, err := readPRState(iterDir)
 		if err != nil {
 			return iterationWorkflowResult{}, codedError{6, err}
@@ -828,8 +896,11 @@ func finalizeOrchestratedIteration(ctx context.Context, req orchestrationRequest
 		cleanup.Branch = finalBranch
 		switch cfg.Git.Integration.PR.ReviewMode {
 		case config.ReviewModeAutoMerge:
+			if merge.Status != "merged" {
+				return iterationWorkflowResult{}, codedError{6, fmt.Errorf("auto-merge merge-result status must be merged, got %s", merge.Status)}
+			}
 			if state.Status != "merged" {
-				return iterationWorkflowResult{}, codedError{6, errors.New("approved PR-mode review must merge the pull request with `loop pr merge` before approval")}
+				return iterationWorkflowResult{}, codedError{6, errors.New("merge agent must merge the pull request with `loop pr merge` before reporting merged")}
 			}
 			if err := finalizeAgentOwnedPR(ctx, rootRunner, cleanup, iterationWorktree, req.Root, cfg, finalBranch); err != nil {
 				return iterationWorkflowResult{}, codedError{6, err}
@@ -846,8 +917,11 @@ func finalizeOrchestratedIteration(ctx context.Context, req orchestrationRequest
 				integrated = true
 				break
 			}
+			if merge.Status != "waiting_for_human" {
+				return iterationWorkflowResult{}, codedError{6, fmt.Errorf("human-review merge-result status must be waiting_for_human, got %s", merge.Status)}
+			}
 			if state.Status != "waiting_for_human" {
-				return iterationWorkflowResult{}, codedError{6, errors.New("approved human-review PR must run `loop pr checks` and leave pr-state.status=waiting_for_human")}
+				return iterationWorkflowResult{}, codedError{6, errors.New("merge agent must run `loop pr checks` and leave pr-state.status=waiting_for_human")}
 			}
 			changedFiles, _ := changedFilesForBranch(ctx, gitx.Runner{Dir: iterationWorktree}, cfg.Git.BaseBranch, finalBranch)
 			pending := pendingPullRequestFromState(req.RunID, iterationID, state, changedFiles)
@@ -871,8 +945,11 @@ func finalizeOrchestratedIteration(ctx context.Context, req orchestrationRequest
 			goalComplete = false
 		case config.ReviewModeSerialHumanReview:
 			if state.Status != "merged" {
+				if merge.Status != "waiting_for_human" {
+					return iterationWorkflowResult{}, codedError{6, fmt.Errorf("human-review merge-result status must be waiting_for_human, got %s", merge.Status)}
+				}
 				if state.Status != "waiting_for_human" {
-					return iterationWorkflowResult{}, codedError{6, errors.New("approved human-review PR must run `loop pr checks` and leave pr-state.status=waiting_for_human")}
+					return iterationWorkflowResult{}, codedError{6, errors.New("merge agent must run `loop pr checks` and leave pr-state.status=waiting_for_human")}
 				}
 				req.State.Stage = runstate.StagePullRequest
 				_ = runstate.Write(req.StatePath, *req.State)
@@ -1651,6 +1728,8 @@ func readCompletedCodingRoleResult(paths pathSet, taskID, branch string, attempt
 
 func runReviewRole(ctx context.Context, cfg config.Config, workDir string, paths pathSet, tree workflow.TaskTree, taskResults []workflow.TaskResult, validationResults []validation.CommandResult, onEvent func(runstate.Event)) (workflow.ReviewResult, error) {
 	promptText := buildRolePrompt("review", paths, workflow.Task{}, tree, taskResults, validationResults)
+	globalDB := artifactdb.GlobalDBPathForIteration(paths.IterationDir)
+	_ = artifactdb.ClearRoleHandoff(globalDB, paths.RunID, paths.IterationID, "review-result", "")
 	var lastErr error
 	var lastDecodeErr error
 	roleAttempt := 1
@@ -1660,7 +1739,7 @@ func runReviewRole(ctx context.Context, cfg config.Config, workDir string, paths
 			appendRoleRestartEvent(paths, "review", "", roleAttempt, lastErr, onEvent)
 		}
 		err := runRoleAgentOnce(ctx, cfg, workDir, paths, "review", "", promptText, onEvent)
-		handoff, decodeErr := artifactdb.ReadRoleHandoff(artifactdb.GlobalDBPathForIteration(paths.IterationDir), paths.RunID, paths.IterationID, "review-result", "")
+		handoff, decodeErr := artifactdb.ReadRoleHandoff(globalDB, paths.RunID, paths.IterationID, "review-result", "")
 		if decodeErr == nil {
 			review, reviewErr := workflow.DecodeReviewResult([]byte(handoff.Payload))
 			if reviewErr == nil {
@@ -1683,6 +1762,44 @@ func runReviewRole(ctx context.Context, cfg config.Config, workDir string, paths
 		return workflow.ReviewResult{}, lastErr
 	}
 	return workflow.ReviewResult{}, lastDecodeErr
+}
+
+func runMergeRole(ctx context.Context, cfg config.Config, workDir string, paths pathSet, tree workflow.TaskTree, taskResults []workflow.TaskResult, validationResults []validation.CommandResult, onEvent func(runstate.Event)) (workflow.MergeResult, error) {
+	promptText := buildRolePrompt("merge", paths, workflow.Task{}, tree, taskResults, validationResults)
+	globalDB := artifactdb.GlobalDBPathForIteration(paths.IterationDir)
+	_ = artifactdb.ClearRoleHandoff(globalDB, paths.RunID, paths.IterationID, "merge-result", "")
+	var lastErr error
+	var lastDecodeErr error
+	roleAttempt := 1
+	restartsUsed := 0
+	for {
+		if roleAttempt > 1 {
+			appendRoleRestartEvent(paths, "merge", "", roleAttempt, lastErr, onEvent)
+		}
+		err := runRoleAgentOnce(ctx, cfg, workDir, paths, "merge", "", promptText, onEvent)
+		handoff, decodeErr := artifactdb.ReadRoleHandoff(globalDB, paths.RunID, paths.IterationID, "merge-result", "")
+		if decodeErr == nil {
+			merge, mergeErr := workflow.DecodeMergeResult([]byte(handoff.Payload))
+			if mergeErr == nil {
+				return merge, nil
+			}
+			decodeErr = mergeErr
+		}
+		lastErr = err
+		lastDecodeErr = decodeErr
+		recovery, recoveryErr := recoverRoleAgent(ctx, cfg, paths, "merge", "", err, &restartsUsed, onEvent)
+		if recoveryErr != nil {
+			return workflow.MergeResult{}, recoveryErr
+		}
+		if err == nil || !recovery {
+			break
+		}
+		roleAttempt++
+	}
+	if lastErr != nil {
+		return workflow.MergeResult{}, lastErr
+	}
+	return workflow.MergeResult{}, lastDecodeErr
 }
 
 func runRoleAgentOnce(ctx context.Context, cfg config.Config, workDir string, paths pathSet, role, taskID, promptText string, onEvent func(runstate.Event)) error {
@@ -1886,7 +2003,18 @@ func buildRolePrompt(role string, paths pathSet, task workflow.Task, tree any, t
 	case "review":
 		treeData, _ := workflow.MarshalIndent(tree)
 		resultsData, _ := workflow.MarshalIndent(taskResults)
-		b.WriteString("\nReview the iteration branch diff, task results, and validation evidence. Approve only if the integrated code matches the planner's task tree and acceptance criteria, the coding-agent results accurately describe the implemented work, code quality is acceptable, and validation is acceptable. Use the task results to write an accurate PR title and body. If CI or PR checks fail, write `changes_requested` findings with concrete repair acceptance so the coding loop can fix them and return for review.\n")
+		b.WriteString("\nAct as the QA / integration review agent. Review the iteration branch diff, task results, validation evidence, browser/UI behavior when relevant, and cross-task acceptance criteria. Approve only if the integrated code matches the planner's task tree and acceptance criteria, the coding-agent results accurately describe the implemented work, code quality is acceptable, and validation is acceptable.\n")
+		b.WriteString("\nDo not rename branches, create pull requests, run PR checks, merge PRs, or write PR title/body artifacts. Those actions belong to the merge agent after QA approval. Use `changes_requested` only for implementation, acceptance, QA, or validation findings that coding agents should repair. Do not use `changes_requested` for PR check failures.\n")
+		b.WriteString("\nTask tree:\n\n```json\n" + string(treeData) + "```\n")
+		b.WriteString("\nTask results:\n\n```json\n" + string(resultsData) + "```\n")
+		b.WriteString("\nValidation status: " + validation.StatusFromResults(validationResults) + "\n")
+		b.WriteString("\nWrite one review-result handoff:\n\n```bash\nloop handoff write review-result --file review-result.json\n```\n")
+		b.WriteString("\nThe JSON must match this schema: " + reviewResultSchemaHelpText() + "\n")
+	case "merge":
+		treeData, _ := workflow.MarshalIndent(tree)
+		resultsData, _ := workflow.MarshalIndent(taskResults)
+		b.WriteString("\nAct as the merge agent. The QA review has already approved the integrated code; do not perform a second code-quality review and do not request implementation changes except for PR check failures reported by `loop pr checks`.\n")
+		b.WriteString("\nUse the task results and approved QA review to prepare accurate PR text, then handle only branch and pull request lifecycle through loop-owned commands.\n")
 		b.WriteString("\nTask tree:\n\n```json\n" + string(treeData) + "```\n")
 		b.WriteString("\nTask results:\n\n```json\n" + string(resultsData) + "```\n")
 		b.WriteString("\nValidation status: " + validation.StatusFromResults(validationResults) + "\n")
@@ -1894,16 +2022,18 @@ func buildRolePrompt(role string, paths pathSet, task workflow.Task, tree any, t
 			switch paths.PRReviewMode {
 			case config.ReviewModeParallelHumanReview, config.ReviewModeSerialHumanReview:
 				if paths.PendingPRRepair != nil {
-					b.WriteString("\nIn existing human-review PR repair mode, do not rename the branch. Read the template with `loop iteration read pr-template`, write updated `pr-title` and `pr-body` artifacts when useful, run `loop pr create` so the CLI binds to the existing PR, and run `loop pr checks`. Do not run `loop pr merge`; after checks pass, `pr-state.status` must be `waiting_for_human` so a human can review and merge externally. If checks fail, inspect logs as needed and write `changes_requested` findings instead of approving.\n")
+					b.WriteString("\nIn existing human-review PR repair mode, do not rename the branch. Read the template with `loop iteration read pr-template`, write updated `pr-title` and `pr-body` artifacts when useful, run `loop pr create` so the CLI binds to the existing PR, and run `loop pr checks`. Do not run `loop pr merge`; after checks pass, `pr-state.status` must be `waiting_for_human` so a human can review and merge externally.\n")
 				} else {
-					b.WriteString("\nIn human-review pull request mode, before writing an approved review-result you must rename the iteration branch with `loop branch rename`, read the template with `loop iteration read pr-template`, write `pr-title` and `pr-body`, run `loop pr create`, and run `loop pr checks`. Do not run `loop pr merge`; after checks pass, `pr-state.status` must be `waiting_for_human` so a human can review and merge externally. If checks fail, inspect logs as needed and write `changes_requested` findings instead of approving.\n")
+					b.WriteString("\nIn human-review pull request mode, rename the iteration branch with `loop branch rename`, read the template with `loop iteration read pr-template`, write `pr-title` and `pr-body`, run `loop pr create`, and run `loop pr checks`. Do not run `loop pr merge`; after checks pass, `pr-state.status` must be `waiting_for_human` so a human can review and merge externally.\n")
 				}
 			default:
-				b.WriteString("\nIn pull request mode, before writing an approved review-result you must rename the iteration branch with `loop branch rename`, read the template with `loop iteration read pr-template`, write `pr-title` and `pr-body`, run `loop pr create`, run `loop pr checks`, and run `loop pr merge`. If checks fail, inspect logs as needed and write `changes_requested` findings instead of approving.\n")
+				b.WriteString("\nIn pull request mode, rename the iteration branch with `loop branch rename`, read the template with `loop iteration read pr-template`, write `pr-title` and `pr-body`, run `loop pr create`, run `loop pr checks`, and run `loop pr merge` after checks pass.\n")
 			}
 		}
-		b.WriteString("\nWrite one review-result handoff:\n\n```bash\nloop handoff write review-result --file review-result.json\n```\n")
-		b.WriteString("\nThe JSON must match this schema: " + reviewResultSchemaHelpText() + "\n")
+		b.WriteString("\nIf `loop pr checks` fails, inspect the loop-owned PR check/log artifacts and write `merge-result` with `status: \"pr_check_failed\"` plus concrete repair findings. Do not write `changes_requested` for PR check failures.\n")
+		b.WriteString("\nWrite one merge-result handoff:\n\n```bash\nloop handoff write merge-result --file merge-result.json\n```\n")
+		b.WriteString("\nUse `status: \"merged\"` only after `pr-state.status=merged`. Use `status: \"waiting_for_human\"` only after human-review PR checks pass and `pr-state.status=waiting_for_human`. Use `status: \"blocked\"` when PR lifecycle cannot continue without human intervention for a non-check reason.\n")
+		b.WriteString("\nThe JSON must match this schema: " + mergeResultSchemaHelpText() + "\n")
 	}
 	if strings.TrimSpace(paths.AgentPromptExtra) != "" {
 		b.WriteString("\n## Additional Context\n\n")
@@ -1936,8 +2066,16 @@ func validationRepairTask(cycle int) workflow.Task {
 }
 
 func repairTasksFromReview(review workflow.ReviewResult) []workflow.Task {
-	tasks := make([]workflow.Task, 0, len(review.Findings))
-	for _, finding := range review.Findings {
+	return repairTasksFromFindings(review.Findings)
+}
+
+func repairTasksFromMerge(merge workflow.MergeResult) []workflow.Task {
+	return repairTasksFromFindings(merge.Findings)
+}
+
+func repairTasksFromFindings(findings []workflow.ReviewFinding) []workflow.Task {
+	tasks := make([]workflow.Task, 0, len(findings))
+	for _, finding := range findings {
 		task := workflow.FindingTask(finding)
 		if task.ID == "" {
 			continue
@@ -1945,6 +2083,21 @@ func repairTasksFromReview(review workflow.ReviewResult) []workflow.Task {
 		tasks = append(tasks, task)
 	}
 	return tasks
+}
+
+func preserveIterationIfOpenPR(paths pathSet, cleanup *iterationCleanup) {
+	if cleanup == nil {
+		return
+	}
+	state, ok, err := readPRState(paths.IterationDir)
+	if err != nil || !ok {
+		return
+	}
+	if strings.TrimSpace(state.PR) == "" || state.Status == "merged" {
+		return
+	}
+	cleanup.PreserveIterationOnError = true
+	cleanup.Branch = firstNonEmpty(strings.TrimSpace(state.Branch), cleanup.Branch)
 }
 
 func writeTaskTreeAudit(iterDir string, tree workflow.TaskTree) error {
@@ -1979,12 +2132,28 @@ func writeReviewAudit(iterDir string, review workflow.ReviewResult) error {
 	return os.WriteFile(filepath.Join(iterDir, "review-result.json"), data, 0o644)
 }
 
+func writeMergeAudit(iterDir string, merge workflow.MergeResult) error {
+	data, err := workflow.MarshalIndent(merge)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(iterDir, "merge-result.json"), data, 0o644)
+}
+
 func readReviewAudit(iterDir string) (workflow.ReviewResult, error) {
 	data, err := os.ReadFile(filepath.Join(iterDir, "review-result.json"))
 	if err != nil {
 		return workflow.ReviewResult{}, err
 	}
 	return workflow.DecodeReviewResult(data)
+}
+
+func readMergeAudit(iterDir string) (workflow.MergeResult, error) {
+	data, err := os.ReadFile(filepath.Join(iterDir, "merge-result.json"))
+	if err != nil {
+		return workflow.MergeResult{}, err
+	}
+	return workflow.DecodeMergeResult(data)
 }
 
 func ensureEmptyFile(path string) error {
