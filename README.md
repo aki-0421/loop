@@ -167,6 +167,12 @@ loop help
 
 Agent subprocesses receive `LOOP_AGENT_CONTEXT=1`, so the same command prints the compact agent-facing reference. Run `loop help <command>` for details in the active context.
 
+Role agents can refresh only their current role contract with:
+
+```sh
+loop role instruction
+```
+
 ## Configuration
 
 `loop init` writes a small `.loop/config.yaml`; built-in defaults supply the rest. The important default for the product philosophy is:

@@ -384,6 +384,7 @@ func renderAgentHelp(commands []helpCommand) string {
 	b.WriteString("rule:read runtime and instruction with `loop iteration read runtime` and `loop iteration read instruction` before acting.\n")
 	b.WriteString("rule:do not run raw git or gh lifecycle commands; use loop commands for branch rename, commits, task merges, PRs, issues, and handoffs.\n")
 	b.WriteString("rule:write strict role handoff JSON with `loop handoff write`; unknown fields are rejected.\n")
+	b.WriteString("rule:run `loop role instruction` for the current LOOP_ROLE-specific operating rules.\n")
 	b.WriteString("planner:write one AI sprint-sized task-tree for a coherent independently mergeable PR; use few meaningful task boundaries, dependencies, and conflicts.\n")
 	b.WriteString("coding:create task TODOs before edits; process start/change/complete serially; write task-result; run `loop task merge`; resolve conflicts before exit.\n")
 	b.WriteString("review:inspect diff, task results, validation, browser QA, and acceptance criteria; write review-result only and do not run PR lifecycle commands.\n")
@@ -630,6 +631,22 @@ func allHelpCommands() []helpCommand {
 			),
 			Agent:     true,
 			AgentOnly: true,
+		},
+		{
+			Path:        []string{"role"},
+			Usage:       "loop role <instruction>",
+			Summary:     "Show the current role's operating instructions",
+			Description: "Agent-facing role reference commands.",
+			Agent:       true,
+			AgentOnly:   true,
+		},
+		{
+			Path:        []string{"role", "instruction"},
+			Usage:       "loop role instruction",
+			Summary:     "Print LOOP_ROLE-specific operating instructions",
+			Description: "Reads LOOP_ROLE from the environment and prints Markdown operating instructions for the current planner, coding, review, or merge role.",
+			Agent:       true,
+			AgentOnly:   true,
 		},
 		{
 			Path:    []string{"resume"},

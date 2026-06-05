@@ -23,7 +23,7 @@ func TestHelpCommandListsCommands(t *testing.T) {
 			t.Fatalf("help output missing %q:\n%s", want, out)
 		}
 	}
-	for _, notWant := range []string{"loop iteration", "loop commit", "loop branch", "loop memory"} {
+	for _, notWant := range []string{"loop iteration", "loop commit", "loop branch", "loop role", "loop memory"} {
 		if strings.Contains(out, notWant) {
 			t.Fatalf("human help should hide %q:\n%s", notWant, out)
 		}
@@ -52,6 +52,7 @@ func TestAgentContextHelpCommandShowsCompactList(t *testing.T) {
 		"agent-help-v1\n",
 		"context:LOOP_AGENT_CONTEXT=1 selects this agent-facing reference for `loop help`",
 		"rule:read runtime and instruction with `loop iteration read runtime` and `loop iteration read instruction` before acting.",
+		"rule:run `loop role instruction` for the current LOOP_ROLE-specific operating rules.",
 		"planner:write one AI sprint-sized task-tree",
 		"coding:create task TODOs before edits",
 		"review:inspect diff, task results, validation, browser QA",
@@ -64,6 +65,7 @@ func TestAgentContextHelpCommandShowsCompactList(t *testing.T) {
 		"cmd:loop issue report",
 		"cmd:loop pr create",
 		"cmd:loop pr merge",
+		"cmd:loop role instruction",
 		"cmd:loop task merge",
 		"artifacts:",
 		"runtime:r:file",
@@ -92,6 +94,7 @@ func TestAgentContextHelpCommandShowsReviewPRDetails(t *testing.T) {
 		{"pr", "checks"},
 		{"pr", "logs"},
 		{"pr", "merge"},
+		{"role", "instruction"},
 		{"iteration", "write"},
 	} {
 		out, err := captureStdout(t, func() error {
@@ -115,6 +118,8 @@ func TestHumanHelpForAgentOnlyTopicsPointsToAgentHelp(t *testing.T) {
 		{"pr", "checks"},
 		{"pr", "logs"},
 		{"pr", "merge"},
+		{"role"},
+		{"role", "instruction"},
 		{"iteration", "write"},
 	} {
 		err := commandHelp(context.Background(), globals{}, topic)

@@ -1971,6 +1971,7 @@ func buildRolePrompt(role string, paths pathSet, task workflow.Task, tree any, t
 	fmt.Fprintf(&b, "\n## Role\n\nYou are the %s agent in a CLI-orchestrated loop iteration.\n", role)
 	b.WriteString("Read runtime context with `loop iteration read runtime` and the instruction with `loop iteration read instruction`.\n")
 	b.WriteString("Do not run Git or GitHub commands directly; use loop-owned commands for commits, branch renames, pull requests, handoffs, and task merges.\n")
+	b.WriteString("Use `loop role instruction` to refresh the current role-specific operating rules if needed.\n")
 	b.WriteString("Use `loop help` for the agent-facing command reference and `loop help handoff write` for the current handoff schema and command flags if needed.\n")
 	if paths.PendingPRRepair != nil {
 		b.WriteString("This iteration resumes an existing human-review pull request branch. Address only the selected PR feedback and keep the work on the existing PR branch.\n")

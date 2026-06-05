@@ -29,9 +29,21 @@ loop help
 loop help <command...>
 ```
 
-`loop help` lists human-facing commands with summaries. `loop help <command...>` prints human-facing usage, description, flags, and subcommands. It does not list agent-only commands such as `loop commit` or `loop iteration`.
+`loop help` lists human-facing commands with summaries. `loop help <command...>` prints human-facing usage, description, flags, and subcommands. It does not list agent-only commands such as `loop commit`, `loop role`, or `loop iteration`.
 
-Agent subprocesses receive `LOOP_AGENT_CONTEXT=1`. In that environment, the same `loop help` command prints the compact agent-facing reference, and `loop help <command...>` resolves agent-only command details such as `loop help handoff write` or `loop help task merge`. The agent-facing reference uses dense line-oriented text and includes role rules, agent-only commands, schemas, and command-owned reference data such as iteration artifact names. Agents should treat `loop help` and `loop help <command...>` in the agent context as the source of truth instead of embedding long command lists in skills. `loop --help` and `loop -h` are aliases for the active help context.
+Agent subprocesses receive `LOOP_AGENT_CONTEXT=1`. In that environment, the same `loop help` command prints the compact agent-facing reference, and `loop help <command...>` resolves agent-only command details such as `loop help role instruction`, `loop help handoff write`, or `loop help task merge`. The agent-facing reference uses dense line-oriented text and includes shared role rules, agent-only commands, schemas, and command-owned reference data such as iteration artifact names. Agents should treat `loop help`, `loop role instruction`, and focused `loop help <command...>` output in the agent context as the source of truth instead of embedding long command lists in skills. `loop --help` and `loop -h` are aliases for the active help context.
+
+## `loop role`
+
+Print role-scoped operating instructions for role-orchestrated agents.
+
+```bash
+loop role instruction
+```
+
+This is an agent-facing command shown only when `LOOP_AGENT_CONTEXT=1`. It reads `LOOP_ROLE` from the environment and prints Markdown instructions for the current `planner`, `coding`, `review`, or `merge` role. The content is sourced from the role sections that previously lived in the default `loop` skill, while `SKILL.md` remains a compact entry point.
+
+The default `loop` skill should stay compact and tell agents to call `loop role instruction` instead of embedding all planner, coding, review, and merge instructions in `SKILL.md`.
 
 ## `loop init`
 

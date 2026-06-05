@@ -17,6 +17,7 @@ func HarnessContract(pullRequestMode bool) string {
 		"Use the `loop` skill for this CLI-orchestrated role run.",
 		"Use `loop iteration`, `loop issue`, and `loop handoff` commands for runtime context, GitHub Issues, and role handoff JSON.",
 		"Do not run Git or GitHub commands directly; use loop-owned commands for branch renames, commits, pull requests, task merges, and handoffs.",
+		"Run `loop role instruction` for the current role-specific operating rules when you need to refresh the role contract.",
 		"Use `loop help` for the agent-facing command reference and `loop help handoff write` for the current handoff schema and command flags if needed.",
 	}
 	if pullRequestMode {

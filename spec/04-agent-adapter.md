@@ -37,7 +37,7 @@ Detailed loop behavior and CLI usage live in repository skills, especially `loop
 
 ## Bootstrap requirements
 
-The code-generated bootstrap activates the `loop` skill. Skills use `loop iteration`, `loop issue`, and `loop handoff` commands for runtime context, GitHub Issues, and strict role handoffs. Agents do not receive a command for querying cached memory directly. The CLI owns commit creation, pull request text, check waiting, check failure handling, PR merge, and cleanup.
+The code-generated bootstrap activates the `loop` skill. The skill directs agents to `loop role instruction` for role-scoped operating rules, then to `loop iteration`, `loop issue`, and `loop handoff` commands for runtime context, GitHub Issues, and strict role handoffs. Agents do not receive a command for querying cached memory directly. The CLI owns commit creation, pull request text, check waiting, check failure handling, PR merge, and cleanup.
 
 ## Process output capture
 
