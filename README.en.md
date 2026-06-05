@@ -132,7 +132,7 @@ With a non-empty `--goal`, planner and QA review handoffs may report `goal_compl
 5. Configured validation runs from the iteration worktree.
 6. The QA review agent checks the integrated branch against the task tree, validation evidence, browser/UI behavior when relevant, and cross-task acceptance criteria. It writes `review-result` only; it does not run PR lifecycle commands.
 7. In PR mode, the merge agent owns branch rename, PR text, PR creation, checks, merge, or human-review handoff. PR check failures are reported as `merge-result.status=pr_check_failed`, not as QA `changes_requested`.
-8. Validation failures, QA review findings, and PR check findings become repair tasks until approval or the fix-cycle limit.
+8. Validation failures, QA review findings, and PR check findings become repair tasks until approval.
 9. After a successful merge or human-review handoff, `loop` cleans up local worktrees and branches, records the result, and starts the next iteration when the run should continue.
 
 Agents do not run raw Git or GitHub commands for loop-owned lifecycle work. They use `loop` commands so commits, merges, PRs, checks, cleanup, and audit state stay consistent.

@@ -735,8 +735,8 @@ func runOrchestratedIteration(ctx context.Context, req orchestrationRequest) (re
 	pendingTasks := append([]workflow.Task(nil), tree.Tasks...)
 	var review workflow.ReviewResult
 	var merge workflow.MergeResult
-	planRevisions := 0
-	for cycle := 0; cycle <= cfg.Run.MaxReviewFixCycles; cycle++ {
+	repairCycle := 0
+	for {
 		currentTaskDirs, err := taskDirs.Ensure(pendingTasks)
 		if err != nil {
 			return iterationWorkflowResult{}, codedError{1, err}
@@ -765,15 +765,11 @@ func runOrchestratedIteration(ctx context.Context, req orchestrationRequest) (re
 		allCommits = append(allCommits, taskSet.Commits...)
 		req.Renderer.Commits(len(allCommits))
 		if taskSet.Discard != nil {
-			if planRevisions >= cfg.Run.MaxPlanRevisions {
-				return iterationWorkflowResult{}, codedError{4, fmt.Errorf("planner revision limit reached after discarded task %s: %s", taskSet.Discard.Task.ID, taskSet.Discard.Reason)}
-			}
-			planRevisions++
 			req.State.Stage = runstate.StagePlanning
 			_ = runstate.Write(req.StatePath, *req.State)
 			req.Renderer.Stage(runstate.StagePlanning, "planner revising discarded task")
 			revisionPaths := paths
-			revisionPaths.AgentPromptExtra = plannerRevisionPrompt(tree, completedTaskResults, *taskSet.Discard, planRevisions)
+			revisionPaths.AgentPromptExtra = plannerRevisionPrompt(tree, completedTaskResults, *taskSet.Discard)
 			tree, err = runPlannerRole(ctx, cfg, iterationWorktree, revisionPaths, req.Renderer.AgentEvent)
 			if err != nil {
 				return iterationWorkflowResult{}, codedError{4, err}
@@ -793,10 +789,8 @@ func runOrchestratedIteration(ctx context.Context, req orchestrationRequest) (re
 		req.Renderer.Stage(runstate.StageValidating, "running validation")
 		validationResults, validationErr := runConfiguredValidation(ctx, iterationWorktree, paths, cfg.Validation.Commands)
 		if validationErr != nil || validation.StatusFromResults(validationResults) == "failed" {
-			if cycle >= cfg.Run.MaxReviewFixCycles {
-				return iterationWorkflowResult{}, codedError{5, firstNonNil(validationErr, errors.New("required validation failed"))}
-			}
-			pendingTasks = []workflow.Task{validationRepairTask(cycle + 1)}
+			repairCycle++
+			pendingTasks = []workflow.Task{validationRepairTask(repairCycle)}
 			continue
 		}
 
@@ -837,10 +831,7 @@ func runOrchestratedIteration(ctx context.Context, req orchestrationRequest) (re
 				break
 			}
 			if merge.Status == "pr_check_failed" {
-				if cycle >= cfg.Run.MaxReviewFixCycles {
-					preserveIterationIfOpenPR(paths, cleanup)
-					return iterationWorkflowResult{}, codedError{4, fmt.Errorf("pull request checks did not pass after %d repair cycles", cfg.Run.MaxReviewFixCycles)}
-				}
+				repairCycle++
 				pendingTasks = repairTasksFromMerge(merge)
 				if len(pendingTasks) == 0 {
 					return iterationWorkflowResult{}, codedError{4, errors.New("merge reported pr_check_failed without repair findings")}
@@ -853,9 +844,7 @@ func runOrchestratedIteration(ctx context.Context, req orchestrationRequest) (re
 			}
 			return iterationWorkflowResult{}, codedError{6, errors.New(firstNonEmpty(merge.Summary, "merge agent failed"))}
 		}
-		if cycle >= cfg.Run.MaxReviewFixCycles {
-			return iterationWorkflowResult{}, codedError{4, fmt.Errorf("review did not approve after %d fix cycles", cfg.Run.MaxReviewFixCycles)}
-		}
+		repairCycle++
 		pendingTasks = repairTasksFromReview(review)
 		if len(pendingTasks) == 0 {
 			return iterationWorkflowResult{}, codedError{4, errors.New("review requested changes without repair findings")}
@@ -1949,9 +1938,8 @@ func pendingPRRepairPrompt(pending runstate.PendingPullRequest) string {
 	return "Selected pending pull request feedback must be addressed in this iteration. Plan and implement only the work needed to satisfy the PR review feedback, then rerun the existing PR checks on the same branch.\n\nSelected pull request:\n\n```json\n" + string(data) + "\n```"
 }
 
-func plannerRevisionPrompt(tree workflow.TaskTree, completed []workflow.TaskResult, discarded discardedTask, revision int) string {
+func plannerRevisionPrompt(tree workflow.TaskTree, completed []workflow.TaskResult, discarded discardedTask) string {
 	payload := map[string]any{
-		"revision":       revision,
 		"current_plan":   tree,
 		"completed":      completed,
 		"discarded_task": discarded.Task,

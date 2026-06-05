@@ -57,8 +57,6 @@ type RunConfig struct {
 	MaxTaskAttempts         int `yaml:"maxTaskAttempts" json:"maxTaskAttempts"`
 	MaxRoleAgentRestarts    int `yaml:"maxRoleAgentRestarts" json:"maxRoleAgentRestarts"`
 	AgentIdleTimeoutSeconds int `yaml:"agentIdleTimeoutSeconds" json:"agentIdleTimeoutSeconds"`
-	MaxReviewFixCycles      int `yaml:"maxReviewFixCycles" json:"maxReviewFixCycles"`
-	MaxPlanRevisions        int `yaml:"maxPlanRevisions" json:"maxPlanRevisions"`
 }
 
 type SkillsConfig struct {
@@ -285,12 +283,6 @@ func Validate(cfg Config) error {
 	}
 	if cfg.Run.AgentIdleTimeoutSeconds < 0 {
 		errs = append(errs, "run.agentIdleTimeoutSeconds must be at least 0")
-	}
-	if cfg.Run.MaxReviewFixCycles < 0 {
-		errs = append(errs, "run.maxReviewFixCycles must be at least 0")
-	}
-	if cfg.Run.MaxPlanRevisions < 0 {
-		errs = append(errs, "run.maxPlanRevisions must be at least 0")
 	}
 	if cfg.Skills.SourceDir == "" {
 		errs = append(errs, "skills.sourceDir is required")

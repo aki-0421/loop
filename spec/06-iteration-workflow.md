@@ -17,13 +17,13 @@ Each iteration is CLI-owned:
 5. For each coding task attempt, create a task branch and worktree from the current iteration branch, run the coding agent, require it to create and complete task-local TODOs before merging, validate its `task-result`, require `loop task merge --type <type> <summary>`, remove the task worktree, and continue only after the task branch has been merged into the iteration branch with its commits preserved.
 6. Run configured validation commands from the iteration worktree.
 7. Run the QA review agent with the task tree, task results, validation status, browser/UI context when relevant, and repository diff available.
-8. If validation fails or QA review returns `changes_requested`, create repair tasks and repeat coding, validation, and review until approval or `run.maxReviewFixCycles` is exhausted.
+8. If validation fails or QA review returns `changes_requested`, create repair tasks and repeat coding, validation, and review until approval or another terminal error occurs.
 9. In PR mode, run the merge agent after QA approval. The merge agent renames the branch, writes PR title/body artifacts, creates the PR, waits for checks, and merges or hands off for human review through `loop pr`. If PR checks fail, it writes `merge-result.status=pr_check_failed` with repair findings. In local mode, perform local merge after QA approval.
 10. Clean task and iteration worktrees and continue until `goal_complete=true`, the iteration limit is reached, or a terminal error occurs.
 
 Agents do not run Git or GitHub commands directly. Coding agents create initial task-local TODOs before editing, may add or reorder pending follow-up TODOs after the fixed done/active/cancelled boundary during implementation, stage and inspect active commit TODOs through `loop task todo stage`, complete commit TODOs through CLI-created task-branch commits, complete no_commit TODOs only when they leave no repository changes, and use `loop task merge` to merge the completed task branch into the iteration branch while preserving task commit history. QA review agents do not run PR lifecycle commands. Merge agents use `loop branch rename` and `loop pr` commands for PR integration.
 
-If a coding agent exits without completing `loop task merge`, the CLI does not merge or salvage that task branch. It discards the unmerged attempt branch and worktree, clears stale task handoff and task TODO state, records a discard event, and starts the next attempt in a fresh branch and worktree until `run.maxTaskAttempts` is exhausted. When attempts are exhausted, or when the agent explicitly runs `loop task discard --reason`, the planner runs again with the discarded task and current plan context; replanning is capped by `run.maxPlanRevisions`.
+If a coding agent exits without completing `loop task merge`, the CLI does not merge or salvage that task branch. It discards the unmerged attempt branch and worktree, clears stale task handoff and task TODO state, records a discard event, and starts the next attempt in a fresh branch and worktree until `run.maxTaskAttempts` is exhausted. When attempts are exhausted, or when the agent explicitly runs `loop task discard --reason`, the planner runs again with the discarded task and current plan context until it returns replacement tasks or another terminal error occurs.
 
 ## Pull Request Scope
 
@@ -93,7 +93,7 @@ The CLI rejects unknown JSON fields, removed planner/review/merge commit metadat
 
 ## Validation And Repair
 
-Configured validation runs after all currently scheduled coding tasks are merged into the iteration branch. Required validation failures do not integrate. When fix cycles remain, the CLI creates a validation repair task and reruns the coding/review loop.
+Configured validation runs after all currently scheduled coding tasks are merged into the iteration branch. Required validation failures do not integrate. The CLI creates a validation repair task and reruns the coding/review loop until validation passes or another terminal error occurs.
 
 Review findings and PR check findings are converted into repair tasks. Review and merge agents must provide enough finding detail for the CLI to create tasks with acceptance criteria.
 

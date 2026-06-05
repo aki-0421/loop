@@ -37,8 +37,6 @@ run:
   maxIterations: 3 # 0 or omitted means unlimited
   maxParallelTasks: 2
   maxTaskAttempts: 2
-  maxReviewFixCycles: 3
-  maxPlanRevisions: 3
 
 skills:
   sourceDir: .codex/skills
@@ -88,8 +86,6 @@ Path-bearing prompt placeholders such as `{prompt_file}`, `{result_file}`, and `
 | `maxIterations` | integer | Maximum iterations; `0` means unlimited. |
 | `maxParallelTasks` | integer | Maximum non-conflicting coding tasks to run at once. Built-in value is `2`. |
 | `maxTaskAttempts` | integer | Attempts for a coding task before failing the iteration. Built-in value is `2`. |
-| `maxReviewFixCycles` | integer | Validation/review repair cycles before failing the iteration. Built-in value is `3`. |
-| `maxPlanRevisions` | integer | Planner revision cycles after discarded tasks before failing the iteration. Built-in value is `3`. |
 
 ## `skills`
 

@@ -25,7 +25,6 @@ The built-in defaults are designed for autonomous AI sprint work:
 - `run.maxIterations` is `0`, which means unlimited iterations.
 - `run.maxParallelTasks` is `2`.
 - `run.maxTaskAttempts` is `2`.
-- `run.maxReviewFixCycles` is `3`.
 - Validation commands are empty until the repository config adds them.
 
 A minimal repository config can be only:

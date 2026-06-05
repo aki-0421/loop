@@ -221,6 +221,61 @@ git:
 	}
 }
 
+func TestReviewRepairCyclesIgnoreDeprecatedLimit(t *testing.T) {
+	ctx := context.Background()
+	repo := newCleanupRepo(t)
+	mustWrite(t, filepath.Join(repo, "task.md"), "# Task\n\nRepair until QA approves.\n")
+	agentCommand, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, filepath.Join(repo, ".loop", "config.yaml"), `version: 1
+
+agent:
+  default: rolereviewrepair
+  adapters:
+    rolereviewrepair:
+      command: `+yamlSingleQuote(agentCommand)+`
+      args: [-test.run=TestHelperProcessRoleAgent, --]
+      prompt: stdin
+      env:
+        LOOP_ROLE_TEST_AGENT: "1"
+        LOOP_ROLE_TEST_AGENT_MODE: review-repair-cycle
+
+run:
+  maxIterations: 1
+
+git:
+  baseBranch: develop
+  integration:
+    mode: local_merge
+`)
+	git(t, repo, "add", "task.md", ".loop/config.yaml")
+	git(t, repo, "commit", "-m", "T: add review repair fixture")
+	withWorkingDir(t, repo)
+
+	if _, err := captureStdout(t, func() error {
+		return commandRun(ctx, globals{Agent: "rolereviewrepair", JSON: true, NoColor: true}, []string{"task.md"})
+	}); err != nil {
+		t.Fatalf("loop run should ignore deprecated review fix limit: %v", err)
+	}
+
+	if got := readText(t, filepath.Join(repo, "review-repair.txt")); got != "repaired\n" {
+		t.Fatalf("review repair marker = %q, want repaired", got)
+	}
+	state := readLatestRunState(t, repo)
+	if state.Stage != runstate.StageCompleted {
+		t.Fatalf("run stage = %s, want completed", state.Stage)
+	}
+	iterDir := latestIterationDir(t, repo, "0001")
+	if got := countEventType(t, iterDir, "agent.started"); got != 3 {
+		t.Fatalf("iteration agent.started count = %d, want planner plus two reviews", got)
+	}
+	if _, err := os.Stat(filepath.Join(iterDir, "tasks", "0002", "task-result.json")); err != nil {
+		t.Fatalf("repair task result missing: %v", err)
+	}
+}
+
 func TestResumeRunRestartsReviewingIterationFromDurableArtifacts(t *testing.T) {
 	ctx := context.Background()
 	repo := newCleanupRepo(t)
@@ -655,7 +710,6 @@ agent:
 
 run:
   maxIterations: 1
-  maxReviewFixCycles: 2
 
 git:
   baseBranch: develop
@@ -1084,6 +1138,23 @@ func runRoleTestAgent() int {
   ]
 }`
 			return exitCode(commandHandoff(ctx, globals{}, []string{"write", "task-tree", "--value", payload}))
+		case "review-repair-cycle":
+			payload := `{
+  "schema_version": 1,
+  "summary": "Run review repair workflow",
+  "goal_evaluation": "Fake planner selected an initial task.",
+  "tasks": [
+    {
+      "id": "initial-review-task",
+      "title": "Initial review task",
+      "description": "Create the initial review marker.",
+      "depends_on": [],
+      "conflicts_with": [],
+      "acceptance": ["review-initial.txt contains the initial value."]
+    }
+  ]
+}`
+			return exitCode(commandHandoff(ctx, globals{}, []string{"write", "task-tree", "--value", payload}))
 		case "pr-human-pending", "pr-human-pending-then-wait", "pr-human-feedback-repair":
 			if os.Getenv("LOOP_ROLE_TEST_AGENT_MODE") == "pr-human-pending-then-wait" && os.Getenv("LOOP_ITERATION_ID") == "0002" {
 				payload := `{
@@ -1414,6 +1485,32 @@ func runRoleTestAgent() int {
 				return 1
 			}
 			return exitCode(commandTask(ctx, globals{}, []string{"merge", "--type", "F", "complete", taskID}))
+		case "review-repair-cycle":
+			filename := "review-initial.txt"
+			message := "run initial review task"
+			value := "initial\n"
+			if taskID == "repair-review" {
+				filename = "review-repair.txt"
+				message = "repair review finding"
+				value = "repaired\n"
+			}
+			if err := startRoleTaskTodo(ctx, taskID, message); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 1
+			}
+			if err := os.WriteFile(filepath.Join(workDir, filename), []byte(value), 0o644); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 1
+			}
+			if err := completeRoleTaskTodo(ctx); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 1
+			}
+			if err := writeRoleTaskResult(ctx, taskID, "Fake coding agent completed "+taskID+"."); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 1
+			}
+			return exitCode(commandTask(ctx, globals{}, []string{"merge", "--type", "F", "complete", taskID}))
 		case "pr-human-pending", "pr-human-pending-then-wait", "pr-human-feedback-repair":
 			message := "run human review PR task"
 			filename := "pending-human-pr.txt"
@@ -1459,6 +1556,26 @@ func runRoleTestAgent() int {
 		}
 		return exitCode(commandTask(ctx, globals{}, []string{"merge", "--type", "F", "complete", taskID}))
 	case "review":
+		if os.Getenv("LOOP_ROLE_TEST_AGENT_MODE") == "review-repair-cycle" {
+			workDir := os.Getenv("LOOP_WORKDIR")
+			if _, err := os.Stat(filepath.Join(workDir, "review-repair.txt")); os.IsNotExist(err) {
+				payload := `{
+  "schema_version": 1,
+  "status": "changes_requested",
+  "summary": "Fake review requested a repair.",
+  "goal_evaluation": "A repair task is required before approval.",
+  "findings": [
+    {
+      "id": "repair-review",
+      "title": "Repair review finding",
+      "description": "Create the review repair marker.",
+      "acceptance": ["review-repair.txt contains the repaired value."]
+    }
+  ]
+}`
+				return exitCode(commandHandoff(ctx, globals{}, []string{"write", "review-result", "--value", payload}))
+			}
+		}
 		payload := `{
   "schema_version": 1,
   "status": "approved",

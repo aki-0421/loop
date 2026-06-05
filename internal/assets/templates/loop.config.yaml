@@ -24,8 +24,6 @@ run:
   maxTaskAttempts: 2
   maxRoleAgentRestarts: 1
   agentIdleTimeoutSeconds: 600
-  maxReviewFixCycles: 3
-  maxPlanRevisions: 3
 
 skills:
   sourceDir: .agents/skills

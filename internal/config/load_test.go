@@ -285,6 +285,26 @@ git:
 
 	repo = t.TempDir()
 	mustWrite(t, filepath.Join(repo, ".loop", "config.yaml"), `version: 1
+run:
+  maxReviewFixCycles: 3
+`)
+	_, err = Load(LoadOptions{CWD: repo, Env: []string{}, ConfigPath: filepath.Join(repo, ".loop", "config.yaml")})
+	if err == nil || !strings.Contains(err.Error(), "field maxReviewFixCycles not found") {
+		t.Fatalf("expected removed maxReviewFixCycles strict decode error, got %v", err)
+	}
+
+	repo = t.TempDir()
+	mustWrite(t, filepath.Join(repo, ".loop", "config.yaml"), `version: 1
+run:
+  maxPlanRevisions: 3
+`)
+	_, err = Load(LoadOptions{CWD: repo, Env: []string{}, ConfigPath: filepath.Join(repo, ".loop", "config.yaml")})
+	if err == nil || !strings.Contains(err.Error(), "field maxPlanRevisions not found") {
+		t.Fatalf("expected removed maxPlanRevisions strict decode error, got %v", err)
+	}
+
+	repo = t.TempDir()
+	mustWrite(t, filepath.Join(repo, ".loop", "config.yaml"), `version: 1
 unexpected: true
 `)
 	_, err = Load(LoadOptions{CWD: repo, Env: []string{}, ConfigPath: filepath.Join(repo, ".loop", "config.yaml")})
