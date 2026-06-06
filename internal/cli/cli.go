@@ -1517,7 +1517,9 @@ type prIntegrationSession struct {
 	prID   string
 }
 
-func waitForPRChecks(ctx context.Context, session *prIntegrationSession, cfg config.Config) (pr.CommandResult, bool, error) {
+type prChecksProgressFunc func(checks pr.CommandResult, status string, skipped bool, err error)
+
+func waitForPRChecks(ctx context.Context, session *prIntegrationSession, cfg config.Config, onProgress prChecksProgressFunc) (pr.CommandResult, bool, error) {
 	if delay := prChecksStartupDelay(cfg); delay > 0 {
 		if err := prChecksSleep(ctx, delay); err != nil {
 			return pr.CommandResult{}, false, err
@@ -1528,26 +1530,36 @@ func waitForPRChecks(ctx context.Context, session *prIntegrationSession, cfg con
 	watchTimeout := prChecksWatchTimeout(cfg)
 	watchDeadline := time.Now().Add(watchTimeout)
 	for {
-		checks, err := session.runner.Checks(ctx, session.prID, true)
+		checks, err := session.runner.Checks(ctx, session.prID, false)
+		checks = attachPRCheckList(ctx, session, checks)
 		if err != nil {
 			if errors.Is(err, context.DeadlineExceeded) {
-				return checks, false, fmt.Errorf("%w after %s", errPRChecksTimedOut, watchTimeout)
+				wrapped := fmt.Errorf("%w after %s", errPRChecksTimedOut, watchTimeout)
+				recordPRChecksProgress(onProgress, checks, "failed", false, wrapped)
+				return checks, false, wrapped
 			}
+			recordPRChecksProgress(onProgress, checks, "failed", false, err)
 			return checks, false, err
 		}
 		if !checks.NoChecks && !checks.Pending {
+			recordPRChecksProgress(onProgress, checks, "passed", false, nil)
 			return checks, false, nil
 		}
 		now := time.Now()
 		if checks.NoChecks && discoveryTimeout <= 0 {
+			recordPRChecksProgress(onProgress, checks, "skipped", true, nil)
 			return checks, true, nil
 		}
 		if checks.NoChecks && !now.Before(discoveryDeadline) {
+			recordPRChecksProgress(onProgress, checks, "skipped", true, nil)
 			return checks, true, nil
 		}
 		if !now.Before(watchDeadline) {
-			return checks, false, fmt.Errorf("%w after %s", errPRChecksTimedOut, watchTimeout)
+			wrapped := fmt.Errorf("%w after %s", errPRChecksTimedOut, watchTimeout)
+			recordPRChecksProgress(onProgress, checks, "failed", false, wrapped)
+			return checks, false, wrapped
 		}
+		recordPRChecksProgress(onProgress, checks, "pending", false, nil)
 		sleep := prChecksPollInterval(cfg)
 		if checks.NoChecks && discoveryTimeout > 0 {
 			if remaining := time.Until(discoveryDeadline); remaining < sleep {
@@ -1560,6 +1572,20 @@ func waitForPRChecks(ctx context.Context, session *prIntegrationSession, cfg con
 		if err := prChecksSleep(ctx, sleep); err != nil {
 			return checks, false, err
 		}
+	}
+}
+
+func attachPRCheckList(ctx context.Context, session *prIntegrationSession, checks pr.CommandResult) pr.CommandResult {
+	list, _, err := session.runner.CheckList(ctx, session.prID)
+	if err == nil {
+		checks.Checks = list
+	}
+	return checks
+}
+
+func recordPRChecksProgress(onProgress prChecksProgressFunc, checks pr.CommandResult, status string, skipped bool, err error) {
+	if onProgress != nil {
+		onProgress(checks, status, skipped, err)
 	}
 }
 

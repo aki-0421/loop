@@ -33,17 +33,18 @@ type prState struct {
 }
 
 type prChecksArtifact struct {
-	SchemaVersion int    `json:"schema_version"`
-	Status        string `json:"status"`
-	PR            string `json:"pr"`
-	Branch        string `json:"branch"`
-	CheckedAt     string `json:"checked_at"`
-	ExitCode      int    `json:"exit_code"`
-	NoChecks      bool   `json:"no_checks,omitempty"`
-	Pending       bool   `json:"pending,omitempty"`
-	Error         string `json:"error,omitempty"`
-	Stdout        string `json:"stdout,omitempty"`
-	Stderr        string `json:"stderr,omitempty"`
+	SchemaVersion int              `json:"schema_version"`
+	Status        string           `json:"status"`
+	PR            string           `json:"pr"`
+	Branch        string           `json:"branch"`
+	CheckedAt     string           `json:"checked_at"`
+	ExitCode      int              `json:"exit_code"`
+	NoChecks      bool             `json:"no_checks,omitempty"`
+	Pending       bool             `json:"pending,omitempty"`
+	Error         string           `json:"error,omitempty"`
+	Checks        []pr.CheckStatus `json:"checks,omitempty"`
+	Stdout        string           `json:"stdout,omitempty"`
+	Stderr        string           `json:"stderr,omitempty"`
 }
 
 type prCommandContext struct {
@@ -209,7 +210,7 @@ func commandPRChecks(ctx context.Context, g globals, args []string) error {
 		}
 	}
 	session := &prIntegrationSession{runner: runner, prID: state.PR}
-	checks, skipped, checksErr := waitForPRChecks(ctx, session, prCtx.cfg)
+	checks, skipped, checksErr := waitForPRChecks(ctx, session, prCtx.cfg, prChecksProgressWriter(prCtx.iterDir, state.PR, prCtx.branch))
 	status := "passed"
 	if skipped {
 		status = "skipped"
@@ -227,6 +228,7 @@ func commandPRChecks(ctx context.Context, g globals, args []string) error {
 		NoChecks:      checks.NoChecks,
 		Pending:       checks.Pending,
 		Error:         prErrorString(checksErr),
+		Checks:        checks.Checks,
 		Stdout:        checks.Stdout,
 		Stderr:        checks.Stderr,
 	}); err != nil {
@@ -323,7 +325,7 @@ func commandPRMerge(ctx context.Context, g globals, args []string) error {
 	}
 	if prCtx.cfg.Git.Integration.PR.WaitChecks {
 		session := &prIntegrationSession{runner: runner, prID: state.PR}
-		checks, skipped, checksErr := waitForPRChecks(ctx, session, prCtx.cfg)
+		checks, skipped, checksErr := waitForPRChecks(ctx, session, prCtx.cfg, prChecksProgressWriter(prCtx.iterDir, state.PR, prCtx.branch))
 		status := "passed"
 		if skipped {
 			status = "skipped"
@@ -341,6 +343,7 @@ func commandPRMerge(ctx context.Context, g globals, args []string) error {
 			NoChecks:      checks.NoChecks,
 			Pending:       checks.Pending,
 			Error:         prErrorString(checksErr),
+			Checks:        checks.Checks,
 			Stdout:        checks.Stdout,
 			Stderr:        checks.Stderr,
 		})
@@ -653,6 +656,46 @@ func writePRChecks(iterDir string, checks prChecksArtifact) error {
 	}
 	data = append(data, '\n')
 	return artifactdb.Write(iterDir, "pr-checks", string(data))
+}
+
+func readPRChecks(iterDir string) (prChecksArtifact, bool, error) {
+	var checks prChecksArtifact
+	data, err := artifactdb.Read(iterDir, "pr-checks")
+	if err != nil {
+		if errors.Is(err, artifactdb.ErrNotFound) {
+			return checks, false, nil
+		}
+		return checks, false, err
+	}
+	if err := json.Unmarshal([]byte(data), &checks); err != nil {
+		return checks, false, err
+	}
+	return checks, true, nil
+}
+
+func prChecksProgressWriter(iterDir, prID, branch string) prChecksProgressFunc {
+	return func(checks pr.CommandResult, status string, skipped bool, checksErr error) {
+		if skipped {
+			status = "skipped"
+		}
+		if strings.TrimSpace(status) == "" {
+			status = "pending"
+		}
+		_ = writePRChecks(iterDir, prChecksArtifact{
+			SchemaVersion: 1,
+			Status:        status,
+			PR:            prID,
+			Branch:        branch,
+			CheckedAt:     time.Now().UTC().Format(time.RFC3339),
+			ExitCode:      checks.ExitCode,
+			NoChecks:      checks.NoChecks,
+			Pending:       checks.Pending || status == "pending",
+			Error:         prErrorString(checksErr),
+			Checks:        checks.Checks,
+			Stdout:        checks.Stdout,
+			Stderr:        checks.Stderr,
+		})
+	}
 }
 
 func prStateMerged(iterDir string) bool {

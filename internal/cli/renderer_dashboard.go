@@ -15,44 +15,78 @@ const (
 )
 
 type rendererSnapshot struct {
-	Started          time.Time
-	Now              time.Time
-	RunID            string
-	Agent            string
-	Repo             string
-	Instruction      string
-	Base             string
-	Branch           string
-	Goal             string
-	Logs             string
-	MaxIter          int
-	Color            bool
-	Stage            string
-	StageDetail      string
-	Iteration        string
-	AgentCommand     string
-	AgentExit        string
-	Current          string
-	RunningCommand   string
-	Tasks            []taskItem
-	Activity         []string
-	ActivityLog      []rendererLogLine
-	Events           []rendererEvent
-	CommitCount      int
-	MergeCount       int
-	MessageCount     int
-	InputTokens      int
-	OutputTokens     int
-	TokensEstimated  bool
-	LatestMsg        string
-	Confirmation     *rendererConfirmation
-	PendingPRs       []rendererPendingPullRequest
-	Sleeping         bool
-	SleepSince       time.Time
-	SleepTitle       string
-	SleepStatus      string
-	SleepDetail      string
-	GracefulShutdown bool
+	Started           time.Time
+	Now               time.Time
+	RunID             string
+	Agent             string
+	Repo              string
+	Instruction       string
+	Base              string
+	Branch            string
+	Goal              string
+	Logs              string
+	MaxIter           int
+	Color             bool
+	Stage             string
+	StageDetail       string
+	Iteration         string
+	IterationDir      string
+	AgentCommand      string
+	AgentExit         string
+	Current           string
+	RunningCommand    string
+	Tasks             []taskItem
+	Activity          []string
+	ActivityLog       []rendererLogLine
+	Events            []rendererEvent
+	CommitCount       int
+	MergeCount        int
+	MessageCount      int
+	InputTokens       int
+	OutputTokens      int
+	TokensEstimated   bool
+	LatestMsg         string
+	Confirmation      *rendererConfirmation
+	PullRequest       rendererPullRequest
+	PullRequestChecks rendererPullRequestChecks
+	PendingPRs        []rendererPendingPullRequest
+	Sleeping          bool
+	SleepSince        time.Time
+	SleepTitle        string
+	SleepStatus       string
+	SleepDetail       string
+	GracefulShutdown  bool
+}
+
+type rendererPullRequest struct {
+	PR     string
+	Title  string
+	Branch string
+	Base   string
+	Status string
+}
+
+type rendererPullRequestChecks struct {
+	Status    string
+	CheckedAt string
+	Pending   bool
+	NoChecks  bool
+	Error     string
+	Checks    []rendererPullRequestCheck
+	Stdout    string
+	Stderr    string
+}
+
+type rendererPullRequestCheck struct {
+	Bucket      string
+	CompletedAt string
+	Description string
+	Event       string
+	Link        string
+	Name        string
+	StartedAt   string
+	State       string
+	Workflow    string
 }
 
 type dashboardSymbols struct {
@@ -81,9 +115,6 @@ func renderDashboard(s rendererSnapshot, width, height int) []string {
 	}
 	if s.Sleeping {
 		return renderSleepDashboard(s, symbols, width, height)
-	}
-	if width < 72 || height < 18 {
-		return renderPlainStatusSnapshot(s, width, height)
 	}
 	switch {
 	case width >= 120:
@@ -114,7 +145,6 @@ func renderFocusedDashboard(s rendererSnapshot, symbols dashboardSymbols, width,
 	}
 	items := s.Tasks
 	done, total := taskProgress(items)
-	logo := loopLogo(s)
 	filename := valueOr(s.Instruction, "prompt.md")
 	metrics := fmt.Sprintf("%s  ·  %s in  ·  %s out  ·  %d merged  ·  %s",
 		formatDuration(s.Now.Sub(s.Started)),
@@ -123,44 +153,76 @@ func renderFocusedDashboard(s rendererSnapshot, symbols dashboardSymbols, width,
 		s.MergeCount,
 		formatTaskProgressMetric(done, total),
 	)
-	latest := strings.TrimSpace(s.LatestMsg)
-	if latest == "" {
-		latest = "waiting for agent message..."
-	}
-	latestLines := wrapDisplayLines(latest, contentWidth, 2)
+	latestLines := wrapDisplayLines(dashboardPrimaryMessage(s), contentWidth, latestLineLimit(compact, height))
 
 	lines := []string{}
-	for i := 0; i < logoTopPadding; i++ {
+	if !compact {
+		for i := 0; i < logoTopPadding; i++ {
+			lines = append(lines, "")
+		}
+		for _, line := range loopLogo(s) {
+			lines = append(lines, centerLine(line, width))
+		}
 		lines = append(lines, "")
 	}
-	for _, line := range logo {
-		lines = append(lines, centerLine(line, width))
-	}
 	lines = append(lines,
-		"",
 		centerLine(colorize(s, ansiDim, filename), width),
-		"",
-		centerLine(metrics, width),
-		"",
 	)
+	if !compact {
+		lines = append(lines, "")
+	}
+	lines = append(lines, centerLine(metrics, width))
+	if !compact {
+		lines = append(lines, "")
+	}
 	for _, line := range latestLines {
 		lines = append(lines, centerLine(colorize(s, ansiDim, line), width))
 	}
-	lines = append(lines, "")
-
-	if pendingLines := pendingPullRequestBlock(s, symbols, width, contentWidth, minInt(4, maxTaskRows(height, len(lines)))); len(pendingLines) > 0 {
-		lines = append(lines, pendingLines...)
+	if !compact {
 		lines = append(lines, "")
 	}
 
+	if pendingLines := pendingPullRequestBlock(s, symbols, width, contentWidth, minInt(4, maxTaskRows(height, len(lines)))); len(pendingLines) > 0 {
+		if compact && len(lines) < height-3 {
+			lines = append(lines, "")
+		}
+		lines = append(lines, pendingLines...)
+		if !compact {
+			lines = append(lines, "")
+		}
+	}
+
 	taskLimit := maxTaskRows(height, len(lines))
-	if total > 0 {
+	if shouldRenderPullRequestBlock(s) {
+		lines = append(lines, pullRequestBlock(s, symbols, width, contentWidth, taskLimit)...)
+	} else if total > 0 {
 		lines = append(lines, taskListBlock(s, symbols, width, contentWidth, taskLimit, items)...)
 	} else if taskLimit > 0 {
 		lines = append(lines, statusBlock(s, width, contentWidth, taskLimit)...)
 	}
 
 	return fitCanvasLines(lines, colorize(s, ansiDim, footerText(s, symbols)), width, height)
+}
+
+func shouldRenderPullRequestBlock(s rendererSnapshot) bool {
+	return strings.TrimSpace(s.Stage) == "pull_request"
+}
+
+func dashboardPrimaryMessage(s rendererSnapshot) string {
+	for _, value := range []string{s.LatestMsg, s.Current, s.StageDetail, strings.ReplaceAll(s.Stage, "_", " ")} {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			return value
+		}
+	}
+	return "waiting for agent message..."
+}
+
+func latestLineLimit(compact bool, height int) int {
+	if !compact || height >= 12 {
+		return 2
+	}
+	return 1
 }
 
 func renderConfirmationDashboard(s rendererSnapshot, symbols dashboardSymbols, width, height int) []string {
@@ -584,6 +646,200 @@ func pendingPullRequestDisplayText(item rendererPendingPullRequest) string {
 	default:
 		return strings.TrimSpace(item.PR)
 	}
+}
+
+func pullRequestBlock(s rendererSnapshot, symbols dashboardSymbols, screenWidth, blockWidth, limit int) []string {
+	if limit <= 0 {
+		return nil
+	}
+	pr := s.PullRequest
+	if strings.TrimSpace(pr.Branch) == "" {
+		pr.Branch = s.Branch
+	}
+	if strings.TrimSpace(pr.Base) == "" {
+		pr.Base = s.Base
+	}
+	if strings.TrimSpace(pr.Status) == "" {
+		pr.Status = "preparing"
+	}
+	maxBlockWidth := blockWidth
+	if maxBlockWidth > 72 {
+		maxBlockWidth = 72
+	}
+	rows := []string{colorize(s, ansiCyan+ansiBold, "Pull Request")}
+	if branchLine := pullRequestBranchLine(pr); branchLine != "" {
+		rows = append(rows, branchLine)
+	}
+	if id := pullRequestDisplayID(pr.PR); id != "" {
+		rows = append(rows, "PR: "+id)
+	}
+	if title := strings.TrimSpace(pr.Title); title != "" {
+		rows = append(rows, "Title: "+title)
+	}
+	rows = append(rows, "Status: "+pullRequestStatusText(pr.Status))
+	if len(s.PullRequestChecks.Checks) == 0 {
+		rows = append(rows, pullRequestChecksSummary(s, symbols))
+	}
+	rows = append(rows, pullRequestCheckDetailLines(s, symbols, maxBlockWidth, limit-len(rows))...)
+	if len(rows) > limit {
+		rows = rows[:limit]
+	}
+	width := 1
+	for i, row := range rows {
+		rows[i] = ellipsize(row, maxBlockWidth)
+		if w := displayWidth(rows[i]); w > width {
+			width = w
+		}
+	}
+	if width > maxBlockWidth {
+		width = maxBlockWidth
+	}
+	lines := make([]string, 0, len(rows))
+	for _, row := range rows {
+		lines = append(lines, centeredBlockLine(row, screenWidth, width))
+	}
+	return lines
+}
+
+func pullRequestBranchLine(pr rendererPullRequest) string {
+	branch := strings.TrimSpace(pr.Branch)
+	base := strings.TrimSpace(pr.Base)
+	switch {
+	case branch != "" && base != "":
+		return "Branch: " + branch + " -> " + base
+	case branch != "":
+		return "Branch: " + branch
+	case base != "":
+		return "Base: " + base
+	default:
+		return ""
+	}
+}
+
+func pullRequestStatusText(status string) string {
+	status = strings.TrimSpace(strings.ReplaceAll(status, "_", " "))
+	if status == "" {
+		return "preparing"
+	}
+	return status
+}
+
+func pullRequestChecksSummary(s rendererSnapshot, symbols dashboardSymbols) string {
+	checks := s.PullRequestChecks
+	status := strings.TrimSpace(checks.Status)
+	switch {
+	case status == "":
+		return colorize(s, ansiDim, "CI: waiting for check results")
+	case checks.NoChecks && status == "skipped":
+		return colorize(s, ansiDim, "CI: no checks discovered")
+	case status == "failed":
+		return colorize(s, ansiRed+ansiBold, symbols.Blocked+" CI: failed")
+	case status == "passed":
+		return colorize(s, ansiGreen, symbols.Done+" CI: passed")
+	case status == "skipped":
+		return colorize(s, ansiDim, "CI: skipped")
+	case checks.Pending || status == "pending":
+		return colorize(s, ansiYellow+ansiBold, spinnerSymbol(s)+" CI: pending")
+	default:
+		return "CI: " + pullRequestStatusText(status)
+	}
+}
+
+func pullRequestCheckDetailLines(s rendererSnapshot, symbols dashboardSymbols, blockWidth, limit int) []string {
+	if limit <= 0 {
+		return nil
+	}
+	checks := s.PullRequestChecks
+	var rows []string
+	for _, check := range checks.Checks {
+		if len(rows) >= limit {
+			break
+		}
+		rows = append(rows, pullRequestCheckLine(s, symbols, check))
+	}
+	if errText := strings.TrimSpace(checks.Error); errText != "" && len(rows) < limit {
+		rows = append(rows, "Error: "+errText)
+	}
+	if checkedAt := strings.TrimSpace(checks.CheckedAt); checkedAt != "" && len(rows) < limit {
+		rows = append(rows, "Checked: "+checkedAt)
+	}
+	for _, line := range pullRequestCheckOutputLines(checks) {
+		if len(rows) >= limit {
+			break
+		}
+		rows = append(rows, line)
+	}
+	if len(rows) > limit {
+		rows = rows[:limit]
+	}
+	for i := range rows {
+		rows[i] = ellipsize(rows[i], blockWidth)
+	}
+	return rows
+}
+
+func pullRequestCheckLine(s rendererSnapshot, symbols dashboardSymbols, check rendererPullRequestCheck) string {
+	marker := symbols.Pending
+	stateStyle := ansiDim
+	switch checkBucket(check) {
+	case "pass":
+		marker = symbols.Done
+		stateStyle = ansiGreen
+	case "fail", "cancel":
+		marker = symbols.Blocked
+		stateStyle = ansiRed + ansiBold
+	case "pending":
+		marker = spinnerSymbol(s)
+		stateStyle = ansiYellow + ansiBold
+	case "skipping":
+		stateStyle = ansiDim
+	}
+	name := strings.TrimSpace(check.Name)
+	if workflow := strings.TrimSpace(check.Workflow); workflow != "" && workflow != name {
+		name = workflow + " / " + name
+	}
+	return colorize(s, stateStyle, marker+" "+name)
+}
+
+func checkBucket(check rendererPullRequestCheck) string {
+	bucket := strings.ToLower(strings.TrimSpace(check.Bucket))
+	if bucket != "" {
+		return bucket
+	}
+	state := strings.ToLower(strings.TrimSpace(check.State))
+	switch state {
+	case "success", "successful", "completed", "pass", "passed":
+		return "pass"
+	case "failure", "failed", "error", "fail":
+		return "fail"
+	case "cancelled", "canceled", "cancel":
+		return "cancel"
+	case "skipped", "neutral", "skipping":
+		return "skipping"
+	default:
+		return "pending"
+	}
+}
+
+func pullRequestCheckOutputLines(checks rendererPullRequestChecks) []string {
+	text := strings.TrimSpace(strings.TrimSpace(checks.Stdout) + "\n" + strings.TrimSpace(checks.Stderr))
+	if text == "" {
+		return nil
+	}
+	var rows []string
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.Join(strings.Fields(line), " ")
+		if line == "" || isNoisyPRCheckOutput(line) {
+			continue
+		}
+		rows = append(rows, line)
+	}
+	return rows
+}
+
+func isNoisyPRCheckOutput(line string) bool {
+	lower := strings.ToLower(strings.TrimSpace(line))
+	return strings.HasPrefix(lower, "refreshing checks status") || strings.Contains(lower, "press ctrl+c")
 }
 
 func pullRequestDisplayID(raw string) string {

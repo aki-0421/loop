@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aki-0421/loop/internal/pr"
 	"github.com/aki-0421/loop/internal/runstate"
 	"github.com/aki-0421/loop/internal/workflow"
 )
@@ -135,7 +136,7 @@ func TestRunRendererDashboardKeepsEssentialStateWithinBounds(t *testing.T) {
 		OutputTokens: 50,
 	}, 70, 8)
 	shortFrame := strings.Join(shortLines, "\n")
-	for _, want := range []string{"loop", "long message", "tasks: 1/2 done"} {
+	for _, want := range []string{"prompt.md", "100 in", "long message", "1/2 tasks", "Done", "Open"} {
 		if !strings.Contains(shortFrame, want) {
 			t.Fatalf("compact frame missing %q:\n%s", want, shortFrame)
 		}
@@ -260,6 +261,80 @@ func TestRunRendererShowsPendingPullRequestsDuringWork(t *testing.T) {
 		t.Fatalf("work frame should show a rotating circle status:\n%s", frame)
 	}
 	assertFrameBounds(t, lines, 120, 24)
+}
+
+func TestRunRendererShowsPullRequestProgressInsteadOfTasks(t *testing.T) {
+	t.Setenv("LOOP_ASCII", "1")
+	now := time.Now()
+	iterDir := t.TempDir()
+	if err := writePRState(iterDir, prState{
+		SchemaVersion: 1,
+		Status:        "created",
+		PR:            "https://github.com/acme/app/pull/42",
+		Branch:        "feature/render-pr-progress",
+		Base:          "develop",
+		Title:         "Show PR progress in renderer",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writePRChecks(iterDir, prChecksArtifact{
+		SchemaVersion: 1,
+		Status:        "failed",
+		PR:            "https://github.com/acme/app/pull/42",
+		Branch:        "feature/render-pr-progress",
+		CheckedAt:     "2026-06-06T10:00:00Z",
+		ExitCode:      1,
+		Error:         "exit status 1",
+		Checks: []pr.CheckStatus{
+			{Name: "unit", Workflow: "test", Bucket: "fail", State: "FAILURE", Link: "https://github.com/acme/app/actions/runs/1/job/2"},
+			{Name: "lint", Workflow: "quality", Bucket: "pass", State: "SUCCESS"},
+			{Name: "deploy-preview", Workflow: "preview", Bucket: "pending", State: "QUEUED"},
+		},
+		Stdout: "Refreshing checks status every 5 seconds. Press Ctrl+C to quit.\n",
+		Stderr: "unit test failed: missing dependency\n",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	renderer := &runRenderer{
+		started:      now.Add(-time.Minute),
+		base:         "develop",
+		branch:       "feature/render-pr-progress",
+		stage:        string(runstate.StagePullRequest),
+		stageDetail:  "merge agent running",
+		iterationDir: iterDir,
+		latestMsg:    "merge agent running",
+		tasks: []taskItem{{
+			ID:     "renderer",
+			Status: "active",
+			Text:   "Old task should not be visible",
+			Todos:  []taskTodoDisplay{{Status: "active", Text: "Old TODO should not be visible"}},
+		}},
+	}
+
+	frameLines := renderer.frame(120, 28)
+	frame := stripANSISequences(strings.Join(frameLines, "\n"))
+	for _, want := range []string{
+		"Pull Request",
+		"Branch: feature/render-pr-progress -> develop",
+		"PR: #42",
+		"Title: Show PR progress in renderer",
+		"Status: created",
+		"[!] test / unit",
+		"[x] quality / lint",
+		"- preview / deploy-preview",
+		"unit test failed: missing dependency",
+	} {
+		if !strings.Contains(frame, want) {
+			t.Fatalf("pull request frame missing %q:\n%s", want, frame)
+		}
+	}
+	for _, hidden := range []string{"Old task should not be visible", "Old TODO should not be visible"} {
+		if strings.Contains(frame, hidden) {
+			t.Fatalf("pull request frame should hide task content %q:\n%s", hidden, frame)
+		}
+	}
+	assertFrameBounds(t, frameLines, 120, 28)
 }
 
 func TestRunRendererShowsSleepFetchRequested(t *testing.T) {

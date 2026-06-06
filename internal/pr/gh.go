@@ -35,6 +35,19 @@ type CommandResult struct {
 	ExitCode int
 	NoChecks bool
 	Pending  bool
+	Checks   []CheckStatus
+}
+
+type CheckStatus struct {
+	Bucket      string `json:"bucket,omitempty"`
+	CompletedAt string `json:"completedAt,omitempty"`
+	Description string `json:"description,omitempty"`
+	Event       string `json:"event,omitempty"`
+	Link        string `json:"link,omitempty"`
+	Name        string `json:"name,omitempty"`
+	StartedAt   string `json:"startedAt,omitempty"`
+	State       string `json:"state,omitempty"`
+	Workflow    string `json:"workflow,omitempty"`
 }
 
 type PullRequestState struct {
@@ -361,6 +374,29 @@ func (r Runner) Checks(ctx context.Context, pr string, watch bool) (CommandResul
 		return result, nil
 	}
 	return result, err
+}
+
+func (r Runner) CheckList(ctx context.Context, pr string) ([]CheckStatus, CommandResult, error) {
+	if pr == "" {
+		return nil, CommandResult{}, errors.New("pr identifier is required")
+	}
+	args := []string{"pr", "checks", pr}
+	if r.ChecksRequiredOnly {
+		args = append(args, "--required")
+	}
+	args = append(args, "--json", "bucket,completedAt,description,event,link,name,startedAt,state,workflow")
+	result, err := r.run(ctx, r.ghPath(), "gh", args...)
+	if err != nil {
+		return nil, result, err
+	}
+	var checks []CheckStatus
+	if strings.TrimSpace(result.Stdout) != "" {
+		if err := json.Unmarshal([]byte(result.Stdout), &checks); err != nil {
+			return nil, result, fmt.Errorf("parse pr checks JSON: %w", err)
+		}
+	}
+	result.Checks = checks
+	return checks, result, nil
 }
 
 func (r Runner) Logs(ctx context.Context, ref string) (CommandResult, error) {

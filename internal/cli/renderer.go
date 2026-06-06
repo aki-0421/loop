@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/aki-0421/loop/internal/pr"
 	"github.com/aki-0421/loop/internal/runstate"
 	"github.com/aki-0421/loop/internal/workflow"
 )
@@ -34,6 +35,7 @@ type runRenderer struct {
 	stage                 string
 	stageDetail           string
 	iteration             string
+	iterationDir          string
 	agentCommand          string
 	agentExit             string
 	current               string
@@ -190,6 +192,15 @@ func (r *runRenderer) Iteration(iterationID string) {
 	}
 	r.mu.Unlock()
 	r.render()
+}
+
+func (r *runRenderer) IterationDirectory(iterationDir string) {
+	if !r.enabled {
+		return
+	}
+	r.mu.Lock()
+	r.iterationDir = strings.TrimSpace(iterationDir)
+	r.mu.Unlock()
 }
 
 func (r *runRenderer) TasksPlanned(tasks []workflow.Task) {
@@ -893,6 +904,7 @@ func (r *runRenderer) frame(width, height int) []string {
 		Stage:            r.stage,
 		StageDetail:      r.stageDetail,
 		Iteration:        r.iteration,
+		IterationDir:     r.iterationDir,
 		AgentCommand:     r.agentCommand,
 		AgentExit:        r.agentExit,
 		Current:          r.current,
@@ -920,13 +932,86 @@ func (r *runRenderer) frame(width, height int) []string {
 	}
 	r.mu.Unlock()
 
+	refreshRendererPullRequest(&snapshot)
 	tasks := append([]taskItem(nil), snapshot.Tasks...)
 	refreshVisibleTaskTodos(tasks)
-	if currentTask := firstOpenTask(tasks); currentTask != "" {
-		snapshot.Current = currentTask
+	if snapshot.Stage != string(runstate.StagePullRequest) {
+		if currentTask := firstOpenTask(tasks); currentTask != "" {
+			snapshot.Current = currentTask
+		}
 	}
 	snapshot.Tasks = tasks
 	return renderDashboard(snapshot, width, height)
+}
+
+func refreshRendererPullRequest(snapshot *rendererSnapshot) {
+	if snapshot == nil || snapshot.Stage != string(runstate.StagePullRequest) || strings.TrimSpace(snapshot.IterationDir) == "" {
+		return
+	}
+	if state, ok, err := readPRState(snapshot.IterationDir); err == nil && ok {
+		snapshot.PullRequest = rendererPullRequest{
+			PR:     state.PR,
+			Title:  state.Title,
+			Branch: state.Branch,
+			Base:   state.Base,
+			Status: state.Status,
+		}
+	}
+	if checks, ok, err := readPRChecks(snapshot.IterationDir); err == nil && ok {
+		snapshot.PullRequestChecks = rendererPullRequestChecks{
+			Status:    checks.Status,
+			CheckedAt: checks.CheckedAt,
+			Pending:   checks.Pending,
+			NoChecks:  checks.NoChecks,
+			Error:     checks.Error,
+			Checks:    rendererPullRequestChecksFromPR(checks.Checks),
+			Stdout:    checks.Stdout,
+			Stderr:    checks.Stderr,
+		}
+	}
+	if strings.TrimSpace(snapshot.PullRequest.Branch) == "" {
+		snapshot.PullRequest.Branch = snapshot.Branch
+	}
+	if strings.TrimSpace(snapshot.PullRequest.Base) == "" {
+		snapshot.PullRequest.Base = snapshot.Base
+	}
+	if strings.TrimSpace(snapshot.PullRequest.Status) == "" {
+		snapshot.PullRequest.Status = "preparing"
+	}
+	if strings.TrimSpace(snapshot.Current) == "" || strings.HasPrefix(strings.TrimSpace(snapshot.Current), "running task:") {
+		snapshot.Current = "merge agent running"
+	}
+	if strings.TrimSpace(snapshot.LatestMsg) == "" || strings.HasPrefix(strings.TrimSpace(snapshot.LatestMsg), "running task:") {
+		snapshot.LatestMsg = snapshot.Current
+	}
+}
+
+func rendererPullRequestChecksFromPR(checks []pr.CheckStatus) []rendererPullRequestCheck {
+	if len(checks) == 0 {
+		return nil
+	}
+	out := make([]rendererPullRequestCheck, 0, len(checks))
+	for _, check := range checks {
+		name := strings.TrimSpace(check.Name)
+		if name == "" {
+			name = strings.TrimSpace(check.Workflow)
+		}
+		if name == "" {
+			continue
+		}
+		out = append(out, rendererPullRequestCheck{
+			Bucket:      strings.TrimSpace(check.Bucket),
+			CompletedAt: strings.TrimSpace(check.CompletedAt),
+			Description: strings.TrimSpace(check.Description),
+			Event:       strings.TrimSpace(check.Event),
+			Link:        strings.TrimSpace(check.Link),
+			Name:        name,
+			StartedAt:   strings.TrimSpace(check.StartedAt),
+			State:       strings.TrimSpace(check.State),
+			Workflow:    strings.TrimSpace(check.Workflow),
+		})
+	}
+	return out
 }
 
 func (r *runRenderer) taskIndexLocked(id string) int {

@@ -394,6 +394,7 @@ func resumeOrchestratedIteration(ctx context.Context, req orchestrationRequest) 
 	}
 	defer cleanup.OnExit(ctx, req.StatePath, req.State, &retErr)
 	req.Renderer.Iteration(iterationID)
+	req.Renderer.IterationDirectory(iterDir)
 	req.Renderer.Branch(currentBranch)
 	if err := writeRuntimeArtifact(paths); err != nil {
 		return iterationWorkflowResult{}, codedError{1, err}
@@ -622,6 +623,7 @@ func runOrchestratedIteration(ctx context.Context, req orchestrationRequest) (re
 		}
 	}()
 	req.Renderer.Iteration(iterationID)
+	req.Renderer.IterationDirectory(iterDir)
 	req.State.CurrentIteration = iterationID
 	req.State.Stage = runstate.StagePlanning
 	req.State.Iterations = append(req.State.Iterations, runstate.IterationRecord{IterationID: iterationID, BranchInitial: initialBranch, Stage: string(req.State.Stage)})

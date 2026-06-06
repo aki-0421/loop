@@ -126,6 +126,43 @@ func TestGHWrapperChecksUsesWatchOptions(t *testing.T) {
 	}
 }
 
+func TestGHWrapperCheckListParsesJSON(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "gh.log")
+	r := Runner{Dir: dir, GHPath: fakeScript(t, `#!/bin/sh
+echo "$@" >> "`+logPath+`"
+if [ "$1" = "pr" ] && [ "$2" = "checks" ] && [ "$4" = "--required" ] && [ "$5" = "--json" ]; then
+cat <<'JSON'
+[
+  {"bucket":"pass","name":"unit","state":"SUCCESS","workflow":"test","link":"https://example.test/job/1"},
+  {"bucket":"pending","name":"lint","state":"QUEUED","workflow":"quality"}
+]
+JSON
+  exit 0
+fi
+exit 1
+`), ChecksRequiredOnly: true}
+
+	checks, result, err := r.CheckList(ctx, "1")
+	if err != nil {
+		t.Fatalf("CheckList: %v", err)
+	}
+	if len(checks) != 2 || checks[0].Name != "unit" || checks[1].Bucket != "pending" {
+		t.Fatalf("checks = %#v", checks)
+	}
+	if len(result.Checks) != 2 {
+		t.Fatalf("result checks = %#v", result.Checks)
+	}
+	logBytes, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(logBytes), "pr checks 1 --required --json bucket,completedAt,description,event,link,name,startedAt,state,workflow") {
+		t.Fatalf("check list command missing JSON fields:\n%s", logBytes)
+	}
+}
+
 func TestGHWrapperViewStateParsesTSV(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
