@@ -683,6 +683,9 @@ func runOrchestratedIteration(ctx context.Context, req orchestrationRequest) (re
 		return iterationWorkflowResult{}, codedError{1, err}
 	}
 	plannerWorktreeActive = true
+	if err := copyWorktreeIncludedIgnoredPaths(ctx, rootRunner, req.Root, plannerWorktree, paths.Events); err != nil {
+		return iterationWorkflowResult{}, codedError{1, err}
+	}
 	if err := writeRuntimeArtifact(paths); err != nil {
 		return iterationWorkflowResult{}, codedError{1, err}
 	}
@@ -776,6 +779,9 @@ func runOrchestratedIteration(ctx context.Context, req orchestrationRequest) (re
 		if _, err := rootRunner.Run(ctx, "worktree", "add", "-b", initialBranch, iterationWorktree, cfg.Git.BaseBranch); err != nil {
 			return iterationWorkflowResult{}, codedError{1, err}
 		}
+	}
+	if err := copyWorktreeIncludedIgnoredPaths(ctx, rootRunner, req.Root, iterationWorktree, paths.Events); err != nil {
+		return iterationWorkflowResult{}, codedError{1, err}
 	}
 	if err := writeRuntimeArtifact(paths); err != nil {
 		return iterationWorkflowResult{}, codedError{1, err}
@@ -1611,6 +1617,11 @@ func prepareCodingTaskAttempt(ctx context.Context, req taskSetRequest, task work
 	taskPaths.TaskID = task.ID
 	taskPaths.TaskDir = taskDir
 	taskPaths.Events = filepath.Join(taskDir, "agent-events.jsonl")
+	if err := copyWorktreeIncludedIgnoredPaths(ctx, rootRunner, req.Root, worktree, taskPaths.Events); err != nil {
+		removeWorktreeAndBranchLocked(ctx, rootRunner, worktree, branch, true, gitMu)
+		_ = os.RemoveAll(activeDir)
+		return taskAttemptContext{}, err
+	}
 	if err := clearTaskAttemptState(taskPaths); err != nil {
 		removeWorktreeAndBranchLocked(ctx, rootRunner, worktree, branch, true, gitMu)
 		_ = os.RemoveAll(activeDir)

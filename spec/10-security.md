@@ -52,3 +52,5 @@ Integration requires:
 The agent may see repository files and command output. `loop` does not claim to sandbox the agent. The CLI must avoid adding extra secrets to the agent environment unless configured.
 
 Redaction patterns are applied to logs only. Redaction does not prevent the agent from using environment variables that were intentionally passed to it.
+
+`.worktreeinclude` can expose selected ignored files to agents in loop-created worktrees. A path is copied only when it matches `.worktreeinclude` and is also ignored by Git's standard ignore rules. Copy events record path names and destination worktrees, not file contents. Repositories should include only local files that agents need to read or use.
