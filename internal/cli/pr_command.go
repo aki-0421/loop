@@ -300,7 +300,7 @@ func commandPRMerge(ctx context.Context, g globals, args []string) error {
 		return codedError{2, err}
 	}
 	if prReviewMode(prCtx) != config.ReviewModeAutoMerge {
-		return codedError{2, errors.New("human review mode waits for an external PR merge; do not run `loop pr merge`")}
+		return codedError{2, errors.New("human review mode uses `merge-result.status=waiting_for_human` after `loop pr checks`")}
 	}
 	state, err := requirePRState(prCtx.iterDir)
 	if err != nil {

@@ -53,15 +53,16 @@ func TestAgentContextHelpCommandShowsCompactList(t *testing.T) {
 		"context:LOOP_AGENT_CONTEXT=1 selects this agent-facing reference for `loop help`",
 		"rule:read runtime and instruction with `loop iteration read runtime` and `loop iteration read instruction` before acting.",
 		"rule:run `loop role instruction` for the current LOOP_ROLE-specific operating rules.",
+		"rule:use `loop help`, `loop help issue`, `loop help task todo`, and `loop help handoff write`; read artifacts as `loop iteration read validation`.",
 		"planner:write one AI sprint-sized task-tree",
-		"coding:create task TODOs before edits",
+		"coding:create task TODOs before edits; commit TODOs need one quoted final commit-message argument",
 		"review:inspect diff, task results, validation, browser QA",
 		"merge:after review approval",
 		"cmd:loop branch rename",
 		"cmd:loop handoff write task-tree|task-result|review-result|merge-result",
 		"cmd:loop iteration path|read|write",
-		"cmd:loop iteration read artifact",
-		"cmd:loop iteration write artifact",
+		"cmd:loop iteration read $artifact",
+		"cmd:loop iteration write $artifact",
 		"cmd:loop issue report",
 		"cmd:loop pr create",
 		"cmd:loop pr merge",
@@ -149,8 +150,8 @@ func TestAgentContextHelpCommandShowsHandoffWriteSchemas(t *testing.T) {
 		"task-result={schema_version:1,task_id:string,status:completed|discarded|failed",
 		"review-result={schema_version:1,status:approved|changes_requested|failed",
 		"merge-result={schema_version:1,status:merged|waiting_for_human|pr_check_failed",
-		"--file path",
-		"--value json",
+		"--file $path",
+		"--value $json",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("help output missing %q:\n%s", want, out)
@@ -195,7 +196,7 @@ func TestAgentContextHelpCommandShowsIssueDetails(t *testing.T) {
 		if err != nil {
 			t.Fatalf("loop help %v: %v", topic, err)
 		}
-		if !strings.Contains(out, "--title text") || !strings.Contains(out, "--body text") {
+		if !strings.Contains(out, "--title $text") || !strings.Contains(out, "--body $text") {
 			t.Fatalf("issue help %v missing title/body flags:\n%s", topic, out)
 		}
 	}

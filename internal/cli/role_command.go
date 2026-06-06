@@ -67,7 +67,7 @@ Write one task tree:
 loop handoff write task-tree --file task-tree.json
 ` + "```" + `
 
-The task tree contains ` + "`schema_version`" + `, ` + "`summary`" + `, ` + "`goal_evaluation`" + `, optional ` + "`goal_complete`" + `, optional ` + "`wait_for_pending_prs`" + `, and ` + "`tasks`" + `. Each task must include only ` + "`id`" + `, ` + "`title`" + `, ` + "`description`" + `, ` + "`depends_on`" + `, ` + "`conflicts_with`" + `, and ` + "`acceptance`" + `. Do not include commit split messages or commit metadata.
+The task tree contains ` + "`schema_version`" + `, ` + "`summary`" + `, ` + "`goal_evaluation`" + `, optional ` + "`goal_complete`" + `, optional ` + "`wait_for_pending_prs`" + `, and ` + "`tasks`" + `. Each task includes ` + "`id`" + `, ` + "`title`" + `, ` + "`description`" + `, ` + "`depends_on`" + `, ` + "`conflicts_with`" + `, and ` + "`acceptance`" + `. Commit intent comes from coding-agent task TODOs.
 
 Task-tree shape:
 
@@ -115,12 +115,12 @@ func codingRoleMarkdown() string {
 
 Coding agents must use ` + "`loop task todo`" + ` for task-local work. Commit TODOs create task-branch commits, no_commit TODOs record clean validation or inspection work, and ` + "`loop task merge`" + ` merges the completed task branch. If you exit before ` + "`loop task merge`" + ` succeeds, the orchestrator treats the attempt as unmerged, discards that task branch/worktree, and may retry the task in a fresh coding session.
 
-Complete only the assigned task from the prompt. Understand the task goal and success criteria, then inspect the repository before editing. Before implementation, create an initial task-local TODO list through ` + "`loop task todo add`" + `. Use ` + "`--work-type commit`" + ` for TODOs that should create one task-branch commit, and ` + "`--work-type no_commit`" + ` for validation, inspection, handoff, or other work that must leave no repository changes. Commit TODO titles and commit messages must be specific to the assigned task; do not use generic placeholder text such as "Implement behavior". Run task TODO mutation commands one at a time. If you need to adjust pending order before starting work, use ` + "`loop task todo add --after <n>`" + ` or ` + "`loop task todo move <n> --after <n>`" + `; ` + "`--after 0`" + ` places an item at the top. During implementation, you may add, move, remove, or cancel pending follow-up TODOs after the fixed done/active/cancelled boundary when you discover additional work such as documentation, tests, validation, or cleanup.
+Complete only the assigned task from the prompt. Understand the task goal and success criteria, then inspect the repository before editing. Before implementation, create an initial task-local TODO list through ` + "`loop task todo add`" + `. Use ` + "`--work-type commit`" + ` for TODOs that create one task-branch commit, and ` + "`--work-type no_commit`" + ` for validation, inspection, handoff, or other work that leaves no repository changes. Commit TODO titles and commit messages must be specific to the assigned task. For commit TODOs, provide one quoted final commit-message argument after the flags. no_commit TODO syntax ends after the acceptance flags. Run task TODO mutation commands one at a time. If you need to adjust pending order before starting work, use ` + "`loop task todo add --after <n>`" + ` or ` + "`loop task todo move <n> --after <n>`" + `; ` + "`--after 0`" + ` places an item at the top. During implementation, you may add, move, remove, or cancel pending follow-up TODOs after the fixed done/active/cancelled boundary when you discover additional work such as documentation, tests, validation, or cleanup.
 
 Process TODOs serially:
 
 ` + "```bash" + `
-loop task todo add --type F --title "Add publish review route" --acceptance "The route renders the review workflow and focused coverage passes." add publish review route
+loop task todo add --work-type commit --type F --title "Add publish review route" --acceptance "The route renders the review workflow and focused coverage passes." "add publish review route"
 loop task todo add --work-type no_commit --title "Run focused validation" --acceptance "The focused validation command passes."
 loop task todo list
 loop task todo start 1
@@ -129,7 +129,7 @@ loop task todo stage 1
 loop task todo complete 1
 ` + "```" + `
 
-Inspect the ` + "`loop task todo stage`" + ` output before completing a commit TODO. If unrelated files appear, remove them from the index with ` + "`loop task todo stage <n> --remove <path>`" + ` or reset and explicitly add the intended paths with ` + "`loop task todo stage <n> --reset --add <path>`" + `. For no_commit TODOs, do not stage files; ` + "`loop task todo complete <n>`" + ` succeeds only when the task worktree has no repository changes. Do not start the next TODO until the current TODO has been completed or cancelled.
+Inspect the ` + "`loop task todo stage`" + ` output before completing a commit TODO. If unrelated files appear, remove them from the index with ` + "`loop task todo stage <n> --remove <path>`" + ` or reset and explicitly add the intended paths with ` + "`loop task todo stage <n> --reset --add <path>`" + `. For no_commit TODOs, keep files unstaged and complete with a clean task worktree. Complete or cancel the current TODO before starting the next TODO.
 
 Use ` + "`loop task todo cancel <n>`" + ` for pending TODOs that should remain in the audit trail as cancelled. To cancel an active TODO, run ` + "`loop task todo cancel <n> --discard-changes`" + `; this discards task worktree and index changes before marking the TODO cancelled.
 
@@ -173,7 +173,7 @@ func reviewRoleMarkdown() string {
 
 Review the iteration branch after coding and validation. Inspect the diff, task tree, task results, validation evidence, browser/UI behavior when relevant, and cross-task acceptance criteria. Focus on whether the integrated code matches the planner's task tree and acceptance criteria, whether the coding-agent results accurately describe the implemented work, and whether code quality is acceptable.
 
-Do not rename branches, create pull requests, run PR checks, merge PRs, or write PR title/body artifacts. Those actions belong to the merge role after QA approval. Do not use ` + "`changes_requested`" + ` for PR check failures.
+Review scope is the ` + "`review-result`" + ` handoff. Branch rename, PR title/body artifacts, PR creation, PR checks, and PR merge belong to the merge role after QA approval. PR check failures belong in merge-result ` + "`pr_check_failed`" + ` findings.
 
 ` + "```bash" + `
 loop handoff write review-result --file review-result.json
@@ -199,9 +199,11 @@ Use ` + "`status: \"approved\"`" + ` only when the iteration goals are satisfied
 func mergeRoleMarkdown() string {
 	return `## Merge Role
 
-Handle PR lifecycle after QA approval. Do not perform a second code-quality review. Use the task results and approved review evidence to write accurate PR title/body artifacts, then use only loop-owned branch and PR commands.
+Handle PR lifecycle after QA approval. Use the task results and approved review evidence to write accurate PR title/body artifacts, then use loop-owned branch and PR commands.
 
 Inspect ` + "`LOOP_PR_REVIEW_MODE`" + ` or ` + "`loop iteration read runtime`" + ` before choosing the merge path.
+
+Read ` + "`pr-state`" + ` only after ` + "`loop pr create`" + `, ` + "`loop pr checks`" + `, or ` + "`loop pr merge`" + ` has written it. If ` + "`loop iteration read pr-state`" + ` reports it is missing before PR creation, continue the PR setup path.
 
 When ` + "`LOOP_PR_REVIEW_MODE=auto_merge`" + `, rename the branch, read the PR template, write PR artifacts, create the PR, wait for checks, and merge:
 
@@ -215,7 +217,7 @@ loop pr checks
 loop pr merge
 ` + "```" + `
 
-When ` + "`LOOP_PR_REVIEW_MODE=parallel_human_review`" + ` or ` + "`serial_human_review`" + `, do the same PR preparation and checks but do not run ` + "`loop pr merge`" + `:
+When ` + "`LOOP_PR_REVIEW_MODE=parallel_human_review`" + ` or ` + "`serial_human_review`" + `, prepare the PR, run checks, and leave it waiting for human review:
 
 ` + "```bash" + `
 loop branch rename --kind feat concise-branch-subject
@@ -226,7 +228,7 @@ loop pr create
 loop pr checks
 ` + "```" + `
 
-If ` + "`loop pr checks`" + ` fails, inspect ` + "`pr-checks`" + `, ` + "`pr-check-log`" + `, or ` + "`loop pr logs`" + ` as needed and write ` + "`merge-result`" + ` with ` + "`status: \"pr_check_failed\"`" + ` plus concrete repair findings. Do not write ` + "`changes_requested`" + ` for PR check failures.
+If ` + "`loop pr checks`" + ` fails, inspect ` + "`pr-checks`" + `, ` + "`pr-check-log`" + `, or ` + "`loop pr logs`" + ` as needed and write ` + "`merge-result`" + ` with ` + "`status: \"pr_check_failed\"`" + ` plus concrete repair findings.
 
 ` + "```bash" + `
 loop handoff write merge-result --file merge-result.json

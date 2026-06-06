@@ -958,7 +958,7 @@ func finalizeOrchestratedIteration(ctx context.Context, req orchestrationRequest
 			return iterationWorkflowResult{}, codedError{6, err}
 		}
 		if !ok {
-			return iterationWorkflowResult{}, codedError{6, errors.New("approved PR-mode review must create the pull request before approval")}
+			return iterationWorkflowResult{}, codedError{6, errors.New("PR-mode integration requires the merge agent to create the pull request and leave pr-state")}
 		}
 		finalBranch = firstNonEmpty(state.Branch, initialBranch)
 		cleanup.Branch = finalBranch
@@ -2037,8 +2037,9 @@ func buildRolePrompt(role string, paths pathSet, task workflow.Task, tree any, t
 	b.WriteString(base)
 	fmt.Fprintf(&b, "\n## Role\n\nYou are the %s agent in a CLI-orchestrated loop iteration.\n", role)
 	b.WriteString("Read runtime context with `loop iteration read runtime` and the instruction with `loop iteration read instruction`.\n")
-	b.WriteString("Do not run Git or GitHub commands directly; use loop-owned commands for commits, branch renames, pull requests, handoffs, and task merges.\n")
+	b.WriteString("Use loop-owned commands for commits, branch renames, pull requests, handoffs, and task merges.\n")
 	b.WriteString("Use `loop role instruction` to refresh the current role-specific operating rules if needed.\n")
+	b.WriteString("Use `loop help`, `loop help issue`, `loop help task todo`, and `loop help handoff write` for command help. Read named iteration artifacts directly, for example `loop iteration read validation` or `loop iteration path events`.\n")
 	b.WriteString("Use `loop help` for the agent-facing command reference and `loop help handoff write` for the current handoff schema and command flags if needed.\n")
 	if paths.PendingPRRepair != nil {
 		b.WriteString("This iteration resumes an existing human-review pull request branch. Address only the selected PR feedback and keep the work on the existing PR branch.\n")
@@ -2048,12 +2049,12 @@ func buildRolePrompt(role string, paths pathSet, task workflow.Task, tree any, t
 		b.WriteString("\nWrite one task-tree handoff:\n\n```bash\nloop handoff write task-tree --file task-tree.json\n```\n\n")
 		b.WriteString("Plan one AI sprint-sized PR: the largest coherent sprint goal suitable for an autonomous coding run while still producing an independently mergeable result. If the obvious next slice is only a narrow affordance, isolated implementation layer, or commit-sized change, expand to adjacent behavior that belongs to the same product or technical goal.\n")
 		b.WriteString("Choose the fewest task boundaries that preserve autonomy, dependency ordering, conflict avoidance, validation, and safe parallelism. Each task should own a meaningful vertical outcome or substantial subsystem slice, not a file-level, layer-only, or commit-sized microtask. Keep documentation and validation with the behavior owner unless a final cross-cutting hardening task adds distinct value. When tasks must be serial, each step should still produce a meaningful integrated increment.\n")
-		b.WriteString("Task entries describe task goals, implementation context, dependencies, conflicts, and acceptance criteria only. Do not include commit split messages or commit metadata.\n")
+		b.WriteString("Task entries describe task goals, implementation context, dependencies, conflicts, and acceptance criteria. Commit intent comes from coding-agent task TODOs.\n")
 		if shouldPromptInitialPlannerForPendingPRs(paths) {
 			data, _ := json.MarshalIndent(paths.PendingPRs, "", "  ")
 			b.WriteString("\nRuntime includes review-pending pull requests. Before planning unrelated implementation work, inspect open pending PRs from oldest to newest with `loop pr feedback <pr>` and compare the latest feedback timestamp with each record's feedback_handled_at. If an unhandled review comment or change-request review needs code changes, return a task tree with `repair_pull_request` set to that PR and tasks that address only that feedback.\n")
-			b.WriteString("For pending PRs that do not need repair, treat their changed_files as reserved work and avoid planning tasks that are likely to overlap, conflict with, or depend on those changes until the PRs merge.\n")
-			b.WriteString("If every safe implementation area is blocked by review-pending PRs, write an empty task tree with `wait_for_pending_prs: true` so the CLI enters PR review wait mode instead of inventing overlapping work.\n")
+			b.WriteString("For pending PRs with no repair need, treat their changed_files as reserved work and avoid planning tasks that are likely to overlap, conflict with, or depend on those changes until the PRs merge.\n")
+			b.WriteString("If every safe implementation area is blocked by review-pending PRs, write an empty task tree with `wait_for_pending_prs: true` so the CLI enters PR review wait mode.\n")
 			b.WriteString("\nReview-pending pull requests:\n\n```json\n" + string(data) + "\n```\n")
 		}
 		b.WriteString("The JSON must match this schema: " + taskTreeSchemaHelpText() + "\n")
@@ -2062,17 +2063,17 @@ func buildRolePrompt(role string, paths pathSet, task workflow.Task, tree any, t
 		data, _ := workflow.MarshalIndent(task)
 		b.WriteString("\nComplete only this task. Understand its objective and success criteria, explore the repository, then create the task TODO list before editing files.\n\n")
 		b.WriteString("```json\n" + string(data) + "```\n")
-		b.WriteString("\nCreate task-local TODOs before implementation. Use `--work-type commit` for TODOs that should create one task-branch commit, and `--work-type no_commit` for validation, inspection, handoff, or other work that must leave no repository changes. Commit TODO titles and commit messages must be specific to this task; do not use generic placeholder text such as \"Implement behavior\". Run task TODO mutation commands one at a time. If pending TODOs need a different order before work starts, use `loop task todo add --after <n>` or `loop task todo move <n> --after <n>`; `--after 0` places an item at the top. During implementation, you may add, move, remove, or cancel pending follow-up TODOs after the fixed done/active/cancelled boundary when you discover additional work such as documentation, tests, validation, or cleanup.\n\n```bash\nloop task todo add --work-type commit --type F --title \"Add publish review route\" --acceptance \"The route renders the review workflow and focused coverage passes.\" add publish review route\nloop task todo add --work-type no_commit --title \"Run focused validation\" --acceptance \"The focused validation command passes.\"\nloop task todo list\n```\n")
-		b.WriteString("\nProcess TODOs serially. For each item, run `loop task todo start <n>`. For commit TODOs, make only that TODO's changes, then run `loop task todo stage <n>` to inspect staged commit candidates and remove unrelated files with `loop task todo stage <n> --remove <path>` if needed. Run `loop task todo complete <n>` only after the staged file list matches the TODO. For no_commit TODOs, do not stage files; `loop task todo complete <n>` succeeds only when the task worktree has no repository changes. To cancel an active TODO, run `loop task todo cancel <n> --discard-changes`; this discards task worktree and index changes before marking the TODO cancelled. Do not proceed to the next TODO until the current one is completed or cancelled.\n")
+		b.WriteString("\nCreate task-local TODOs before implementation. Use `--work-type commit` for TODOs that create one task-branch commit, and `--work-type no_commit` for validation, inspection, handoff, or other work that leaves no repository changes. Commit TODO titles and commit messages must be specific to this task. For commit TODOs, provide one quoted final commit-message argument after the flags. no_commit TODO syntax ends after the acceptance flags. Run task TODO mutation commands one at a time. If pending TODOs need a different order before work starts, use `loop task todo add --after <n>` or `loop task todo move <n> --after <n>`; `--after 0` places an item at the top. During implementation, you may add, move, remove, or cancel pending follow-up TODOs after the fixed done/active/cancelled boundary when you discover additional work such as documentation, tests, validation, or cleanup.\n\n```bash\nloop task todo add --work-type commit --type F --title \"Add publish review route\" --acceptance \"The route renders the review workflow and focused coverage passes.\" \"add publish review route\"\nloop task todo add --work-type no_commit --title \"Run focused validation\" --acceptance \"The focused validation command passes.\"\nloop task todo list\n```\n")
+		b.WriteString("\nProcess TODOs serially. For each item, run `loop task todo start <n>`. For commit TODOs, make only that TODO's changes, then run `loop task todo stage <n>` to inspect staged commit candidates and remove unrelated files with `loop task todo stage <n> --remove <path>` if needed. Run `loop task todo complete <n>` after the staged file list matches the TODO. For no_commit TODOs, keep files unstaged and complete with a clean task worktree. To cancel an active TODO, run `loop task todo cancel <n> --discard-changes`; this discards task worktree and index changes before marking the TODO cancelled. Complete or cancel the current TODO before starting the next TODO.\n")
 		b.WriteString("\nAfter all TODOs are complete, write the handoff source outside repository changes, then merge the completed task:\n\n```bash\ncat > \"$LOOP_TASK_DIR/task-result.json\" <<'JSON'\n{...}\nJSON\nloop handoff write task-result --task \"" + task.ID + "\" --file \"$LOOP_TASK_DIR/task-result.json\"\nloop task merge --type F complete " + task.ID + "\n```\n")
 		b.WriteString("\nIf this task should be abandoned, run `loop task discard --reason <reason>` and exit without merging.\n")
-		b.WriteString("\nIf `loop task merge` reports conflicts, resolve them in the printed iteration worktree and run `loop task merge --continue`. Do not exit until the merge command succeeds.\n")
+		b.WriteString("\nIf `loop task merge` reports conflicts, resolve them in the printed iteration worktree and run `loop task merge --continue`. Continue until the merge command succeeds.\n")
 		b.WriteString("\nThe JSON must match this schema: " + taskResultSchemaHelpText() + "\n")
 	case "review":
 		treeData, _ := workflow.MarshalIndent(tree)
 		resultsData, _ := workflow.MarshalIndent(taskResults)
 		b.WriteString("\nAct as the QA / integration review agent. Review the iteration branch diff, task results, validation evidence, browser/UI behavior when relevant, and cross-task acceptance criteria. Approve only if the integrated code matches the planner's task tree and acceptance criteria, the coding-agent results accurately describe the implemented work, code quality is acceptable, and validation is acceptable.\n")
-		b.WriteString("\nDo not rename branches, create pull requests, run PR checks, merge PRs, or write PR title/body artifacts. Those actions belong to the merge agent after QA approval. Use `changes_requested` only for implementation, acceptance, QA, or validation findings that coding agents should repair. Do not use `changes_requested` for PR check failures.\n")
+		b.WriteString("\nReview scope is the `review-result` handoff. Branch rename, PR title/body artifacts, PR creation, PR checks, and PR merge belong to the merge agent after QA approval. Use `changes_requested` for implementation, acceptance, QA, or validation findings that coding agents should repair. PR check failures belong in merge-result `pr_check_failed` findings.\n")
 		b.WriteString("\nTask tree:\n\n```json\n" + string(treeData) + "```\n")
 		b.WriteString("\nTask results:\n\n```json\n" + string(resultsData) + "```\n")
 		b.WriteString("\nValidation status: " + validation.StatusFromResults(validationResults) + "\n")
@@ -2081,7 +2082,7 @@ func buildRolePrompt(role string, paths pathSet, task workflow.Task, tree any, t
 	case "merge":
 		treeData, _ := workflow.MarshalIndent(tree)
 		resultsData, _ := workflow.MarshalIndent(taskResults)
-		b.WriteString("\nAct as the merge agent. The QA review has already approved the integrated code; do not perform a second code-quality review and do not request implementation changes except for PR check failures reported by `loop pr checks`.\n")
+		b.WriteString("\nAct as the merge agent. The QA review has already approved the integrated code. Merge scope covers PR lifecycle and PR check failure findings.\n")
 		b.WriteString("\nUse the task results and approved QA review to prepare accurate PR text, then handle only branch and pull request lifecycle through loop-owned commands.\n")
 		b.WriteString("\nTask tree:\n\n```json\n" + string(treeData) + "```\n")
 		b.WriteString("\nTask results:\n\n```json\n" + string(resultsData) + "```\n")
@@ -2090,15 +2091,16 @@ func buildRolePrompt(role string, paths pathSet, task workflow.Task, tree any, t
 			switch paths.PRReviewMode {
 			case config.ReviewModeParallelHumanReview, config.ReviewModeSerialHumanReview:
 				if paths.PendingPRRepair != nil {
-					b.WriteString("\nIn existing human-review PR repair mode, do not rename the branch. Read the template with `loop iteration read pr-template`, write updated `pr-title` and `pr-body` artifacts when useful, run `loop pr create` so the CLI binds to the existing PR, and run `loop pr checks`. Do not run `loop pr merge`; after checks pass, `pr-state.status` must be `waiting_for_human` so a human can review and merge externally.\n")
+					b.WriteString("\nIn existing human-review PR repair mode, keep the selected PR branch, read the template with `loop iteration read pr-template`, write updated `pr-title` and `pr-body` artifacts when useful, run `loop pr create` so the CLI binds to the existing PR, and run `loop pr checks`. After checks pass, leave `pr-state.status=waiting_for_human` so a human can review and merge externally.\n")
 				} else {
-					b.WriteString("\nIn human-review pull request mode, rename the iteration branch with `loop branch rename`, read the template with `loop iteration read pr-template`, write `pr-title` and `pr-body`, run `loop pr create`, and run `loop pr checks`. Do not run `loop pr merge`; after checks pass, `pr-state.status` must be `waiting_for_human` so a human can review and merge externally.\n")
+					b.WriteString("\nIn human-review pull request mode, rename the iteration branch with `loop branch rename`, read the template with `loop iteration read pr-template`, write `pr-title` and `pr-body`, run `loop pr create`, and run `loop pr checks`. After checks pass, leave `pr-state.status=waiting_for_human` so a human can review and merge externally.\n")
 				}
 			default:
 				b.WriteString("\nIn pull request mode, rename the iteration branch with `loop branch rename`, read the template with `loop iteration read pr-template`, write `pr-title` and `pr-body`, run `loop pr create`, run `loop pr checks`, and run `loop pr merge` after checks pass.\n")
 			}
 		}
-		b.WriteString("\nIf `loop pr checks` fails, inspect the loop-owned PR check/log artifacts and write `merge-result` with `status: \"pr_check_failed\"` plus concrete repair findings. Do not write `changes_requested` for PR check failures.\n")
+		b.WriteString("\nIf `loop pr checks` fails, inspect the loop-owned PR check/log artifacts and write `merge-result` with `status: \"pr_check_failed\"` plus concrete repair findings.\n")
+		b.WriteString("\nRead `pr-state` only after `loop pr create`, `loop pr checks`, or `loop pr merge` has written it; if it is absent before PR creation, continue the PR setup path instead of treating that as a lifecycle failure.\n")
 		b.WriteString("\nWrite one merge-result handoff:\n\n```bash\nloop handoff write merge-result --file merge-result.json\n```\n")
 		b.WriteString("\nUse `status: \"merged\"` only after `pr-state.status=merged`. Use `status: \"waiting_for_human\"` only after human-review PR checks pass and `pr-state.status=waiting_for_human`. Use `status: \"blocked\"` when PR lifecycle cannot continue without human intervention for a non-check reason.\n")
 		b.WriteString("\nThe JSON must match this schema: " + mergeResultSchemaHelpText() + "\n")

@@ -22,6 +22,7 @@ func TestRoleInstructionUsesCurrentRole(t *testing.T) {
 		"If you exit before `loop task merge` succeeds",
 		"Complete only the assigned task from the prompt.",
 		"loop task todo add",
+		"one quoted final commit-message argument",
 		"loop task merge --type F complete",
 	} {
 		if !strings.Contains(out, want) {
@@ -56,7 +57,8 @@ func TestRoleInstructionMergeHumanReviewMode(t *testing.T) {
 		"## Merge Role\n",
 		"When `LOOP_PR_REVIEW_MODE=auto_merge`",
 		"When `LOOP_PR_REVIEW_MODE=parallel_human_review` or `serial_human_review`",
-		"do not run `loop pr merge`",
+		"Read `pr-state` only after `loop pr create`",
+		"leave it waiting for human review",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("merge instruction missing %q:\n%s", want, out)

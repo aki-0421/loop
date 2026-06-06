@@ -21,7 +21,7 @@ Each iteration is CLI-owned:
 9. In PR mode, run the merge agent after QA approval. The merge agent renames the branch, writes PR title/body artifacts, creates the PR, waits for checks, and merges or hands off for human review through `loop pr`. If PR checks fail, it writes `merge-result.status=pr_check_failed` with repair findings. In local mode, perform local merge after QA approval.
 10. Clean task and iteration worktrees and continue until `goal_complete=true`, the iteration limit is reached, or a terminal error occurs.
 
-Agents do not run Git or GitHub commands directly. Coding agents create initial task-local TODOs before editing, may add or reorder pending follow-up TODOs after the fixed done/active/cancelled boundary during implementation, stage and inspect active commit TODOs through `loop task todo stage`, complete commit TODOs through CLI-created task-branch commits, complete no_commit TODOs only when they leave no repository changes, and use `loop task merge` to merge the completed task branch into the iteration branch while preserving task commit history. QA review agents do not run PR lifecycle commands. Merge agents use `loop branch rename` and `loop pr` commands for PR integration.
+Agents use loop-owned commands for Git and GitHub lifecycle work. Coding agents create initial task-local TODOs before editing, may add or reorder pending follow-up TODOs after the fixed done/active/cancelled boundary during implementation, stage and inspect active commit TODOs through `loop task todo stage`, complete commit TODOs through CLI-created task-branch commits, complete no_commit TODOs with a clean task worktree, and use `loop task merge` to merge the completed task branch into the iteration branch while preserving task commit history. QA review agents write `review-result`; merge agents use `loop branch rename` and `loop pr` commands for PR integration.
 
 If a coding agent exits without completing `loop task merge`, the CLI does not merge or salvage that task branch. It discards the unmerged attempt branch and worktree, clears stale task handoff and task TODO state, records a discard event, and starts the next attempt in a fresh branch and worktree until `run.maxTaskAttempts` is exhausted. When attempts are exhausted, or when the agent explicitly runs `loop task discard --reason`, the planner runs again with the discarded task and current plan context until it returns replacement tasks or another terminal error occurs.
 
@@ -93,7 +93,7 @@ The CLI rejects unknown JSON fields, removed planner/review/merge commit metadat
 
 ## Validation And Repair
 
-Configured validation runs after all currently scheduled coding tasks are merged into the iteration branch. Required validation failures do not integrate. The CLI creates a validation repair task and reruns the coding/review loop until validation passes or another terminal error occurs.
+Configured validation runs after all currently scheduled coding tasks are merged into the iteration branch. Required validation failures create a validation repair task, and the CLI reruns the coding/review loop until validation passes or another terminal error occurs.
 
 Review findings and PR check findings are converted into repair tasks. Review and merge agents must provide enough finding detail for the CLI to create tasks with acceptance criteria.
 

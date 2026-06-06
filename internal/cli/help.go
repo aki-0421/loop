@@ -385,8 +385,9 @@ func renderAgentHelp(commands []helpCommand) string {
 	b.WriteString("rule:do not run raw git or gh lifecycle commands; use loop commands for branch rename, commits, task merges, PRs, issues, and handoffs.\n")
 	b.WriteString("rule:write strict role handoff JSON with `loop handoff write`; unknown fields are rejected.\n")
 	b.WriteString("rule:run `loop role instruction` for the current LOOP_ROLE-specific operating rules.\n")
+	b.WriteString("rule:use `loop help`, `loop help issue`, `loop help task todo`, and `loop help handoff write`; read artifacts as `loop iteration read validation`.\n")
 	b.WriteString("planner:write one AI sprint-sized task-tree for a coherent independently mergeable PR; use few meaningful task boundaries, dependencies, and conflicts.\n")
-	b.WriteString("coding:create task TODOs before edits; process start/change/complete serially; write task-result; run `loop task merge`; resolve conflicts before exit.\n")
+	b.WriteString("coding:create task TODOs before edits; commit TODOs need one quoted final commit-message argument; no_commit TODOs omit --type and commit message; process start/change/complete serially; write task-result; run `loop task merge`; resolve conflicts before exit.\n")
 	b.WriteString("review:inspect diff, task results, validation, browser QA, and acceptance criteria; write review-result only and do not run PR lifecycle commands.\n")
 	b.WriteString("merge:after review approval, handle only PR lifecycle with loop branch/pr commands; write merge-result and use pr_check_failed for PR check failures.\n")
 	for _, cmd := range commands {
@@ -468,9 +469,31 @@ func compactStorage(storage string) string {
 }
 
 func compactUsage(text string) string {
-	text = strings.ReplaceAll(text, "<", "")
-	text = strings.ReplaceAll(text, ">", "")
-	return compactText(text)
+	return compactText(markUsagePlaceholders(text))
+}
+
+func markUsagePlaceholders(text string) string {
+	var b strings.Builder
+	for i := 0; i < len(text); i++ {
+		if text[i] != '<' {
+			b.WriteByte(text[i])
+			continue
+		}
+		end := strings.IndexByte(text[i+1:], '>')
+		if end < 0 {
+			b.WriteByte(text[i])
+			continue
+		}
+		content := text[i+1 : i+1+end]
+		if strings.Contains(content, "|") {
+			b.WriteString(content)
+		} else {
+			b.WriteByte('$')
+			b.WriteString(content)
+		}
+		i += end + 1
+	}
+	return b.String()
 }
 
 func compactText(text string) string {
