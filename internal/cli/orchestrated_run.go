@@ -574,6 +574,24 @@ func runOrchestratedIteration(ctx context.Context, req orchestrationRequest) (re
 	}
 	initialBranch := gitx.InitialBranchName(req.IterationNumber)
 	iterationWorktree := filepath.Join(req.Root, ".loop", "worktrees", req.RunID, iterationID, "iteration")
+	plannerWorktree := filepath.Join(req.Root, ".loop", "worktrees", req.RunID, iterationID, "planner")
+	plannerWorktreeActive := false
+	cleanupPlannerWorktree := func() []string {
+		if !plannerWorktreeActive {
+			return nil
+		}
+		plannerWorktreeActive = false
+		cctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		var issues []string
+		if err := rootRunner.RemoveWorktree(cctx, plannerWorktree, true); err != nil {
+			issues = append(issues, "remove planner worktree "+plannerWorktree+": "+err.Error())
+		}
+		removeEmptyDir(filepath.Dir(plannerWorktree))
+		removeEmptyDir(filepath.Dir(filepath.Dir(plannerWorktree)))
+		_, _ = rootRunner.Run(cctx, "worktree", "prune")
+		return issues
+	}
 	paths := promptPathsWithActive(iterDir, activeDir)
 	paths.Goal = req.Goal
 	paths.Language = cfg.Language.Default
@@ -587,13 +605,14 @@ func runOrchestratedIteration(ctx context.Context, req orchestrationRequest) (re
 	paths.PRReviewMode = cfg.Git.Integration.PR.ReviewMode
 	paths.PullRequestMode = cfg.Git.Integration.Mode == "pr"
 	paths.RoleOrchestrated = true
-	paths.WorkDir = req.Root
+	paths.WorkDir = plannerWorktree
 	paths.PendingPRs = append([]runstate.PendingPullRequest(nil), req.State.PendingPullRequests...)
 	cleanupRegistered := false
 	defer func() {
 		if retErr != nil && !cleanupRegistered {
 			_ = runstate.AppendEvent(paths.Events, runstate.Event{"type": "run.error_cleanup.started", "branch": "", "worktree": ""})
-			issues := cleanupDisposableIterationFiles(activeDir, paths.Events)
+			issues := cleanupPlannerWorktree()
+			issues = append(issues, cleanupDisposableIterationFiles(activeDir, paths.Events)...)
 			event := runstate.Event{"type": "run.error_cleanup.completed", "branch": "", "worktree": ""}
 			if len(issues) > 0 {
 				appendErrorLog(paths.Errors, "iteration file cleanup failed: "+strings.Join(issues, "; "))
@@ -621,6 +640,13 @@ func runOrchestratedIteration(ctx context.Context, req orchestrationRequest) (re
 	if err := prompt.WritePrompt(paths.Prompt, instructionContent); err != nil {
 		return iterationWorkflowResult{}, codedError{1, err}
 	}
+	if err := os.MkdirAll(filepath.Dir(plannerWorktree), 0o755); err != nil {
+		return iterationWorkflowResult{}, codedError{1, err}
+	}
+	if _, err := rootRunner.Run(ctx, "worktree", "add", "--detach", plannerWorktree, cfg.Git.BaseBranch); err != nil {
+		return iterationWorkflowResult{}, codedError{1, err}
+	}
+	plannerWorktreeActive = true
 	if err := writeRuntimeArtifact(paths); err != nil {
 		return iterationWorkflowResult{}, codedError{1, err}
 	}
@@ -629,9 +655,12 @@ func runOrchestratedIteration(ctx context.Context, req orchestrationRequest) (re
 	req.State.Stage = runstate.StagePlanning
 	_ = runstate.Write(req.StatePath, *req.State)
 	req.Renderer.Stage(runstate.StagePlanning, "planner agent running")
-	tree, err := runPlannerRole(ctx, cfg, req.Root, paths, req.Renderer.AgentEvent)
+	tree, err := runPlannerRole(ctx, cfg, plannerWorktree, paths, req.Renderer.AgentEvent)
 	if err != nil {
 		return iterationWorkflowResult{}, codedError{4, err}
+	}
+	if issues := cleanupPlannerWorktree(); len(issues) > 0 {
+		appendErrorLog(paths.Errors, "planner worktree cleanup failed: "+strings.Join(issues, "; "))
 	}
 	if err := writeTaskTreeAudit(iterDir, tree); err != nil {
 		return iterationWorkflowResult{}, codedError{1, err}

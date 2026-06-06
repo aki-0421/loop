@@ -100,6 +100,58 @@ git:
 	assertBranchMissing(t, repo, "wip/0001")
 }
 
+func TestRoleOrchestratedPlannerUsesConfiguredBaseBranchWorktree(t *testing.T) {
+	ctx := context.Background()
+	repo := newCleanupRepo(t)
+	git(t, repo, "checkout", "-b", "refactor/dev-screens", "develop")
+	mustWrite(t, filepath.Join(repo, "base-only.txt"), "planner must see this branch\n")
+	git(t, repo, "add", "base-only.txt")
+	git(t, repo, "commit", "-m", "F: add base branch marker")
+	git(t, repo, "checkout", "develop")
+
+	mustWrite(t, filepath.Join(repo, "task.md"), "# Task\n\nRun the role workflow from a non-current base branch.\n")
+	agentCommand, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, filepath.Join(repo, ".loop", "config.yaml"), `version: 1
+
+agent:
+  default: rolefake
+  adapters:
+    rolefake:
+      command: `+yamlSingleQuote(agentCommand)+`
+      args: [-test.run=TestHelperProcessRoleAgent, --]
+      prompt: stdin
+      env:
+        LOOP_ROLE_TEST_AGENT: "1"
+        LOOP_ROLE_TEST_AGENT_MODE: planner-base-worktree
+
+run:
+  maxIterations: 1
+
+git:
+  baseBranch: refactor/dev-screens
+  integration:
+    mode: local_merge
+`)
+	git(t, repo, "add", "task.md", ".loop/config.yaml")
+	git(t, repo, "commit", "-m", "T: add non-current base fixture")
+	withWorkingDir(t, repo)
+
+	if _, err := captureStdout(t, func() error {
+		return commandRun(ctx, globals{Agent: "rolefake", JSON: true, NoColor: true}, []string{"task.md", "--goal", "The fake role workflow is complete."})
+	}); err != nil {
+		t.Fatalf("loop run: %v", err)
+	}
+
+	state := readLatestRunState(t, repo)
+	if state.BaseBranch != "refactor/dev-screens" || state.Stage != runstate.StageCompleted {
+		t.Fatalf("state = %#v, want completed run on refactor/dev-screens", state)
+	}
+	assertBranchMissing(t, repo, "wip/0001")
+}
+
 func TestRoleAgentIdleTimeoutRestartsCodingAgentInSameAttempt(t *testing.T) {
 	ctx := context.Background()
 	repo := newCleanupRepo(t)
@@ -1043,6 +1095,16 @@ func runRoleTestAgent() int {
 		case "planner-error":
 			fmt.Fprintln(os.Stderr, "forced planner failure")
 			return 1
+		case "planner-base-worktree":
+			workDir := os.Getenv("LOOP_WORKDIR")
+			if _, err := os.Stat(filepath.Join(workDir, "base-only.txt")); err != nil {
+				fmt.Fprintf(os.Stderr, "planner did not run from configured base branch worktree: %v\n", err)
+				return 1
+			}
+			if localBranchExists(ctx, gitx.Runner{Dir: workDir}, "wip/0001") {
+				fmt.Fprintln(os.Stderr, "planner ran after wip/0001 was created")
+				return 1
+			}
 		case "explicit-discard-replan":
 			iterDir := os.Getenv("LOOP_ITERATION_DIR")
 			countFile := filepath.Join(iterDir, "planner-count.txt")
