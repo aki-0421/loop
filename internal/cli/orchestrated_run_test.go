@@ -2,7 +2,9 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,10 +12,115 @@ import (
 	"time"
 
 	"github.com/aki-0421/loop/internal/artifactdb"
+	"github.com/aki-0421/loop/internal/config"
 	"github.com/aki-0421/loop/internal/gitx"
 	"github.com/aki-0421/loop/internal/runstate"
 	"github.com/aki-0421/loop/internal/workflow"
 )
+
+func TestSyncRendererPRReviewModeArtifactsRewritesRuntimeAndEffectiveConfig(t *testing.T) {
+	cfg, err := config.Default()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Git.Integration.Mode = "pr"
+	cfg.Git.Integration.PR.ReviewMode = config.ReviewModeSerialHumanReview
+	cfg.Git.Integration.PR.HumanReview = true
+
+	iterDir := t.TempDir()
+	activeDir := filepath.Join(iterDir, "active")
+	paths := promptPathsWithActive(iterDir, activeDir)
+	paths.Goal = "ship the PR"
+	paths.Language = "en"
+	paths.RunID = "run-1"
+	paths.IterationID = "0001"
+	paths.BaseBranch = "develop"
+	paths.InitialBranch = "wip/0001"
+	paths.IterationBranch = "wip/0001"
+	paths.CurrentBranch = "wip/0001"
+	paths.IntegrationMode = "pr"
+	paths.PRReviewMode = config.ReviewModeSerialHumanReview
+	paths.PullRequestMode = true
+	paths.RoleOrchestrated = true
+	paths.WorkDir = "/worktree"
+
+	renderer := &runRenderer{
+		enabled:             true,
+		interactive:         false,
+		writer:              io.Discard,
+		started:             time.Now(),
+		done:                make(chan struct{}),
+		sleepFetchRequested: make(chan struct{}, 1),
+	}
+	renderer.EnablePRReviewMode(config.ReviewModeAutoMerge)
+
+	if err := syncRendererPRReviewModeArtifacts(&cfg, renderer, &paths); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Git.Integration.PR.ReviewMode != config.ReviewModeAutoMerge {
+		t.Fatalf("cfg review mode = %q, want auto_merge", cfg.Git.Integration.PR.ReviewMode)
+	}
+	if cfg.Git.Integration.PR.HumanReview {
+		t.Fatal("auto_merge should clear humanReview compatibility flag")
+	}
+	if paths.PRReviewMode != config.ReviewModeAutoMerge {
+		t.Fatalf("paths review mode = %q, want auto_merge", paths.PRReviewMode)
+	}
+	runtimeData := readText(t, paths.Runtime)
+	var runtime map[string]any
+	if err := json.Unmarshal([]byte(runtimeData), &runtime); err != nil {
+		t.Fatal(err)
+	}
+	if runtime["pr_review_mode"] != config.ReviewModeAutoMerge {
+		t.Fatalf("runtime pr_review_mode = %#v, want auto_merge\n%s", runtime["pr_review_mode"], runtimeData)
+	}
+	effective := readText(t, paths.EffectiveConfig)
+	if !strings.Contains(effective, "reviewMode: auto_merge") {
+		t.Fatalf("effective config did not record renderer review mode:\n%s", effective)
+	}
+	if !strings.Contains(effective, "humanReview: false") {
+		t.Fatalf("effective config did not clear humanReview:\n%s", effective)
+	}
+}
+
+func TestLockRendererPRReviewModeArtifactsFreezesDisplayedMode(t *testing.T) {
+	cfg, err := config.Default()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Git.Integration.Mode = "pr"
+	cfg.Git.Integration.PR.ReviewMode = config.ReviewModeParallelHumanReview
+
+	iterDir := t.TempDir()
+	paths := promptPathsWithActive(iterDir, filepath.Join(iterDir, "active"))
+	paths.IntegrationMode = "pr"
+	paths.PullRequestMode = true
+	paths.PRReviewMode = config.ReviewModeParallelHumanReview
+
+	renderer := &runRenderer{
+		enabled:             true,
+		interactive:         false,
+		writer:              io.Discard,
+		started:             time.Now(),
+		done:                make(chan struct{}),
+		sleepFetchRequested: make(chan struct{}, 1),
+	}
+	renderer.EnablePRReviewMode(config.ReviewModeAutoMerge)
+
+	if err := lockRendererPRReviewModeArtifacts(&cfg, renderer, &paths); err != nil {
+		t.Fatal(err)
+	}
+	renderer.handleInputByte(context.Background(), 'r')
+	if got := renderer.CurrentPRReviewMode(); got != config.ReviewModeAutoMerge {
+		t.Fatalf("locked renderer mode changed to %q", got)
+	}
+	if cfg.Git.Integration.PR.ReviewMode != config.ReviewModeAutoMerge {
+		t.Fatalf("cfg review mode = %q, want auto_merge", cfg.Git.Integration.PR.ReviewMode)
+	}
+	if paths.PRReviewMode != config.ReviewModeAutoMerge {
+		t.Fatalf("paths review mode = %q, want auto_merge", paths.PRReviewMode)
+	}
+}
 
 func TestRoleOrchestratedLocalMergeUsesPlannerCoderReviewer(t *testing.T) {
 	ctx := context.Background()

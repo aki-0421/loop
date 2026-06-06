@@ -224,6 +224,21 @@ func (r *runRenderer) LockPRReviewMode(locked bool) {
 	r.render()
 }
 
+func (r *runRenderer) LockCurrentPRReviewMode() string {
+	if r == nil {
+		return ""
+	}
+	if !r.enabled {
+		return r.CurrentPRReviewMode()
+	}
+	r.mu.Lock()
+	r.prReviewModeLocked = true
+	mode := r.prReviewMode
+	r.mu.Unlock()
+	r.render()
+	return mode
+}
+
 func (r *runRenderer) cyclePRReviewMode() {
 	if r == nil || !r.enabled {
 		return

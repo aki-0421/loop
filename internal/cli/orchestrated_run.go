@@ -267,6 +267,47 @@ func applyRendererPRReviewMode(cfg *config.Config, renderer *runRenderer) {
 	}
 }
 
+func syncRendererPRReviewModeArtifacts(cfg *config.Config, renderer *runRenderer, paths *pathSet) error {
+	applyRendererPRReviewMode(cfg, renderer)
+	syncPathPRReviewMode(paths, valueConfig(cfg))
+	return writePRReviewModeArtifacts(cfg, paths)
+}
+
+func lockRendererPRReviewModeArtifacts(cfg *config.Config, renderer *runRenderer, paths *pathSet) error {
+	if cfg != nil && cfg.Git.Integration.Mode == "pr" && renderer != nil {
+		if mode := normalizeRendererReviewMode(renderer.LockCurrentPRReviewMode()); mode != "" {
+			cfg.Git.Integration.PR.ReviewMode = mode
+			cfg.Git.Integration.PR.HumanReview = mode != config.ReviewModeAutoMerge
+		}
+	}
+	syncPathPRReviewMode(paths, valueConfig(cfg))
+	return writePRReviewModeArtifacts(cfg, paths)
+}
+
+func valueConfig(cfg *config.Config) config.Config {
+	if cfg == nil {
+		return config.Config{}
+	}
+	return *cfg
+}
+
+func writePRReviewModeArtifacts(cfg *config.Config, paths *pathSet) error {
+	if cfg == nil || paths == nil || cfg.Git.Integration.Mode != "pr" {
+		return nil
+	}
+	if strings.TrimSpace(paths.Runtime) != "" {
+		if err := writeRuntimeArtifact(*paths); err != nil {
+			return err
+		}
+	}
+	if strings.TrimSpace(paths.EffectiveConfig) != "" {
+		if err := config.WriteEffective(paths.EffectiveConfig, *cfg); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func syncPathPRReviewMode(paths *pathSet, cfg config.Config) {
 	if paths == nil {
 		return
@@ -508,15 +549,18 @@ func resumeOrchestratedIteration(ctx context.Context, req orchestrationRequest) 
 	}
 	var merge workflow.MergeResult
 	if cfg.Git.Integration.Mode == "pr" {
-		applyRendererPRReviewMode(&cfg, req.Renderer)
-		syncPathPRReviewMode(&paths, cfg)
+		if err := syncRendererPRReviewModeArtifacts(&cfg, req.Renderer, &paths); err != nil {
+			return iterationWorkflowResult{}, codedError{1, err}
+		}
 		var mergeErr error
 		merge, mergeErr = readMergeAudit(iterDir)
 		if mergeErr != nil || resumeStage == runstate.StagePullRequest {
 			req.State.Stage = runstate.StagePullRequest
 			_ = runstate.Write(req.StatePath, *req.State)
 			req.Renderer.Stage(runstate.StagePullRequest, "merge agent running")
-			req.Renderer.LockPRReviewMode(true)
+			if err := lockRendererPRReviewModeArtifacts(&cfg, req.Renderer, &paths); err != nil {
+				return iterationWorkflowResult{}, codedError{1, err}
+			}
 			defer req.Renderer.LockPRReviewMode(false)
 			merge, err = runMergeRole(ctx, cfg, iterationWorktree, paths, tree, completedTaskResults, validationResults, req.Renderer.AgentEvent)
 			preserveIterationIfOpenPR(paths, cleanup)
@@ -860,8 +904,9 @@ func runOrchestratedIteration(ctx context.Context, req orchestrationRequest) (re
 		req.State.Stage = runstate.StageValidating
 		_ = runstate.Write(req.StatePath, *req.State)
 		req.Renderer.Stage(runstate.StageValidating, "running validation")
-		applyRendererPRReviewMode(&cfg, req.Renderer)
-		syncPathPRReviewMode(&paths, cfg)
+		if err := syncRendererPRReviewModeArtifacts(&cfg, req.Renderer, &paths); err != nil {
+			return iterationWorkflowResult{}, codedError{1, err}
+		}
 		validationResults, validationErr := runConfiguredValidation(ctx, iterationWorktree, paths, cfg.Validation.Commands)
 		if validationErr != nil || validation.StatusFromResults(validationResults) == "failed" {
 			repairCycle++
@@ -872,6 +917,9 @@ func runOrchestratedIteration(ctx context.Context, req orchestrationRequest) (re
 		req.State.Stage = runstate.StageReviewing
 		_ = runstate.Write(req.StatePath, *req.State)
 		req.Renderer.Stage(runstate.StageReviewing, "review agent running")
+		if err := syncRendererPRReviewModeArtifacts(&cfg, req.Renderer, &paths); err != nil {
+			return iterationWorkflowResult{}, codedError{1, err}
+		}
 		review, err = runReviewRole(ctx, cfg, iterationWorktree, paths, tree, completedTaskResults, validationResults, req.Renderer.AgentEvent)
 		if err != nil {
 			return iterationWorkflowResult{}, codedError{4, err}
@@ -890,9 +938,9 @@ func runOrchestratedIteration(ctx context.Context, req orchestrationRequest) (re
 			req.State.Stage = runstate.StagePullRequest
 			_ = runstate.Write(req.StatePath, *req.State)
 			req.Renderer.Stage(runstate.StagePullRequest, "merge agent running")
-			applyRendererPRReviewMode(&cfg, req.Renderer)
-			syncPathPRReviewMode(&paths, cfg)
-			req.Renderer.LockPRReviewMode(true)
+			if err := lockRendererPRReviewModeArtifacts(&cfg, req.Renderer, &paths); err != nil {
+				return iterationWorkflowResult{}, codedError{1, err}
+			}
 			merge, err = runMergeRole(ctx, cfg, iterationWorktree, paths, tree, completedTaskResults, validationResults, req.Renderer.AgentEvent)
 			preserveIterationIfOpenPR(paths, cleanup)
 			if err != nil {
