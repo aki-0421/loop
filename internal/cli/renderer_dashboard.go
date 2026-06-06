@@ -984,7 +984,7 @@ func fitCanvasLines(content []string, footer string, width, height, footerWidth 
 		for len(lines) < height-2 {
 			lines = append(lines, "")
 		}
-		lines = append(lines, centerLine(truncateDisplay(footer, footerWidth), width))
+		lines = append(lines, centerLine(truncateFooter(footer, footerWidth), width))
 	}
 	for len(lines) < height {
 		lines = append(lines, "")
@@ -1001,6 +1001,13 @@ func trimTrailingBlankLines(lines []string) []string {
 		end--
 	}
 	return append([]string(nil), lines[:end]...)
+}
+
+func truncateFooter(text string, width int) string {
+	if width <= 0 || displayWidth(text) <= width {
+		return text
+	}
+	return truncateVisible(text, width, true)
 }
 
 func centerLine(text string, width int) string {
@@ -1188,7 +1195,7 @@ func footerText(s rendererSnapshot, symbols dashboardSymbols) string {
 		return "r cycles review mode  ·  Ctrl+C gracefully stops after this iteration"
 	}
 	if s.PRMode && s.PRReviewModeLocked {
-		return "review mode locked during PR integration  ·  Ctrl+C gracefully stops after this iteration"
+		return "review mode locked  ·  Ctrl+C gracefully stops after this iteration"
 	}
 	return "Ctrl+C gracefully stops after this iteration"
 }

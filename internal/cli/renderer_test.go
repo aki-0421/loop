@@ -285,7 +285,7 @@ func TestRunRendererCyclesPRReviewModeAndLocksDuringIntegration(t *testing.T) {
 		t.Fatalf("locked cycle changed mode to %q", got)
 	}
 	frame := stripANSISequences(strings.Join(renderer.frame(120, 20), "\n"))
-	if !strings.Contains(frame, "serial review") || !strings.Contains(frame, "review mode locked during PR integration") {
+	if !strings.Contains(frame, "serial review") || !strings.Contains(frame, "review mode locked") {
 		t.Fatalf("locked frame missing review mode state:\n%s", frame)
 	}
 }
@@ -394,7 +394,13 @@ func TestRunRendererLockedReviewFooterStaysWithinContentColumn(t *testing.T) {
 	if !strings.Contains(footer, "review mode locked") {
 		t.Fatalf("locked footer missing review state:\n%s", strings.Join(lines, "\n"))
 	}
-	if !strings.HasPrefix(footer, "    review mode locked") {
+	if !strings.Contains(footer, "Ctrl+C gracefully stops after this iteration") {
+		t.Fatalf("locked footer should keep the Ctrl+C hint intact:\n%q", footer)
+	}
+	if strings.Contains(footer, "[truncated]") {
+		t.Fatalf("locked footer should use dashboard ellipsis rules, not log truncation:\n%q", footer)
+	}
+	if strings.HasPrefix(footer, "review mode locked") {
 		t.Fatalf("locked footer should stay centered within the content column:\n%q", footer)
 	}
 	assertFrameBounds(t, lines, 80, 24)
