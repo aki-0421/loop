@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 	"unicode"
+
+	"github.com/aki-0421/loop/internal/config"
 )
 
 const (
@@ -15,47 +17,50 @@ const (
 )
 
 type rendererSnapshot struct {
-	Started           time.Time
-	Now               time.Time
-	RunID             string
-	Agent             string
-	Repo              string
-	Instruction       string
-	Base              string
-	Branch            string
-	Goal              string
-	Logs              string
-	MaxIter           int
-	Color             bool
-	Stage             string
-	StageDetail       string
-	Iteration         string
-	IterationDir      string
-	AgentCommand      string
-	AgentExit         string
-	Current           string
-	RunningCommand    string
-	Tasks             []taskItem
-	Activity          []string
-	ActivityLog       []rendererLogLine
-	Events            []rendererEvent
-	CommitCount       int
-	MergeCount        int
-	MessageCount      int
-	InputTokens       int
-	OutputTokens      int
-	TokensEstimated   bool
-	LatestMsg         string
-	Confirmation      *rendererConfirmation
-	PullRequest       rendererPullRequest
-	PullRequestChecks rendererPullRequestChecks
-	PendingPRs        []rendererPendingPullRequest
-	Sleeping          bool
-	SleepSince        time.Time
-	SleepTitle        string
-	SleepStatus       string
-	SleepDetail       string
-	GracefulShutdown  bool
+	Started            time.Time
+	Now                time.Time
+	RunID              string
+	Agent              string
+	Repo               string
+	Instruction        string
+	Base               string
+	Branch             string
+	Goal               string
+	Logs               string
+	MaxIter            int
+	Color              bool
+	Stage              string
+	StageDetail        string
+	Iteration          string
+	IterationDir       string
+	AgentCommand       string
+	AgentExit          string
+	Current            string
+	RunningCommand     string
+	Tasks              []taskItem
+	Activity           []string
+	ActivityLog        []rendererLogLine
+	Events             []rendererEvent
+	CommitCount        int
+	MergeCount         int
+	MessageCount       int
+	InputTokens        int
+	OutputTokens       int
+	TokensEstimated    bool
+	LatestMsg          string
+	Confirmation       *rendererConfirmation
+	PullRequest        rendererPullRequest
+	PullRequestChecks  rendererPullRequestChecks
+	PendingPRs         []rendererPendingPullRequest
+	Sleeping           bool
+	SleepSince         time.Time
+	SleepTitle         string
+	SleepStatus        string
+	SleepDetail        string
+	GracefulShutdown   bool
+	PRMode             bool
+	PRReviewMode       string
+	PRReviewModeLocked bool
 }
 
 type rendererPullRequest struct {
@@ -153,6 +158,9 @@ func renderFocusedDashboard(s rendererSnapshot, symbols dashboardSymbols, width,
 		s.MergeCount,
 		formatTaskProgressMetric(done, total),
 	)
+	if reviewMode := styledRendererReviewMode(s); reviewMode != "" {
+		metrics += "  ·  " + reviewMode
+	}
 	latestLines := wrapDisplayLines(dashboardPrimaryMessage(s), contentWidth, latestLineLimit(compact, height))
 
 	lines := []string{}
@@ -201,7 +209,7 @@ func renderFocusedDashboard(s rendererSnapshot, symbols dashboardSymbols, width,
 		lines = append(lines, statusBlock(s, width, contentWidth, taskLimit)...)
 	}
 
-	return fitCanvasLines(lines, colorize(s, ansiDim, footerText(s, symbols)), width, height)
+	return fitCanvasLines(lines, colorize(s, ansiDim, footerText(s, symbols)), width, height, contentWidth)
 }
 
 func shouldRenderPullRequestBlock(s rendererSnapshot) bool {
@@ -209,20 +217,11 @@ func shouldRenderPullRequestBlock(s rendererSnapshot) bool {
 }
 
 func dashboardPrimaryMessage(s rendererSnapshot) string {
-	for _, value := range []string{s.LatestMsg, s.Current, s.StageDetail, strings.ReplaceAll(s.Stage, "_", " ")} {
-		value = strings.TrimSpace(value)
-		if value != "" {
-			return value
-		}
-	}
-	return "waiting for agent message..."
+	return strings.TrimSpace(s.LatestMsg)
 }
 
 func latestLineLimit(compact bool, height int) int {
-	if !compact || height >= 12 {
-		return 2
-	}
-	return 1
+	return 2
 }
 
 func renderConfirmationDashboard(s rendererSnapshot, symbols dashboardSymbols, width, height int) []string {
@@ -265,7 +264,7 @@ func renderConfirmationDashboard(s rendererSnapshot, symbols dashboardSymbols, w
 		"",
 		centerLine(colorize(s, ansiDim, confirmHint), width),
 	)
-	return fitCanvasLines(lines, colorize(s, ansiDim, footerText(s, symbols)), width, height)
+	return fitCanvasLines(lines, colorize(s, ansiDim, footerText(s, symbols)), width, height, contentWidth)
 }
 
 func renderSleepDashboard(s rendererSnapshot, symbols dashboardSymbols, width, height int) []string {
@@ -314,7 +313,7 @@ func renderSleepDashboard(s rendererSnapshot, symbols dashboardSymbols, width, h
 		lines = append(lines, pendingLines...)
 	}
 	lines = append(lines, "", centerLine(colorize(s, ansiDim, sleepHint), width))
-	return fitCanvasLines(lines, colorize(s, ansiDim, footerText(s, symbols)), width, height)
+	return fitCanvasLines(lines, colorize(s, ansiDim, footerText(s, symbols)), width, height, contentWidth)
 }
 
 const (
@@ -438,9 +437,6 @@ func wrapDisplayLines(text string, width, maxLines int) []string {
 	if width <= 0 || maxLines <= 0 {
 		return nil
 	}
-	if text == "" {
-		return []string{""}
-	}
 	lines := make([]string, 0, maxLines)
 	remaining := text
 	for remaining != "" && len(lines) < maxLines {
@@ -463,7 +459,10 @@ func wrapDisplayLines(text string, width, maxLines int) []string {
 		remaining = rest
 	}
 	if len(lines) == 0 {
-		return []string{""}
+		lines = append(lines, "")
+	}
+	for len(lines) < maxLines {
+		lines = append(lines, "")
 	}
 	return lines
 }
@@ -908,11 +907,14 @@ func maxTaskRows(height, used int) int {
 	return limit
 }
 
-func fitCanvasLines(content []string, footer string, width, height int) []string {
+func fitCanvasLines(content []string, footer string, width, height, footerWidth int) []string {
 	if height <= 0 {
 		return nil
 	}
 	hasFooter := strings.TrimSpace(stripANSISequences(footer)) != ""
+	if footerWidth <= 0 || footerWidth > width {
+		footerWidth = width
+	}
 	content = trimTrailingBlankLines(content)
 	contentLimit := height
 	if hasFooter && height >= 2 {
@@ -927,7 +929,7 @@ func fitCanvasLines(content []string, footer string, width, height int) []string
 		for len(lines) < height-2 {
 			lines = append(lines, "")
 		}
-		lines = append(lines, centerLine(footer, width))
+		lines = append(lines, centerLine(truncateDisplay(footer, footerWidth), width))
 	}
 	for len(lines) < height {
 		lines = append(lines, "")
@@ -1087,9 +1089,51 @@ func taskTodoMarker(s rendererSnapshot, item taskTodoDisplay, symbols dashboardS
 	}
 }
 
+func rendererReviewModeLabel(mode string) string {
+	switch strings.TrimSpace(mode) {
+	case config.ReviewModeAutoMerge:
+		return "auto merge"
+	case config.ReviewModeParallelHumanReview:
+		return "parallel review"
+	case config.ReviewModeSerialHumanReview:
+		return "serial review"
+	default:
+		return ""
+	}
+}
+
+func styledRendererReviewMode(s rendererSnapshot) string {
+	if !s.PRMode {
+		return ""
+	}
+	label := rendererReviewModeLabel(s.PRReviewMode)
+	if label == "" {
+		return ""
+	}
+	if s.PRReviewModeLocked {
+		return colorize(s, ansiDim, label)
+	}
+	switch strings.TrimSpace(s.PRReviewMode) {
+	case config.ReviewModeAutoMerge:
+		return colorize(s, ansiGreen, label)
+	case config.ReviewModeParallelHumanReview:
+		return colorize(s, ansiYellow+ansiBold, label)
+	case config.ReviewModeSerialHumanReview:
+		return colorize(s, ansiCyan, label)
+	default:
+		return label
+	}
+}
+
 func footerText(s rendererSnapshot, symbols dashboardSymbols) string {
 	if s.GracefulShutdown {
 		return "Finishing current iteration before exit. Press Ctrl+C again to exit immediately."
+	}
+	if s.PRMode && !s.PRReviewModeLocked {
+		return "r cycles review mode  ·  Ctrl+C gracefully stops after this iteration"
+	}
+	if s.PRMode && s.PRReviewModeLocked {
+		return "review mode locked during PR integration  ·  Ctrl+C gracefully stops after this iteration"
 	}
 	return "Ctrl+C gracefully stops after this iteration"
 }

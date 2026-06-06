@@ -2,13 +2,16 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/aki-0421/loop/internal/config"
 	"github.com/aki-0421/loop/internal/pr"
 	"github.com/aki-0421/loop/internal/runstate"
 	"github.com/aki-0421/loop/internal/workflow"
@@ -63,6 +66,91 @@ func TestRunRendererLineModePrintsTokenUsage(t *testing.T) {
 	got := out.String()
 	if !strings.Contains(got, "usage") || !strings.Contains(got, "27K in, 26 out") {
 		t.Fatalf("line renderer should print token usage: %q", got)
+	}
+}
+
+func TestRunRendererInteractiveModeDisablesAutoWrap(t *testing.T) {
+	var out bytes.Buffer
+	renderer := &runRenderer{
+		enabled:             true,
+		interactive:         true,
+		writer:              &out,
+		started:             time.Now(),
+		done:                make(chan struct{}),
+		sleepFetchRequested: make(chan struct{}, 1),
+	}
+
+	renderer.Start(context.Background())
+	renderer.Stop(runstate.StageCompleted, "done")
+
+	got := out.String()
+	if !strings.Contains(got, "\x1b[?1049h\x1b[?25l\x1b[?7l") {
+		t.Fatalf("interactive renderer should disable auto-wrap on start:\n%q", got)
+	}
+	if !strings.Contains(got, "\x1b[?7h\x1b[?25h\x1b[?1049l") {
+		t.Fatalf("interactive renderer should restore auto-wrap on stop:\n%q", got)
+	}
+}
+
+func TestRunRendererUsesAbsoluteRowsInsteadOfNewlines(t *testing.T) {
+	t.Setenv("COLUMNS", "80")
+	t.Setenv("LINES", "24")
+	var out bytes.Buffer
+	renderer := &runRenderer{
+		enabled:     true,
+		interactive: true,
+		writer:      &out,
+		started:     time.Now(),
+		done:        make(chan struct{}),
+		stage:       string(runstate.StageCreated),
+		stageDetail: "created",
+	}
+
+	renderer.render()
+
+	got := out.String()
+	if strings.Contains(got, "\n") || strings.Contains(got, "\r") {
+		t.Fatalf("interactive render should not rely on terminal newline handling:\n%q", got)
+	}
+	if !strings.Contains(got, "\x1b[1;1H") || !strings.Contains(got, "\x1b[24;1H") {
+		t.Fatalf("interactive render should address rows explicitly:\n%q", got)
+	}
+	if strings.Contains(got, strings.Repeat(" ", 80)+"\x1b[K") {
+		t.Fatalf("interactive render should clear with ESC[K instead of full-width blank writes:\n%q", got)
+	}
+}
+
+func TestRunRendererOnlyDrawsChangedRows(t *testing.T) {
+	t.Setenv("COLUMNS", "80")
+	t.Setenv("LINES", "24")
+	var out bytes.Buffer
+	renderer := &runRenderer{
+		enabled:     true,
+		interactive: true,
+		writer:      &out,
+		started:     time.Now(),
+		done:        make(chan struct{}),
+		stage:       string(runstate.StageCreated),
+		stageDetail: "created",
+	}
+
+	renderer.render()
+	out.Reset()
+	renderer.render()
+	if got := out.String(); got != "" {
+		t.Fatalf("unchanged frame should not redraw rows:\n%q", got)
+	}
+
+	renderer.latestMsg = "Agent update."
+	renderer.render()
+	got := out.String()
+	if !strings.Contains(got, "\x1b[3;1H") || !strings.Contains(got, "Agent update.") {
+		t.Fatalf("changed agent message row should redraw:\n%q", got)
+	}
+	for _, unchangedRow := range []string{"\x1b[1;1H", "\x1b[2;1H", "\x1b[4;1H", "\x1b[23;1H"} {
+		if strings.Contains(got, unchangedRow) {
+			t.Fatalf("unchanged row %q should not redraw:\n%q", unchangedRow, got)
+		}
 	}
 }
 
@@ -132,16 +220,258 @@ func TestRunRendererDashboardKeepsEssentialStateWithinBounds(t *testing.T) {
 		Now:          now,
 		Tasks:        []taskItem{{Done: true, Text: "Done"}, {Text: "Open"}},
 		Current:      strings.Repeat("long message ", 20),
+		LatestMsg:    strings.Repeat("latest agent message ", 8),
 		InputTokens:  100,
 		OutputTokens: 50,
 	}, 70, 8)
 	shortFrame := strings.Join(shortLines, "\n")
-	for _, want := range []string{"prompt.md", "100 in", "long message", "1/2 tasks", "Done", "Open"} {
+	for _, want := range []string{"prompt.md", "100 in", "latest agent message", "1/2 tasks", "Done", "Open"} {
 		if !strings.Contains(shortFrame, want) {
 			t.Fatalf("compact frame missing %q:\n%s", want, shortFrame)
 		}
 	}
 	assertFrameFits(t, shortLines, 70, 8)
+}
+
+func TestRunRendererShowsPRReviewModeMetric(t *testing.T) {
+	t.Setenv("TERM", "xterm-256color")
+	now := time.Now()
+	lines := renderDashboard(rendererSnapshot{
+		Started:      now.Add(-time.Minute),
+		Now:          now,
+		Color:        true,
+		PRMode:       true,
+		PRReviewMode: config.ReviewModeParallelHumanReview,
+		Tasks:        []taskItem{{Done: true, Text: "Done"}},
+		InputTokens:  100,
+		OutputTokens: 50,
+	}, 140, 20)
+	frame := strings.Join(lines, "\n")
+	plain := stripANSISequences(frame)
+	if !strings.Contains(plain, "parallel review") {
+		t.Fatalf("frame missing review mode metric:\n%s", plain)
+	}
+	if !strings.Contains(frame, ansiYellow+ansiBold+"parallel review"+ansiReset) {
+		t.Fatalf("parallel review metric should be colorized:\n%s", frame)
+	}
+	if !strings.Contains(plain, "r cycles review mode") {
+		t.Fatalf("footer missing review mode shortcut:\n%s", plain)
+	}
+	assertFrameBounds(t, lines, 140, 20)
+}
+
+func TestRunRendererCyclesPRReviewModeAndLocksDuringIntegration(t *testing.T) {
+	var out bytes.Buffer
+	renderer := &runRenderer{
+		enabled:             true,
+		interactive:         false,
+		writer:              &out,
+		started:             time.Now(),
+		done:                make(chan struct{}),
+		sleepFetchRequested: make(chan struct{}, 1),
+	}
+	renderer.EnablePRReviewMode(config.ReviewModeAutoMerge)
+	renderer.handleInputByte(context.Background(), 'r')
+	if got := renderer.CurrentPRReviewMode(); got != config.ReviewModeParallelHumanReview {
+		t.Fatalf("first cycle mode = %q, want %s", got, config.ReviewModeParallelHumanReview)
+	}
+	renderer.handleInputByte(context.Background(), 'R')
+	if got := renderer.CurrentPRReviewMode(); got != config.ReviewModeSerialHumanReview {
+		t.Fatalf("second cycle mode = %q, want %s", got, config.ReviewModeSerialHumanReview)
+	}
+	renderer.LockPRReviewMode(true)
+	renderer.handleInputByte(context.Background(), 'r')
+	if got := renderer.CurrentPRReviewMode(); got != config.ReviewModeSerialHumanReview {
+		t.Fatalf("locked cycle changed mode to %q", got)
+	}
+	frame := stripANSISequences(strings.Join(renderer.frame(120, 20), "\n"))
+	if !strings.Contains(frame, "serial review") || !strings.Contains(frame, "review mode locked during PR integration") {
+		t.Fatalf("locked frame missing review mode state:\n%s", frame)
+	}
+}
+
+func TestRunRendererPrimaryMessageOnlyShowsAgentMessages(t *testing.T) {
+	now := time.Now()
+	lines := renderDashboard(rendererSnapshot{
+		Started:     now.Add(-time.Minute),
+		Now:         now,
+		Current:     "switched to parallel review",
+		StageDetail: "graceful shutdown requested; press Ctrl+C again to exit immediately",
+	}, 70, 8)
+	if got := strings.TrimSpace(stripANSISequences(lines[2])); got != "" {
+		t.Fatalf("primary message row should be blank without an agent message, got %q:\n%s", got, strings.Join(lines, "\n"))
+	}
+
+	lines = renderDashboard(rendererSnapshot{
+		Started:   now.Add(-time.Minute),
+		Now:       now,
+		LatestMsg: "Agent-only message.",
+		Current:   "switched to serial review",
+	}, 70, 8)
+	primary := strings.TrimSpace(stripANSISequences(lines[2]))
+	if !strings.Contains(primary, "Agent-only message.") {
+		t.Fatalf("primary message should show latest agent message, got %q:\n%s", primary, strings.Join(lines, "\n"))
+	}
+	if strings.Contains(primary, "switched to serial review") {
+		t.Fatalf("primary message should ignore current renderer state, got %q:\n%s", primary, strings.Join(lines, "\n"))
+	}
+}
+
+func TestRunRendererAlwaysReservesTwoAgentMessageRows(t *testing.T) {
+	now := time.Now()
+	base := rendererSnapshot{
+		Started: now.Add(-time.Minute),
+		Now:     now,
+		Tasks:   []taskItem{{Status: "active", Text: "Stable task row"}},
+	}
+	cases := []struct {
+		name string
+		msg  string
+	}{
+		{name: "empty"},
+		{name: "single", msg: "Short agent update."},
+		{name: "wrapped", msg: strings.Repeat("Long agent update ", 10)},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			snapshot := base
+			snapshot.LatestMsg = tc.msg
+			lines := renderDashboard(snapshot, 70, 8)
+			primaryRow := strings.TrimSpace(stripANSISequences(lines[2]))
+			reservedRow := strings.TrimSpace(stripANSISequences(lines[3]))
+			taskRow := strings.TrimSpace(stripANSISequences(lines[4]))
+			if tc.msg != "" && primaryRow == "" {
+				t.Fatalf("first agent message row should contain the message:\n%s", strings.Join(lines, "\n"))
+			}
+			if tc.name == "single" && reservedRow != "" {
+				t.Fatalf("single-line agent message should keep the second row reserved and blank, got %q:\n%s", reservedRow, strings.Join(lines, "\n"))
+			}
+			if !strings.Contains(taskRow, "Stable task row") {
+				t.Fatalf("task row should remain fixed after two agent message rows, got %q:\n%s", taskRow, strings.Join(lines, "\n"))
+			}
+			assertFrameBounds(t, lines, 70, 8)
+		})
+	}
+}
+
+func TestRunRendererControlsDoNotOverwriteAgentMessage(t *testing.T) {
+	renderer := &runRenderer{
+		enabled:             true,
+		interactive:         true,
+		writer:              &bytes.Buffer{},
+		started:             time.Now(),
+		done:                make(chan struct{}),
+		sleepFetchRequested: make(chan struct{}, 1),
+	}
+	renderer.AgentEvent(runstate.Event{"type": "agent.message", "text": "Agent is inspecting the repository."})
+	renderer.EnablePRReviewMode(config.ReviewModeAutoMerge)
+	renderer.handleInputByte(context.Background(), 'r')
+	renderer.GracefulShutdownRequested()
+
+	frame := stripANSISequences(strings.Join(renderer.frame(120, 24), "\n"))
+	if !strings.Contains(frame, "Agent is inspecting the repository.") {
+		t.Fatalf("agent message should remain visible after renderer controls:\n%s", frame)
+	}
+	if strings.Contains(frame, "switched to parallel review") || strings.Contains(frame, "graceful shutdown requested") {
+		t.Fatalf("renderer controls should not appear in the agent message area:\n%s", frame)
+	}
+}
+
+func TestRunRendererLockedReviewFooterStaysWithinContentColumn(t *testing.T) {
+	t.Setenv("TERM", "xterm-256color")
+	now := time.Now()
+	lines := renderDashboard(rendererSnapshot{
+		Started:            now.Add(-time.Minute),
+		Now:                now,
+		Color:              true,
+		PRMode:             true,
+		PRReviewMode:       config.ReviewModeAutoMerge,
+		PRReviewModeLocked: true,
+	}, 80, 24)
+
+	footer := stripANSISequences(lines[len(lines)-2])
+	if !strings.Contains(footer, "review mode locked") {
+		t.Fatalf("locked footer missing review state:\n%s", strings.Join(lines, "\n"))
+	}
+	if !strings.HasPrefix(footer, "    review mode locked") {
+		t.Fatalf("locked footer should stay centered within the content column:\n%q", footer)
+	}
+	assertFrameBounds(t, lines, 80, 24)
+}
+
+func TestRunRendererEnablePRReviewModeDoesNotRenderBeforeStart(t *testing.T) {
+	var out bytes.Buffer
+	renderer := &runRenderer{
+		enabled:             true,
+		interactive:         true,
+		writer:              &out,
+		started:             time.Now(),
+		done:                make(chan struct{}),
+		sleepFetchRequested: make(chan struct{}, 1),
+	}
+
+	renderer.EnablePRReviewMode(config.ReviewModeAutoMerge)
+
+	if got := out.String(); got != "" {
+		t.Fatalf("EnablePRReviewMode rendered before Start:\n%q", got)
+	}
+	if got := renderer.CurrentPRReviewMode(); got != config.ReviewModeAutoMerge {
+		t.Fatalf("review mode = %q, want %s", got, config.ReviewModeAutoMerge)
+	}
+}
+
+func TestRunRendererSerializesTitleWritesWithFrame(t *testing.T) {
+	writer := newBlockingRendererWriter("auto merge")
+	renderer := &runRenderer{
+		enabled:             true,
+		interactive:         true,
+		writer:              writer,
+		started:             time.Now(),
+		done:                make(chan struct{}),
+		titleEnabled:        true,
+		sleepFetchRequested: make(chan struct{}, 1),
+		prMode:              true,
+		prReviewMode:        config.ReviewModeAutoMerge,
+	}
+
+	renderDone := make(chan struct{})
+	go func() {
+		renderer.render()
+		close(renderDone)
+	}()
+
+	select {
+	case <-writer.blocked:
+	case <-time.After(time.Second):
+		t.Fatal("renderer did not reach the blocked metrics write")
+	}
+
+	titleDone := make(chan struct{})
+	go func() {
+		renderer.setTitle()
+		close(titleDone)
+	}()
+
+	select {
+	case <-titleDone:
+		close(writer.release)
+		<-renderDone
+		t.Fatal("title write completed while frame write was in progress")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(writer.release)
+	select {
+	case <-renderDone:
+	case <-time.After(time.Second):
+		t.Fatal("render did not finish after releasing writer")
+	}
+	select {
+	case <-titleDone:
+	case <-time.After(time.Second):
+		t.Fatal("title write did not finish after render completed")
+	}
 }
 
 func TestRunRendererShowsTargetBranchConfirmation(t *testing.T) {
@@ -381,12 +711,12 @@ func TestRunRendererDashboardListsMaximumTasksWithHiddenBelow(t *testing.T) {
 	frame := strings.Join(lines, "\n")
 
 	assertFrameBounds(t, lines, 100, 18)
-	for _, want := range []string{"2/8 tasks", "Task 1", "Task 2", "6 hidden below", "Ctrl+C gracefully stops after this iteration"} {
+	for _, want := range []string{"2/8 tasks", "Task 1", "7 hidden below", "Ctrl+C gracefully stops after this iteration"} {
 		if !strings.Contains(stripANSISequences(frame), want) {
 			t.Fatalf("frame missing %q:\n%s", want, frame)
 		}
 	}
-	if strings.Contains(frame, "Task 3") || strings.Contains(frame, "Task 8") {
+	if strings.Contains(frame, "Task 2") || strings.Contains(frame, "Task 8") {
 		t.Fatalf("hidden tasks should not be rendered when hidden-below row is needed:\n%s", frame)
 	}
 }
@@ -677,4 +1007,35 @@ func assertFrameFits(t *testing.T, lines []string, width, maxHeight int) {
 			t.Fatalf("line %d width = %d, want <= %d:\n%s", i, displayWidth(line), width, strings.Join(lines, "\n"))
 		}
 	}
+}
+
+type blockingRendererWriter struct {
+	mu      sync.Mutex
+	once    sync.Once
+	writes  []string
+	needle  string
+	blocked chan struct{}
+	release chan struct{}
+}
+
+func newBlockingRendererWriter(needle string) *blockingRendererWriter {
+	return &blockingRendererWriter{
+		needle:  needle,
+		blocked: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+}
+
+func (w *blockingRendererWriter) Write(p []byte) (int, error) {
+	text := string(p)
+	if strings.Contains(text, w.needle) {
+		w.once.Do(func() {
+			close(w.blocked)
+			<-w.release
+		})
+	}
+	w.mu.Lock()
+	w.writes = append(w.writes, text)
+	w.mu.Unlock()
+	return len(p), nil
 }

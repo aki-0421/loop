@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"golang.org/x/sys/unix"
-	"golang.org/x/term"
 )
 
 func waitForSleepKeypress(ctx context.Context, d time.Duration) (bool, error) {
@@ -17,11 +16,11 @@ func waitForSleepKeypress(ctx context.Context, d time.Duration) (bool, error) {
 		return false, nil
 	}
 	fd := int(os.Stdin.Fd())
-	state, err := term.MakeRaw(fd)
+	restoreMode, err := makeNoncanonicalInputMode(fd)
 	if err != nil {
 		return false, err
 	}
-	defer func() { _ = term.Restore(fd, state) }()
+	defer restoreMode()
 
 	restoreFlags, err := setNonblocking(fd)
 	if err != nil {

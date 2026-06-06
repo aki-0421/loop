@@ -153,6 +153,7 @@ Important behavior:
 - `--goal` is a stop condition, not the only source of work.
 - `--human-review` is a compatibility shortcut for `--review-mode serial_human_review`.
 - `--review-mode parallel_human_review` lets the run continue with non-overlapping work while earlier PRs wait for human review.
+- In the interactive renderer, `r` cycles the active PR review policy between `auto merge`, `parallel review`, and `serial review`; the shortcut is locked while PR integration is in progress.
 - Without `--goal`, the run is open-ended and stops only on an iteration limit, interrupt, or terminal error.
 - With `--goal`, the run stops only after a successfully integrated iteration satisfies the goal.
 

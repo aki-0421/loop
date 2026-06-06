@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/aki-0421/loop/internal/config"
 	"github.com/aki-0421/loop/internal/pr"
 	"github.com/aki-0421/loop/internal/runstate"
 	"github.com/aki-0421/loop/internal/workflow"
@@ -60,11 +61,22 @@ type runRenderer struct {
 	sleepTitle            string
 	sleepStatus           string
 	sleepDetail           string
+	sleepFetchRequested   chan struct{}
 	gracefulShutdown      bool
+	prMode                bool
+	prReviewMode          string
+	prReviewModeLocked    bool
 	done                  chan struct{}
 	ticker                *time.Ticker
+	inputCancel           context.CancelFunc
+	inputDone             chan struct{}
+	inputRunning          bool
 	titleEnabled          bool
 	drawMu                sync.Mutex
+	lastFrame             []string
+	lastFrameWidth        int
+	lastFrameHeight       int
+	lastTitle             string
 }
 
 type rendererConfirmation struct {
@@ -109,21 +121,22 @@ type rendererEvent struct {
 func newRunRenderer(g globals, runID, agentName, repoName, instructionFile, baseBranch, goal, logs string, maxIterations int) *runRenderer {
 	interactive := terminalControlSupported()
 	return &runRenderer{
-		enabled:      !g.JSON,
-		interactive:  interactive,
-		writer:       os.Stderr,
-		started:      time.Now(),
-		runID:        runID,
-		agent:        agentName,
-		repo:         repoName,
-		instruction:  instructionFile,
-		base:         baseBranch,
-		goal:         goal,
-		logs:         logs,
-		maxIter:      maxIterations,
-		color:        interactive && !g.NoColor && os.Getenv("NO_COLOR") == "" && os.Getenv("TERM") != "dumb",
-		done:         make(chan struct{}),
-		titleEnabled: interactive,
+		enabled:             !g.JSON,
+		interactive:         interactive,
+		writer:              os.Stderr,
+		started:             time.Now(),
+		runID:               runID,
+		agent:               agentName,
+		repo:                repoName,
+		instruction:         instructionFile,
+		base:                baseBranch,
+		goal:                goal,
+		logs:                logs,
+		maxIter:             maxIterations,
+		color:               interactive && !g.NoColor && os.Getenv("NO_COLOR") == "" && os.Getenv("TERM") != "dumb",
+		sleepFetchRequested: make(chan struct{}, 1),
+		done:                make(chan struct{}),
+		titleEnabled:        interactive,
 	}
 }
 
@@ -136,13 +149,14 @@ func (r *runRenderer) Start(ctx context.Context) {
 	r.stageDetail = "created"
 	r.mu.Unlock()
 	if r.interactive {
-		fmt.Fprint(r.writer, "\x1b[?1049h\x1b[?25l")
+		fmt.Fprint(r.writer, "\x1b[?1049h\x1b[?25l\x1b[?7l")
 		r.render()
 	} else {
 		r.line("run", fmt.Sprintf("%s agent=%s base=%s logs=%s", r.runID, r.agent, r.base, r.logs))
 	}
 	r.setTitle()
 	r.ticker = time.NewTicker(rendererTickInterval)
+	r.startInput(ctx)
 	go func() {
 		for {
 			select {
@@ -166,6 +180,7 @@ func (r *runRenderer) Stop(status runstate.Stage, summary string) {
 	if r.ticker != nil {
 		r.ticker.Stop()
 	}
+	r.stopInput()
 	select {
 	case <-r.done:
 	default:
@@ -174,9 +189,171 @@ func (r *runRenderer) Stop(status runstate.Stage, summary string) {
 	r.Stage(status, summary)
 	if r.interactive {
 		r.render()
-		fmt.Fprint(r.writer, "\x1b[?25h\x1b[?1049l")
+		fmt.Fprint(r.writer, "\x1b[?7h\x1b[?25h\x1b[?1049l")
 	}
 	r.clearTitle()
+}
+
+func (r *runRenderer) EnablePRReviewMode(mode string) {
+	if !r.enabled {
+		return
+	}
+	mode = normalizeRendererReviewMode(mode)
+	r.mu.Lock()
+	r.prMode = mode != ""
+	r.prReviewMode = mode
+	r.mu.Unlock()
+}
+
+func (r *runRenderer) CurrentPRReviewMode() string {
+	if r == nil {
+		return ""
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.prReviewMode
+}
+
+func (r *runRenderer) LockPRReviewMode(locked bool) {
+	if r == nil || !r.enabled {
+		return
+	}
+	r.mu.Lock()
+	r.prReviewModeLocked = locked
+	r.mu.Unlock()
+	r.render()
+}
+
+func (r *runRenderer) cyclePRReviewMode() {
+	if r == nil || !r.enabled {
+		return
+	}
+	r.mu.Lock()
+	if !r.prMode || r.prReviewMode == "" {
+		r.mu.Unlock()
+		return
+	}
+	if r.prReviewModeLocked {
+		r.addEventLocked(rendererEvent{At: time.Now(), Status: "blocked", Title: "Review Mode Locked", Detail: rendererReviewModeLabel(r.prReviewMode)})
+		r.mu.Unlock()
+		r.render()
+		return
+	}
+	r.prReviewMode = nextRendererReviewMode(r.prReviewMode)
+	label := rendererReviewModeLabel(r.prReviewMode)
+	r.addEventLocked(rendererEvent{At: time.Now(), Status: "active", Title: "Review Mode", Detail: label})
+	r.mu.Unlock()
+	r.render()
+}
+
+func (r *runRenderer) startInput(ctx context.Context) {
+	r.mu.Lock()
+	prMode := r.prMode
+	r.mu.Unlock()
+	if !prMode {
+		return
+	}
+	if !rendererInputSupported(r) {
+		return
+	}
+	inputCtx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	r.inputCancel = cancel
+	r.inputDone = done
+	r.mu.Lock()
+	r.inputRunning = true
+	r.mu.Unlock()
+	go func() {
+		defer func() {
+			r.mu.Lock()
+			r.inputRunning = false
+			r.mu.Unlock()
+			close(done)
+		}()
+		_ = watchRendererInput(inputCtx, r)
+	}()
+}
+
+func (r *runRenderer) stopInput() {
+	if r.inputCancel == nil {
+		return
+	}
+	r.inputCancel()
+	if r.inputDone != nil {
+		select {
+		case <-r.inputDone:
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
+	r.inputCancel = nil
+	r.inputDone = nil
+	r.mu.Lock()
+	r.inputRunning = false
+	r.mu.Unlock()
+}
+
+func (r *runRenderer) inputActive() bool {
+	if r == nil {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.inputRunning
+}
+
+func (r *runRenderer) handleInputByte(ctx context.Context, b byte) {
+	switch b {
+	case 0x03:
+		if state := runInterruptFromContext(ctx); state != nil {
+			if state.GracefulRequested() {
+				state.Force()
+			} else {
+				state.RequestGraceful()
+			}
+		}
+	case 'r', 'R':
+		r.cyclePRReviewMode()
+	default:
+		r.requestSleepFetchIfSleeping()
+	}
+}
+
+func (r *runRenderer) requestSleepFetchIfSleeping() {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	sleeping := r.sleeping
+	r.mu.Unlock()
+	if !sleeping {
+		return
+	}
+	select {
+	case r.sleepFetchRequested <- struct{}{}:
+	default:
+	}
+}
+
+func (r *runRenderer) waitForSleepFetch(ctx context.Context, d time.Duration) (bool, error) {
+	if r == nil || !r.inputActive() {
+		return false, errRendererInputUnavailable
+	}
+	if d <= 0 {
+		return false, nil
+	}
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		if state := runInterruptFromContext(ctx); state != nil && !state.GracefulRequested() {
+			state.RequestGraceful()
+		}
+		return false, ctx.Err()
+	case <-timer.C:
+		return false, nil
+	case <-r.sleepFetchRequested:
+		return true, nil
+	}
 }
 
 func (r *runRenderer) Iteration(iterationID string) {
@@ -222,7 +399,6 @@ func (r *runRenderer) TasksPlanned(tasks []workflow.Task) {
 	}
 	total := len(r.tasks)
 	if added > 0 {
-		r.latestMsg = fmt.Sprintf("%d tasks planned", total)
 		r.addEventLocked(rendererEvent{At: time.Now(), Status: "active", Title: "Tasks Planned", Detail: fmt.Sprintf("%d total", total)})
 	}
 	r.mu.Unlock()
@@ -243,7 +419,6 @@ func (r *runRenderer) TaskStarted(task workflow.Task) {
 	r.mu.Lock()
 	r.upsertTaskLocked(id, title, "active", false)
 	r.current = "running task: " + title
-	r.latestMsg = title
 	r.addEventLocked(rendererEvent{At: time.Now(), Status: "active", Title: "Task Started", Detail: title})
 	r.mu.Unlock()
 	if !r.interactive {
@@ -278,7 +453,6 @@ func (r *runRenderer) TaskCompleted(task workflow.Task) {
 	r.mu.Lock()
 	r.upsertTaskLocked(id, title, "done", true)
 	r.current = "completed task: " + title
-	r.latestMsg = title
 	r.addEventLocked(rendererEvent{At: time.Now(), Status: "done", Title: "Task Completed", Detail: title})
 	r.mu.Unlock()
 	if !r.interactive {
@@ -300,7 +474,6 @@ func (r *runRenderer) TaskFailed(task workflow.Task, err error) {
 	r.mu.Lock()
 	r.upsertTaskLocked(id, title, "blocked", false)
 	r.current = "failed task: " + title
-	r.latestMsg = detail
 	r.addEventLocked(rendererEvent{At: time.Now(), Status: "blocked", Title: "Task Failed", Detail: detail})
 	r.mu.Unlock()
 	if !r.interactive {
@@ -344,7 +517,6 @@ func (r *runRenderer) GracefulShutdownRequested() {
 	r.mu.Lock()
 	r.gracefulShutdown = true
 	r.current = detail
-	r.latestMsg = "graceful shutdown requested; press Ctrl+C again to exit immediately"
 	r.addEventLocked(rendererEvent{
 		At:     time.Now(),
 		Status: "active",
@@ -459,7 +631,6 @@ func (r *runRenderer) ConfirmTargetBranch(ctx context.Context, targetBranch, mai
 	until := time.Now().Add(delay)
 	r.mu.Lock()
 	r.current = "confirming target branch"
-	r.latestMsg = "target branch is not the main branch"
 	r.confirmation = &rendererConfirmation{
 		Title:        "Confirm Target Branch",
 		TargetBranch: targetBranch,
@@ -521,7 +692,6 @@ func (r *runRenderer) MemorySync(repo string, initial bool) {
 	r.mu.Lock()
 	r.stageDetail = detail
 	r.current = detail
-	r.latestMsg = detail
 	if len(r.activity) == 0 || r.activity[len(r.activity)-1] != detail {
 		r.activity = append(r.activity, detail)
 		r.activityLog = append(r.activityLog, rendererLogLine{At: time.Now(), Text: detail})
@@ -564,7 +734,6 @@ func (r *runRenderer) SleepWaitingForGitHub() {
 	r.stage = "sleeping"
 	r.stageDetail = detail
 	r.current = detail
-	r.latestMsg = detail
 	if len(r.activity) == 0 || r.activity[len(r.activity)-1] != detail {
 		r.activity = append(r.activity, detail)
 		r.activityLog = append(r.activityLog, rendererLogLine{At: time.Now(), Text: detail})
@@ -612,7 +781,6 @@ func (r *runRenderer) SleepWaitingForPullRequests(pending []runstate.PendingPull
 	r.stage = "sleeping"
 	r.stageDetail = detail
 	r.current = detail
-	r.latestMsg = detail
 	if len(r.activity) == 0 || r.activity[len(r.activity)-1] != detail {
 		r.activity = append(r.activity, detail)
 		r.activityLog = append(r.activityLog, rendererLogLine{At: time.Now(), Text: detail})
@@ -658,7 +826,6 @@ func (r *runRenderer) sleepWaitingForAgentRateLimit(detail string) {
 	r.stage = "sleeping"
 	r.stageDetail = detail
 	r.current = detail
-	r.latestMsg = detail
 	if len(r.activity) == 0 || r.activity[len(r.activity)-1] != detail {
 		r.activity = append(r.activity, detail)
 		r.activityLog = append(r.activityLog, rendererLogLine{At: time.Now(), Text: detail})
@@ -707,7 +874,6 @@ func (r *runRenderer) SleepFetchRequested() {
 	r.sleepDetail = detail
 	r.stageDetail = detail
 	r.current = detail
-	r.latestMsg = detail
 	r.addEventLocked(rendererEvent{
 		At:     time.Now(),
 		Status: "active",
@@ -876,59 +1042,69 @@ func (r *runRenderer) render() {
 		height = 24
 	}
 	lines := r.frame(width, height)
-	fmt.Fprint(r.writer, "\x1b[H")
+	nextFrame := make([]string, len(lines))
+	fullRender := len(r.lastFrame) != len(lines) || r.lastFrameWidth != width || r.lastFrameHeight != height
 	for i, line := range lines {
-		fmt.Fprint(r.writer, fitLine(line, width), "\x1b[K")
-		if i < len(lines)-1 {
-			fmt.Fprint(r.writer, "\n")
+		nextFrame[i] = trimRendererLineRight(fitLine(line, width))
+		if !fullRender && r.lastFrame[i] == nextFrame[i] {
+			continue
 		}
+		fmt.Fprintf(r.writer, "\x1b[%d;1H%s\x1b[K", i+1, nextFrame[i])
 	}
-	fmt.Fprint(r.writer, "\x1b[J")
-	r.setTitle()
+	r.lastFrame = nextFrame
+	r.lastFrameWidth = width
+	r.lastFrameHeight = height
+	if fullRender {
+		fmt.Fprint(r.writer, "\x1b[J")
+	}
+	r.writeTitleLocked()
 }
 
 func (r *runRenderer) frame(width, height int) []string {
 	r.mu.Lock()
 	snapshot := rendererSnapshot{
-		Started:          r.started,
-		RunID:            r.runID,
-		Agent:            r.agent,
-		Repo:             r.repo,
-		Instruction:      r.instruction,
-		Base:             r.base,
-		Branch:           r.branch,
-		Goal:             r.goal,
-		Logs:             r.logs,
-		MaxIter:          r.maxIter,
-		Color:            r.color,
-		Stage:            r.stage,
-		StageDetail:      r.stageDetail,
-		Iteration:        r.iteration,
-		IterationDir:     r.iterationDir,
-		AgentCommand:     r.agentCommand,
-		AgentExit:        r.agentExit,
-		Current:          r.current,
-		RunningCommand:   r.runningCommand,
-		Activity:         append([]string(nil), r.activity...),
-		ActivityLog:      append([]rendererLogLine(nil), r.activityLog...),
-		Events:           append([]rendererEvent(nil), r.events...),
-		CommitCount:      r.commitCount,
-		MergeCount:       r.mergeCount,
-		MessageCount:     r.messageCount,
-		InputTokens:      r.inputTokens,
-		OutputTokens:     r.outputTokens,
-		TokensEstimated:  r.tokensEstimated,
-		LatestMsg:        r.latestMsg,
-		Tasks:            append([]taskItem(nil), r.tasks...),
-		Confirmation:     cloneRendererConfirmation(r.confirmation),
-		PendingPRs:       append([]rendererPendingPullRequest(nil), r.pendingPullRequests...),
-		Sleeping:         r.sleeping,
-		SleepSince:       r.sleepSince,
-		SleepTitle:       r.sleepTitle,
-		SleepStatus:      r.sleepStatus,
-		SleepDetail:      r.sleepDetail,
-		GracefulShutdown: r.gracefulShutdown,
-		Now:              time.Now(),
+		Started:            r.started,
+		RunID:              r.runID,
+		Agent:              r.agent,
+		Repo:               r.repo,
+		Instruction:        r.instruction,
+		Base:               r.base,
+		Branch:             r.branch,
+		Goal:               r.goal,
+		Logs:               r.logs,
+		MaxIter:            r.maxIter,
+		Color:              r.color,
+		Stage:              r.stage,
+		StageDetail:        r.stageDetail,
+		Iteration:          r.iteration,
+		IterationDir:       r.iterationDir,
+		AgentCommand:       r.agentCommand,
+		AgentExit:          r.agentExit,
+		Current:            r.current,
+		RunningCommand:     r.runningCommand,
+		Activity:           append([]string(nil), r.activity...),
+		ActivityLog:        append([]rendererLogLine(nil), r.activityLog...),
+		Events:             append([]rendererEvent(nil), r.events...),
+		CommitCount:        r.commitCount,
+		MergeCount:         r.mergeCount,
+		MessageCount:       r.messageCount,
+		InputTokens:        r.inputTokens,
+		OutputTokens:       r.outputTokens,
+		TokensEstimated:    r.tokensEstimated,
+		LatestMsg:          r.latestMsg,
+		Tasks:              append([]taskItem(nil), r.tasks...),
+		Confirmation:       cloneRendererConfirmation(r.confirmation),
+		PendingPRs:         append([]rendererPendingPullRequest(nil), r.pendingPullRequests...),
+		Sleeping:           r.sleeping,
+		SleepSince:         r.sleepSince,
+		SleepTitle:         r.sleepTitle,
+		SleepStatus:        r.sleepStatus,
+		SleepDetail:        r.sleepDetail,
+		GracefulShutdown:   r.gracefulShutdown,
+		PRMode:             r.prMode,
+		PRReviewMode:       r.prReviewMode,
+		PRReviewModeLocked: r.prReviewModeLocked,
+		Now:                time.Now(),
 	}
 	r.mu.Unlock()
 
@@ -981,8 +1157,29 @@ func refreshRendererPullRequest(snapshot *rendererSnapshot) {
 	if strings.TrimSpace(snapshot.Current) == "" || strings.HasPrefix(strings.TrimSpace(snapshot.Current), "running task:") {
 		snapshot.Current = "merge agent running"
 	}
-	if strings.TrimSpace(snapshot.LatestMsg) == "" || strings.HasPrefix(strings.TrimSpace(snapshot.LatestMsg), "running task:") {
-		snapshot.LatestMsg = snapshot.Current
+}
+
+func normalizeRendererReviewMode(mode string) string {
+	switch strings.TrimSpace(mode) {
+	case config.ReviewModeAutoMerge:
+		return config.ReviewModeAutoMerge
+	case config.ReviewModeParallelHumanReview:
+		return config.ReviewModeParallelHumanReview
+	case config.ReviewModeSerialHumanReview:
+		return config.ReviewModeSerialHumanReview
+	default:
+		return ""
+	}
+}
+
+func nextRendererReviewMode(mode string) string {
+	switch normalizeRendererReviewMode(mode) {
+	case config.ReviewModeAutoMerge:
+		return config.ReviewModeParallelHumanReview
+	case config.ReviewModeParallelHumanReview:
+		return config.ReviewModeSerialHumanReview
+	default:
+		return config.ReviewModeAutoMerge
 	}
 }
 
@@ -1149,17 +1346,34 @@ func (r *runRenderer) setTitle() {
 	if !r.titleEnabled {
 		return
 	}
+	r.drawMu.Lock()
+	defer r.drawMu.Unlock()
+	r.writeTitleLocked()
+}
+
+func (r *runRenderer) writeTitleLocked() {
+	if !r.titleEnabled {
+		return
+	}
 	r.mu.Lock()
 	stage := r.stage
 	iter := r.iteration
 	r.mu.Unlock()
-	fmt.Fprintf(r.writer, "\x1b]2;loop %s | %s | %s | %s\a", stage, iter, r.agent, formatDuration(time.Since(r.started)))
+	title := fmt.Sprintf("loop %s | %s | %s | %s", stage, iter, r.agent, formatDuration(time.Since(r.started)))
+	if title == r.lastTitle {
+		return
+	}
+	r.lastTitle = title
+	fmt.Fprintf(r.writer, "\x1b]2;%s\a", title)
 }
 
 func (r *runRenderer) clearTitle() {
 	if !r.titleEnabled {
 		return
 	}
+	r.drawMu.Lock()
+	defer r.drawMu.Unlock()
+	r.lastTitle = ""
 	fmt.Fprint(r.writer, "\x1b]2;\a")
 }
 
@@ -1237,6 +1451,10 @@ func fitLine(s string, width int) string {
 		return truncateVisible(s, width, true)
 	}
 	return s
+}
+
+func trimRendererLineRight(s string) string {
+	return strings.TrimRight(s, " ")
 }
 
 func truncateDisplay(s string, width int) string {

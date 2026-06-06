@@ -108,6 +108,7 @@ loop run task.md --pr --review-mode serial_human_review
 ```
 
 `--human-review` is a compatibility shortcut for `--review-mode serial_human_review`.
+In the interactive renderer, press `r` during PR runs to cycle the active policy between `auto merge`, `parallel review`, and `serial review`. The renderer shows the active policy at the end of the metrics line, and the shortcut is locked while PR integration is in progress.
 
 By default, `run.maxIterations` is `0`, which means no iteration cap. In that open-ended mode, `loop` keeps selecting and integrating the next coherent AI sprint until a terminal error, interrupt, or configured limit stops the run.
 

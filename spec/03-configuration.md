@@ -126,6 +126,8 @@ Pull request review modes:
 | `parallel_human_review` | Trust-ramped parallel mode. The merge agent creates the PR and waits for checks, `loop pr checks` records `pr-state.status=waiting_for_human`, and the CLI preserves the remote PR for human review while continuing later iterations from the base branch. Runtime context includes pending PR titles, branches, and changed files so planners can avoid overlapping work. At iteration boundaries, the CLI removes merged or closed pending PRs, then planners inspect remaining PR feedback with `loop pr feedback <pr>` and can return `repair_pull_request` to resume that PR branch after planning; when no safe non-overlapping work remains, planners can return `wait_for_pending_prs=true` with no tasks to enter PR review wait mode. |
 | `serial_human_review` | Strict manual mode. The merge agent creates the PR and waits for checks, `loop pr checks` records `pr-state.status=waiting_for_human`, and the CLI shows a PR review wait screen and polls every 5 minutes until a human merges the PR externally before cleanup or the next iteration. |
 
+Interactive PR runs can change the active review policy with `r`, cycling through `auto merge`, `parallel review`, and `serial review`. The renderer displays the active policy at the end of the metrics line and locks the shortcut while PR integration is in progress.
+
 Pull request check timing:
 
 | Field | Built-in value | Behavior |

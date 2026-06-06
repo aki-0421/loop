@@ -158,6 +158,9 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 	statePath := filepath.Join(runDir, "run-state.json")
 	state := runstate.New(runID, *goal, cfg.Git.BaseBranch, cfg.Agent.Default)
 	renderer := newRunRenderer(g, runID, cfg.Agent.Default, filepath.Base(root), "", cfg.Git.BaseBranch, *goal, rel(root, runDir), cfg.Run.MaxIterations)
+	if cfg.Git.Integration.Mode == "pr" {
+		renderer.EnablePRReviewMode(cfg.Git.Integration.PR.ReviewMode)
+	}
 	renderer.Start(ctx)
 	registerRunGracefulShutdownCallback(ctx, renderer.GracefulShutdownRequested)
 	defer func() { renderer.Stop(state.Stage, "") }()
@@ -190,6 +193,7 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 		}
 		refreshPendingPullRequests(ctx, root, cfg, &state, renderer)
 		_ = runstate.Write(statePath, state)
+		applyRendererPRReviewMode(&cfg, renderer)
 		result, err := runOrchestratedIteration(ctx, orchestrationRequest{
 			Globals:         g,
 			Config:          cfg,
@@ -253,6 +257,23 @@ type orchestrationRequest struct {
 	Renderer        *runRenderer
 }
 
+func applyRendererPRReviewMode(cfg *config.Config, renderer *runRenderer) {
+	if cfg == nil || cfg.Git.Integration.Mode != "pr" || renderer == nil {
+		return
+	}
+	if mode := normalizeRendererReviewMode(renderer.CurrentPRReviewMode()); mode != "" {
+		cfg.Git.Integration.PR.ReviewMode = mode
+		cfg.Git.Integration.PR.HumanReview = mode != config.ReviewModeAutoMerge
+	}
+}
+
+func syncPathPRReviewMode(paths *pathSet, cfg config.Config) {
+	if paths == nil {
+		return
+	}
+	paths.PRReviewMode = cfg.Git.Integration.PR.ReviewMode
+}
+
 func resumeRun(ctx context.Context, g globals, runID string, fromIteration int) error {
 	root, err := gitx.RepoRoot(ctx, ".")
 	if err != nil {
@@ -301,10 +322,14 @@ func resumeRun(ctx context.Context, g globals, runID string, fromIteration int) 
 		return codedError{1, fmt.Errorf("resume instruction artifact: %w", err)}
 	}
 	renderer := newRunRenderer(g, runID, cfg.Agent.Default, filepath.Base(root), "", cfg.Git.BaseBranch, state.Goal, rel(root, runDir), cfg.Run.MaxIterations)
+	if cfg.Git.Integration.Mode == "pr" {
+		renderer.EnablePRReviewMode(cfg.Git.Integration.PR.ReviewMode)
+	}
 	renderer.Start(ctx)
 	registerRunGracefulShutdownCallback(ctx, renderer.GracefulShutdownRequested)
 	defer func() { renderer.Stop(state.Stage, "") }()
 
+	applyRendererPRReviewMode(&cfg, renderer)
 	result, err := resumeOrchestratedIteration(ctx, orchestrationRequest{
 		Globals:         g,
 		Config:          cfg,
@@ -351,6 +376,7 @@ func parseIterationNumber(iterationID string) (int, error) {
 
 func resumeOrchestratedIteration(ctx context.Context, req orchestrationRequest) (result iterationWorkflowResult, retErr error) {
 	cfg := req.Config
+	applyRendererPRReviewMode(&cfg, req.Renderer)
 	rootRunner := gitx.Runner{Dir: req.Root}
 	iterationID := runstate.IterationID(req.IterationNumber)
 	iterDir := filepath.Join(req.RunDir, "iterations", iterationID)
@@ -482,12 +508,16 @@ func resumeOrchestratedIteration(ctx context.Context, req orchestrationRequest) 
 	}
 	var merge workflow.MergeResult
 	if cfg.Git.Integration.Mode == "pr" {
+		applyRendererPRReviewMode(&cfg, req.Renderer)
+		syncPathPRReviewMode(&paths, cfg)
 		var mergeErr error
 		merge, mergeErr = readMergeAudit(iterDir)
 		if mergeErr != nil || resumeStage == runstate.StagePullRequest {
 			req.State.Stage = runstate.StagePullRequest
 			_ = runstate.Write(req.StatePath, *req.State)
 			req.Renderer.Stage(runstate.StagePullRequest, "merge agent running")
+			req.Renderer.LockPRReviewMode(true)
+			defer req.Renderer.LockPRReviewMode(false)
 			merge, err = runMergeRole(ctx, cfg, iterationWorktree, paths, tree, completedTaskResults, validationResults, req.Renderer.AgentEvent)
 			preserveIterationIfOpenPR(paths, cleanup)
 			if err != nil {
@@ -505,7 +535,10 @@ func resumeOrchestratedIteration(ctx context.Context, req orchestrationRequest) 
 			return iterationWorkflowResult{}, codedError{4, errors.New("resume merge-result is pr_check_failed; start a new run to schedule PR check repair tasks")}
 		}
 	}
-	return finalizeOrchestratedIteration(ctx, req, cleanup, paths, tree, review, merge, allCommits, iterationWorktree, initialBranch)
+	req.Config = cfg
+	result, err = finalizeOrchestratedIteration(ctx, req, cleanup, paths, tree, review, merge, allCommits, iterationWorktree, initialBranch)
+	req.Renderer.LockPRReviewMode(false)
+	return result, err
 }
 
 func iterationRecordByID(state *runstate.State, iterationID string) runstate.IterationRecord {
@@ -566,6 +599,7 @@ func filterTaskIDs(ids []string, keep map[string]bool) []string {
 
 func runOrchestratedIteration(ctx context.Context, req orchestrationRequest) (result iterationWorkflowResult, retErr error) {
 	cfg := req.Config
+	applyRendererPRReviewMode(&cfg, req.Renderer)
 	rootRunner := gitx.Runner{Dir: req.Root}
 	iterationID := runstate.IterationID(req.IterationNumber)
 	iterDir := filepath.Join(req.RunDir, "iterations", iterationID)
@@ -667,6 +701,8 @@ func runOrchestratedIteration(ctx context.Context, req orchestrationRequest) (re
 	if err := writeTaskTreeAudit(iterDir, tree); err != nil {
 		return iterationWorkflowResult{}, codedError{1, err}
 	}
+	applyRendererPRReviewMode(&cfg, req.Renderer)
+	syncPathPRReviewMode(&paths, cfg)
 	taskDirs := newTaskDirectoryAllocator(iterDir)
 	if _, err := taskDirs.Ensure(tree.Tasks); err != nil {
 		return iterationWorkflowResult{}, codedError{1, err}
@@ -818,6 +854,8 @@ func runOrchestratedIteration(ctx context.Context, req orchestrationRequest) (re
 		req.State.Stage = runstate.StageValidating
 		_ = runstate.Write(req.StatePath, *req.State)
 		req.Renderer.Stage(runstate.StageValidating, "running validation")
+		applyRendererPRReviewMode(&cfg, req.Renderer)
+		syncPathPRReviewMode(&paths, cfg)
 		validationResults, validationErr := runConfiguredValidation(ctx, iterationWorktree, paths, cfg.Validation.Commands)
 		if validationErr != nil || validation.StatusFromResults(validationResults) == "failed" {
 			repairCycle++
@@ -846,9 +884,13 @@ func runOrchestratedIteration(ctx context.Context, req orchestrationRequest) (re
 			req.State.Stage = runstate.StagePullRequest
 			_ = runstate.Write(req.StatePath, *req.State)
 			req.Renderer.Stage(runstate.StagePullRequest, "merge agent running")
+			applyRendererPRReviewMode(&cfg, req.Renderer)
+			syncPathPRReviewMode(&paths, cfg)
+			req.Renderer.LockPRReviewMode(true)
 			merge, err = runMergeRole(ctx, cfg, iterationWorktree, paths, tree, completedTaskResults, validationResults, req.Renderer.AgentEvent)
 			preserveIterationIfOpenPR(paths, cleanup)
 			if err != nil {
+				req.Renderer.LockPRReviewMode(false)
 				return iterationWorkflowResult{}, codedError{6, err}
 			}
 			if err := refreshTrackedBranch(ctx, iterationWorktree, &paths); err != nil {
@@ -862,6 +904,7 @@ func runOrchestratedIteration(ctx context.Context, req orchestrationRequest) (re
 				break
 			}
 			if merge.Status == "pr_check_failed" {
+				req.Renderer.LockPRReviewMode(false)
 				repairCycle++
 				pendingTasks = repairTasksFromMerge(merge)
 				if len(pendingTasks) == 0 {
@@ -871,8 +914,10 @@ func runOrchestratedIteration(ctx context.Context, req orchestrationRequest) (re
 			}
 			if merge.Status == "blocked" {
 				preserveIterationIfOpenPR(paths, cleanup)
+				req.Renderer.LockPRReviewMode(false)
 				return iterationWorkflowResult{}, codedError{6, errors.New(firstNonEmpty(merge.Summary, "merge agent blocked"))}
 			}
+			req.Renderer.LockPRReviewMode(false)
 			return iterationWorkflowResult{}, codedError{6, errors.New(firstNonEmpty(merge.Summary, "merge agent failed"))}
 		}
 		repairCycle++
@@ -882,7 +927,10 @@ func runOrchestratedIteration(ctx context.Context, req orchestrationRequest) (re
 		}
 	}
 
-	return finalizeOrchestratedIteration(ctx, req, cleanup, paths, tree, review, merge, allCommits, iterationWorktree, initialBranch)
+	req.Config = cfg
+	result, err = finalizeOrchestratedIteration(ctx, req, cleanup, paths, tree, review, merge, allCommits, iterationWorktree, initialBranch)
+	req.Renderer.LockPRReviewMode(false)
+	return result, err
 }
 
 func finalizeOrchestratedIteration(ctx context.Context, req orchestrationRequest, cleanup *iterationCleanup, paths pathSet, tree workflow.TaskTree, review workflow.ReviewResult, merge workflow.MergeResult, allCommits []gitx.Commit, iterationWorktree, initialBranch string) (iterationWorkflowResult, error) {

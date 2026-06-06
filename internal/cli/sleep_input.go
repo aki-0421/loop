@@ -12,6 +12,22 @@ import (
 const sleepInputPollInterval = 200 * time.Millisecond
 
 func waitForGitHubSleepPoll(ctx context.Context, d time.Duration, renderer *runRenderer) error {
+	if renderer != nil && renderer.inputActive() {
+		pressed, err := renderer.waitForSleepFetch(ctx, d)
+		if err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				if state := runInterruptFromContext(ctx); state != nil && !state.GracefulRequested() {
+					state.RequestGraceful()
+				}
+				return err
+			}
+			return githubSleepPoll(ctx, d)
+		}
+		if pressed {
+			renderer.SleepFetchRequested()
+		}
+		return nil
+	}
 	if !sleepKeypressEnabled(renderer) {
 		return githubSleepPoll(ctx, d)
 	}
