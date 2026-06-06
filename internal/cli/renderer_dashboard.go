@@ -665,37 +665,42 @@ func pullRequestBlock(s rendererSnapshot, symbols dashboardSymbols, screenWidth,
 	if maxBlockWidth > 72 {
 		maxBlockWidth = 72
 	}
-	rows := []string{colorize(s, ansiCyan+ansiBold, "Pull Request")}
+	lines := []string{centerLine(ellipsize(colorize(s, ansiCyan+ansiBold, "Pull Request"), maxBlockWidth), screenWidth)}
+	creatingPR := strings.EqualFold(strings.TrimSpace(pr.Status), "preparing") && strings.TrimSpace(pr.PR) == ""
 	if branchLine := pullRequestBranchLine(pr); branchLine != "" {
-		rows = append(rows, branchLine)
+		lines = append(lines, "")
+		lines = append(lines, centerLine(ellipsize(colorize(s, ansiDim, branchLine), maxBlockWidth), screenWidth))
 	}
-	if id := pullRequestDisplayID(pr.PR); id != "" {
-		rows = append(rows, "PR: "+id)
+	if titleLine := pullRequestTitleLine(s, pr); titleLine != "" {
+		lines = append(lines, "")
+		lines = append(lines, centerLine(ellipsize(titleLine, maxBlockWidth), screenWidth))
 	}
-	if title := strings.TrimSpace(pr.Title); title != "" {
-		rows = append(rows, "Title: "+title)
+	var checkRows []string
+	if len(s.PullRequestChecks.Checks) == 0 && !creatingPR {
+		checkRows = append(checkRows, pullRequestChecksSummary(s, symbols))
 	}
-	rows = append(rows, "Status: "+pullRequestStatusText(pr.Status))
-	if len(s.PullRequestChecks.Checks) == 0 {
-		rows = append(rows, pullRequestChecksSummary(s, symbols))
+	if creatingPR {
+		checkRows = append(checkRows, colorize(s, ansiYellow+ansiBold, spinnerSymbol(s)+" Creating pull request..."))
 	}
-	rows = append(rows, pullRequestCheckDetailLines(s, symbols, maxBlockWidth, limit-len(rows))...)
-	if len(rows) > limit {
-		rows = rows[:limit]
-	}
-	width := 1
-	for i, row := range rows {
-		rows[i] = ellipsize(row, maxBlockWidth)
-		if w := displayWidth(rows[i]); w > width {
-			width = w
+	checkRows = append(checkRows, pullRequestCheckDetailLines(s, symbols, maxBlockWidth, limit-len(lines)-1)...)
+	if len(checkRows) > 0 {
+		lines = append(lines, "")
+		checkWidth := 1
+		for i, row := range checkRows {
+			checkRows[i] = ellipsize(row, maxBlockWidth)
+			if w := displayWidth(checkRows[i]); w > checkWidth {
+				checkWidth = w
+			}
+		}
+		if checkWidth > maxBlockWidth {
+			checkWidth = maxBlockWidth
+		}
+		for _, row := range checkRows {
+			lines = append(lines, centeredBlockLine(row, screenWidth, checkWidth))
 		}
 	}
-	if width > maxBlockWidth {
-		width = maxBlockWidth
-	}
-	lines := make([]string, 0, len(rows))
-	for _, row := range rows {
-		lines = append(lines, centeredBlockLine(row, screenWidth, width))
+	if len(lines) > limit {
+		lines = lines[:limit]
 	}
 	return lines
 }
@@ -705,13 +710,26 @@ func pullRequestBranchLine(pr rendererPullRequest) string {
 	base := strings.TrimSpace(pr.Base)
 	switch {
 	case branch != "" && base != "":
-		return "Branch: " + branch + " -> " + base
+		return branch + " -> " + base
 	case branch != "":
-		return "Branch: " + branch
+		return branch
 	case base != "":
-		return "Base: " + base
+		return base
 	default:
 		return ""
+	}
+}
+
+func pullRequestTitleLine(s rendererSnapshot, pr rendererPullRequest) string {
+	id := pullRequestDisplayID(pr.PR)
+	title := strings.TrimSpace(pr.Title)
+	switch {
+	case id != "" && title != "":
+		return colorize(s, ansiDim, id) + " " + title
+	case id != "":
+		return colorize(s, ansiDim, id)
+	default:
+		return title
 	}
 }
 
@@ -728,19 +746,19 @@ func pullRequestChecksSummary(s rendererSnapshot, symbols dashboardSymbols) stri
 	status := strings.TrimSpace(checks.Status)
 	switch {
 	case status == "":
-		return colorize(s, ansiDim, "CI: waiting for check results")
+		return colorize(s, ansiDim, "Waiting for check results")
 	case checks.NoChecks && status == "skipped":
-		return colorize(s, ansiDim, "CI: no checks discovered")
+		return colorize(s, ansiDim, "No checks discovered")
 	case status == "failed":
-		return colorize(s, ansiRed+ansiBold, symbols.Blocked+" CI: failed")
+		return colorize(s, ansiRed+ansiBold, symbols.Blocked+" CI failed")
 	case status == "passed":
-		return colorize(s, ansiGreen, symbols.Done+" CI: passed")
+		return colorize(s, ansiGreen, symbols.Done+" CI passed")
 	case status == "skipped":
-		return colorize(s, ansiDim, "CI: skipped")
+		return colorize(s, ansiDim, "CI skipped")
 	case checks.Pending || status == "pending":
-		return colorize(s, ansiYellow+ansiBold, spinnerSymbol(s)+" CI: pending")
+		return colorize(s, ansiYellow+ansiBold, spinnerSymbol(s)+" CI pending")
 	default:
-		return "CI: " + pullRequestStatusText(status)
+		return pullRequestStatusText(status)
 	}
 }
 
@@ -755,18 +773,6 @@ func pullRequestCheckDetailLines(s rendererSnapshot, symbols dashboardSymbols, b
 			break
 		}
 		rows = append(rows, pullRequestCheckLine(s, symbols, check))
-	}
-	if errText := strings.TrimSpace(checks.Error); errText != "" && len(rows) < limit {
-		rows = append(rows, "Error: "+errText)
-	}
-	if checkedAt := strings.TrimSpace(checks.CheckedAt); checkedAt != "" && len(rows) < limit {
-		rows = append(rows, "Checked: "+checkedAt)
-	}
-	for _, line := range pullRequestCheckOutputLines(checks) {
-		if len(rows) >= limit {
-			break
-		}
-		rows = append(rows, line)
 	}
 	if len(rows) > limit {
 		rows = rows[:limit]
@@ -797,7 +803,56 @@ func pullRequestCheckLine(s rendererSnapshot, symbols dashboardSymbols, check re
 	if workflow := strings.TrimSpace(check.Workflow); workflow != "" && workflow != name {
 		name = workflow + " / " + name
 	}
-	return colorize(s, stateStyle, marker+" "+name)
+	duration := pullRequestCheckDuration(check)
+	if duration == "" {
+		return colorize(s, stateStyle, marker+" "+name)
+	}
+	return colorize(s, stateStyle, marker+" "+name) + " " + colorize(s, ansiDim, "("+duration+")")
+}
+
+func pullRequestCheckDuration(check rendererPullRequestCheck) string {
+	startedAt := strings.TrimSpace(check.StartedAt)
+	completedAt := strings.TrimSpace(check.CompletedAt)
+	if startedAt == "" || completedAt == "" {
+		return ""
+	}
+	started, err := time.Parse(time.RFC3339Nano, startedAt)
+	if err != nil {
+		return ""
+	}
+	completed, err := time.Parse(time.RFC3339Nano, completedAt)
+	if err != nil {
+		return ""
+	}
+	duration := completed.Sub(started)
+	if duration < 0 {
+		return ""
+	}
+	return formatPullRequestCheckDuration(duration)
+}
+
+func formatPullRequestCheckDuration(d time.Duration) string {
+	if d < 0 {
+		d = 0
+	}
+	d = d.Round(time.Second)
+	h := int(d / time.Hour)
+	m := int(d%time.Hour) / int(time.Minute)
+	sec := int(d%time.Minute) / int(time.Second)
+	switch {
+	case h > 0 && sec > 0:
+		return fmt.Sprintf("%dh%dm%ds", h, m, sec)
+	case h > 0 && m > 0:
+		return fmt.Sprintf("%dh%dm", h, m)
+	case h > 0:
+		return fmt.Sprintf("%dh", h)
+	case m > 0 && sec > 0:
+		return fmt.Sprintf("%dm%ds", m, sec)
+	case m > 0:
+		return fmt.Sprintf("%dm", m)
+	default:
+		return fmt.Sprintf("%ds", sec)
+	}
 }
 
 func checkBucket(check rendererPullRequestCheck) string {

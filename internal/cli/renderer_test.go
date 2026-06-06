@@ -616,8 +616,8 @@ func TestRunRendererShowsPullRequestProgressInsteadOfTasks(t *testing.T) {
 		ExitCode:      1,
 		Error:         "exit status 1",
 		Checks: []pr.CheckStatus{
-			{Name: "unit", Workflow: "test", Bucket: "fail", State: "FAILURE", Link: "https://github.com/acme/app/actions/runs/1/job/2"},
-			{Name: "lint", Workflow: "quality", Bucket: "pass", State: "SUCCESS"},
+			{Name: "unit", Workflow: "test", Bucket: "fail", State: "FAILURE", StartedAt: "2026-06-06T09:58:43Z", CompletedAt: "2026-06-06T10:00:00Z", Link: "https://github.com/acme/app/actions/runs/1/job/2"},
+			{Name: "lint", Workflow: "quality", Bucket: "pass", State: "SUCCESS", StartedAt: "2026-06-06T09:59:16Z", CompletedAt: "2026-06-06T10:00:00Z"},
 			{Name: "deploy-preview", Workflow: "preview", Bucket: "pending", State: "QUEUED"},
 		},
 		Stdout: "Refreshing checks status every 5 seconds. Press Ctrl+C to quit.\n",
@@ -646,17 +646,19 @@ func TestRunRendererShowsPullRequestProgressInsteadOfTasks(t *testing.T) {
 	frame := stripANSISequences(strings.Join(frameLines, "\n"))
 	for _, want := range []string{
 		"Pull Request",
-		"Branch: feature/render-pr-progress -> develop",
-		"PR: #42",
-		"Title: Show PR progress in renderer",
-		"Status: created",
-		"[!] test / unit",
-		"[x] quality / lint",
+		"feature/render-pr-progress -> develop",
+		"#42 Show PR progress in renderer",
+		"[!] test / unit (1m17s)",
+		"[x] quality / lint (44s)",
 		"- preview / deploy-preview",
-		"unit test failed: missing dependency",
 	} {
 		if !strings.Contains(frame, want) {
 			t.Fatalf("pull request frame missing %q:\n%s", want, frame)
+		}
+	}
+	for _, hidden := range []string{"Branch:", "PR:", "Title:", "Status:", "Checked:", "exit status 1", "unit test failed"} {
+		if strings.Contains(frame, hidden) {
+			t.Fatalf("pull request frame should not show label %q:\n%s", hidden, frame)
 		}
 	}
 	for _, hidden := range []string{"Old task should not be visible", "Old TODO should not be visible"} {
@@ -665,6 +667,85 @@ func TestRunRendererShowsPullRequestProgressInsteadOfTasks(t *testing.T) {
 		}
 	}
 	assertFrameBounds(t, frameLines, 120, 28)
+}
+
+func TestRunRendererPullRequestFrameKeepsSectionSpacing(t *testing.T) {
+	t.Setenv("LOOP_ASCII", "1")
+	now := time.Now()
+	lines := pullRequestBlock(rendererSnapshot{
+		Started: now.Add(-time.Minute),
+		Now:     now,
+		PullRequest: rendererPullRequest{
+			Status: "created",
+			PR:     "42",
+			Branch: "feature/render-pr-progress",
+			Base:   "develop",
+			Title:  "Show PR progress in renderer",
+		},
+		PullRequestChecks: rendererPullRequestChecks{
+			Checks: []rendererPullRequestCheck{
+				{Name: "unit", Workflow: "test", Bucket: "pass", State: "SUCCESS", StartedAt: "2026-06-06T09:58:43Z", CompletedAt: "2026-06-06T10:00:00Z"},
+			},
+		},
+	}, symbolsForEnvironment(), 100, 72, 12)
+
+	plain := make([]string, 0, len(lines))
+	for _, line := range lines {
+		plain = append(plain, strings.TrimSpace(stripANSISequences(line)))
+	}
+	want := []string{
+		"Pull Request",
+		"",
+		"feature/render-pr-progress -> develop",
+		"",
+		"#42 Show PR progress in renderer",
+		"",
+		"[x] test / unit (1m17s)",
+	}
+	if strings.Join(plain, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("pull request block spacing mismatch:\n%s", strings.Join(plain, "\n"))
+	}
+}
+
+func TestRunRendererPullRequestFrameStylesIDAndCreatingState(t *testing.T) {
+	t.Setenv("TERM", "xterm-256color")
+	now := time.Now()
+	lines := renderDashboard(rendererSnapshot{
+		Started: now.Add(-time.Minute),
+		Now:     now,
+		Color:   true,
+		Stage:   string(runstate.StagePullRequest),
+		PullRequest: rendererPullRequest{
+			Status: "created",
+			PR:     "42",
+			Branch: "feature/render-pr-progress",
+			Base:   "develop",
+			Title:  "Show PR progress in renderer",
+		},
+		PullRequestChecks: rendererPullRequestChecks{Status: "pending", Pending: true},
+	}, 120, 24)
+	frame := strings.Join(lines, "\n")
+	if !strings.Contains(frame, ansiDim+"#42"+ansiReset+" Show PR progress in renderer") {
+		t.Fatalf("pull request id should be gray and title should remain plain:\n%s", frame)
+	}
+
+	creatingLines := renderDashboard(rendererSnapshot{
+		Started: now.Add(-time.Minute),
+		Now:     now,
+		Stage:   string(runstate.StagePullRequest),
+		PullRequest: rendererPullRequest{
+			Status: "preparing",
+			Branch: "feature/render-pr-progress",
+			Base:   "develop",
+		},
+	}, 100, 22)
+	creatingFrame := stripANSISequences(strings.Join(creatingLines, "\n"))
+	if !strings.Contains(creatingFrame, "Creating pull request...") {
+		t.Fatalf("creating PR frame missing progress message:\n%s", creatingFrame)
+	}
+	if strings.Contains(creatingFrame, "Waiting for check results") {
+		t.Fatalf("creating PR frame should not show check-wait copy before the PR exists:\n%s", creatingFrame)
+	}
 }
 
 func TestRunRendererShowsSleepFetchRequested(t *testing.T) {
