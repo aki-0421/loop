@@ -173,10 +173,23 @@ func auditEventsFromJSON(v any) []runstate.Event {
 
 func auditEventsFromJSONObject(obj map[string]any, parentKey, ownerType string) []runstate.Event {
 	var events []runstate.Event
+	if event, ok := sessionEventFromJSONObject(obj, ownerType); ok {
+		events = append(events, event)
+	}
 	if event, ok := usageEventFromJSONObject(obj, parentKey, ownerType); ok {
 		events = append(events, event)
 	}
 	if event, ok := messageEventFromJSONObject(obj, ownerType); ok {
+		events = append(events, event)
+	}
+	if event, ok := toolEventFromJSONObject(obj, ownerType); ok {
+		events = append(events, event)
+	}
+	if event, ok := webSearchEventFromJSONObject(obj, ownerType); ok {
+		events = append(events, event)
+	}
+	events = append(events, fileChangeEventsFromJSONObject(obj, ownerType)...)
+	if event, ok := planUpdateEventFromJSONObject(obj, ownerType); ok {
 		events = append(events, event)
 	}
 	if cmd, args, ok := commandFromJSONObject(obj); ok {
@@ -191,6 +204,130 @@ func auditEventsFromJSONObject(obj map[string]any, parentKey, ownerType string) 
 		}
 	}
 	return events
+}
+
+func sessionEventFromJSONObject(obj map[string]any, ownerType string) (runstate.Event, bool) {
+	kind := firstDescriptor(obj, ownerType)
+	lowerKind := strings.ToLower(kind)
+	if !oneOfString(lowerKind, "thread.started", "session.started", "conversation.started") {
+		return nil, false
+	}
+	event := runstate.Event{"type": "agent.session", "provider_event": kind}
+	if threadID, ok := firstStringField(obj, "thread_id", "threadId"); ok {
+		event["thread_id"] = threadID
+	}
+	if sessionID, ok := firstStringField(obj, "session_id", "sessionId", "conversation_id", "conversationId"); ok {
+		event["session_id"] = sessionID
+	}
+	if event["thread_id"] == nil && event["session_id"] == nil {
+		return nil, false
+	}
+	return event, true
+}
+
+func toolEventFromJSONObject(obj map[string]any, ownerType string) (runstate.Event, bool) {
+	if objectLooksLikeHiddenReasoning(obj, ownerType) {
+		return nil, false
+	}
+	values := descriptorValues(obj, ownerType)
+	if !objectHasDescriptor(obj) || !descriptorLooksLikeTool(values) {
+		return nil, false
+	}
+	if descriptorContains(values, "command_execution") || descriptorLooksLikeWebSearch(values) || descriptorLooksLikeFileChange(values) {
+		return nil, false
+	}
+	tool := bestToolName(obj, values)
+	if tool == "" {
+		return nil, false
+	}
+	event := runstate.Event{"type": "agent.tool", "tool": tool}
+	if providerEvent := firstDescriptor(obj, ownerType); providerEvent != "" {
+		event["provider_event"] = providerEvent
+	}
+	for _, key := range []string{"id", "item_id", "tool_call_id", "call_id"} {
+		if value, ok := stringField(obj, key); ok && strings.TrimSpace(value) != "" {
+			event["item_id"] = strings.TrimSpace(value)
+			break
+		}
+	}
+	if status, ok := firstStringField(obj, "status", "state"); ok {
+		event["status"] = status
+	}
+	return event, true
+}
+
+func fileChangeEventsFromJSONObject(obj map[string]any, ownerType string) []runstate.Event {
+	values := descriptorValues(obj, ownerType)
+	if !objectHasDescriptor(obj) || !descriptorLooksLikeFileChange(values) {
+		return nil
+	}
+	paths := uniqueStrings(pathValues(obj))
+	if len(paths) == 0 {
+		return nil
+	}
+	action := fileChangeAction(values)
+	events := make([]runstate.Event, 0, len(paths))
+	for _, path := range paths {
+		event := runstate.Event{"type": "agent.file_change", "path": path}
+		if action != "" {
+			event["action"] = action
+		}
+		if providerEvent := firstDescriptor(obj, ownerType); providerEvent != "" {
+			event["provider_event"] = providerEvent
+		}
+		if status, ok := firstStringField(obj, "status", "state"); ok {
+			event["status"] = status
+		}
+		events = append(events, event)
+	}
+	return events
+}
+
+func webSearchEventFromJSONObject(obj map[string]any, ownerType string) (runstate.Event, bool) {
+	values := descriptorValues(obj, ownerType)
+	if !objectHasDescriptor(obj) || !descriptorLooksLikeWebSearch(values) {
+		return nil, false
+	}
+	event := runstate.Event{"type": "agent.web_search"}
+	if providerEvent := firstDescriptor(obj, ownerType); providerEvent != "" {
+		event["provider_event"] = providerEvent
+	}
+	if query, ok := firstStringFieldRecursive(obj, "query", "q", "search_query", "searchQuery"); ok {
+		if text, safe := sanitizeAuditText(query, 240); safe {
+			event["query"] = text
+		}
+	}
+	if url, ok := firstStringFieldRecursive(obj, "url", "uri", "link"); ok {
+		if text, safe := sanitizeAuditText(url, 240); safe {
+			event["url"] = text
+		}
+	}
+	if len(event) == 1 {
+		return nil, false
+	}
+	return event, true
+}
+
+func planUpdateEventFromJSONObject(obj map[string]any, ownerType string) (runstate.Event, bool) {
+	values := descriptorValues(obj, ownerType)
+	if !objectHasDescriptor(obj) || !descriptorLooksLikePlanUpdate(values) {
+		return nil, false
+	}
+	event := runstate.Event{"type": "agent.plan_update"}
+	if providerEvent := firstDescriptor(obj, ownerType); providerEvent != "" {
+		event["provider_event"] = providerEvent
+	}
+	counts, active := planStatusCounts(obj)
+	for status, count := range counts {
+		event[status+"_count"] = count
+	}
+	if active != "" {
+		event["active_step"] = active
+	}
+	if len(event) == 1 {
+		return nil, false
+	}
+	return event, true
 }
 
 func commandFromJSONObject(obj map[string]any) (string, []string, bool) {
@@ -263,6 +400,133 @@ func pathValues(obj map[string]any) []string {
 		}
 	}
 	return paths
+}
+
+func descriptorValues(obj map[string]any, ownerType string) []string {
+	values := []string{ownerType}
+	for _, key := range []string{"type", "name", "tool", "recipient_name", "action", "event"} {
+		if value, ok := stringField(obj, key); ok {
+			values = append(values, value)
+		}
+	}
+	return values
+}
+
+func objectHasDescriptor(obj map[string]any) bool {
+	for _, key := range []string{"type", "name", "tool", "recipient_name", "action", "event"} {
+		if value, ok := stringField(obj, key); ok && strings.TrimSpace(value) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func firstDescriptor(obj map[string]any, ownerType string) string {
+	for _, value := range descriptorValues(obj, ownerType) {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func descriptorContains(values []string, needle string) bool {
+	needle = strings.ToLower(needle)
+	for _, value := range values {
+		if strings.Contains(strings.ToLower(value), needle) {
+			return true
+		}
+	}
+	return false
+}
+
+func descriptorLooksLikeTool(values []string) bool {
+	return descriptorContains(values, "tool") ||
+		descriptorContains(values, "function_call") ||
+		descriptorContains(values, "mcp") ||
+		descriptorContains(values, "web_search") ||
+		descriptorContains(values, "search_query")
+}
+
+func descriptorLooksLikeFileChange(values []string) bool {
+	for _, needle := range []string{
+		"file_change", "file_edit", "file_write", "write_file", "edit_file",
+		"apply_patch", "patch", "diff", "create_file", "delete_file",
+	} {
+		if descriptorContains(values, needle) {
+			return true
+		}
+	}
+	for _, value := range values {
+		lower := strings.ToLower(value)
+		if lower == "edit" || lower == "write" || lower == "create" || lower == "delete" || lower == "update" {
+			return true
+		}
+	}
+	return false
+}
+
+func descriptorLooksLikeWebSearch(values []string) bool {
+	return descriptorContains(values, "web_search") ||
+		descriptorContains(values, "web.search") ||
+		descriptorContains(values, "search_query") ||
+		descriptorContains(values, "web.run")
+}
+
+func descriptorLooksLikePlanUpdate(values []string) bool {
+	return descriptorContains(values, "plan_update") ||
+		descriptorContains(values, "update_plan") ||
+		(descriptorContains(values, "plan") && descriptorContains(values, "update"))
+}
+
+func bestToolName(obj map[string]any, values []string) string {
+	for _, key := range []string{"name", "tool", "recipient_name"} {
+		if value, ok := stringField(obj, key); ok {
+			value = strings.TrimSpace(value)
+			if value != "" {
+				return truncateDisplay(value, 120)
+			}
+		}
+	}
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		lower := strings.ToLower(value)
+		if lower == "tool_call" || lower == "tool_use" || lower == "function_call" {
+			continue
+		}
+		if descriptorLooksLikeTool([]string{value}) {
+			return truncateDisplay(value, 120)
+		}
+	}
+	return ""
+}
+
+func fileChangeAction(values []string) string {
+	candidates := []struct {
+		needle string
+		action string
+	}{
+		{"delete", "delete"},
+		{"create", "create"},
+		{"write", "write"},
+		{"edit", "edit"},
+		{"patch", "patch"},
+		{"diff", "diff"},
+		{"update", "update"},
+	}
+	for _, value := range values {
+		lower := strings.ToLower(value)
+		for _, candidate := range candidates {
+			if strings.Contains(lower, candidate.needle) {
+				return candidate.action
+			}
+		}
+	}
+	return ""
 }
 
 func commandEvent(command string, args []string) runstate.Event {
@@ -565,6 +829,108 @@ func boolField(obj map[string]any, key string) (bool, bool) {
 	return typed, ok
 }
 
+func firstStringField(obj map[string]any, keys ...string) (string, bool) {
+	for _, key := range keys {
+		value, ok := stringField(obj, key)
+		if !ok {
+			continue
+		}
+		value = strings.TrimSpace(value)
+		if value != "" {
+			return value, true
+		}
+	}
+	return "", false
+}
+
+func firstStringFieldRecursive(obj map[string]any, keys ...string) (string, bool) {
+	if value, ok := firstStringField(obj, keys...); ok {
+		return value, true
+	}
+	for _, nestedKey := range []string{"arguments", "input", "parameters", "payload", "item"} {
+		nested, ok := obj[nestedKey].(map[string]any)
+		if !ok {
+			continue
+		}
+		if value, ok := firstStringFieldRecursive(nested, keys...); ok {
+			return value, true
+		}
+	}
+	return "", false
+}
+
+func uniqueStrings(values []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	return out
+}
+
+func sanitizeAuditText(text string, max int) (string, bool) {
+	text = strings.TrimSpace(stripANSI(text))
+	if text == "" || messageLooksUnsafeForAudit(text) || looksLikeBulkContent(text) {
+		return "", false
+	}
+	text = strings.Join(strings.Fields(text), " ")
+	if text == "" {
+		return "", false
+	}
+	return truncateDisplay(text, max), true
+}
+
+func planStatusCounts(obj map[string]any) (map[string]int, string) {
+	counts := map[string]int{}
+	active := ""
+	for _, key := range []string{"plan", "items", "steps", "todos"} {
+		items, ok := obj[key].([]any)
+		if !ok {
+			continue
+		}
+		for _, item := range items {
+			child, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			status, _ := firstStringField(child, "status", "state")
+			status = normalizePlanStatus(status)
+			if status == "" {
+				continue
+			}
+			counts[status]++
+			if active == "" && (status == "in_progress" || status == "active") {
+				if step, ok := firstStringField(child, "step", "text", "title", "description"); ok {
+					if safe, keep := sanitizeAuditText(step, 240); keep {
+						active = safe
+					}
+				}
+			}
+		}
+	}
+	return counts, active
+}
+
+func normalizePlanStatus(status string) string {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "pending", "todo", "queued":
+		return "pending"
+	case "in_progress", "in-progress", "active", "running":
+		return "in_progress"
+	case "completed", "complete", "done":
+		return "completed"
+	case "blocked", "failed", "cancelled", "canceled":
+		return "blocked"
+	default:
+		return ""
+	}
+}
+
 func oneOfString(value string, candidates ...string) bool {
 	for _, candidate := range candidates {
 		if value == candidate {
@@ -584,7 +950,13 @@ func dedupeAuditEvents(events []runstate.Event) []runstate.Event {
 			"\x00" + fmt.Sprint(event["cache_read_tokens"]) + "\x00" + fmt.Sprint(event["cache_creation_tokens"]) +
 			"\x00" + fmt.Sprint(event["reasoning_output_tokens"]) + "\x00" + fmt.Sprint(event["total_tokens"]) +
 			"\x00" + fmt.Sprint(event["delta"]) + "\x00" + fmt.Sprint(event["estimated"]) +
-			"\x00" + fmt.Sprint(event["text"])
+			"\x00" + fmt.Sprint(event["text"]) + "\x00" + fmt.Sprint(event["thread_id"]) +
+			"\x00" + fmt.Sprint(event["session_id"]) + "\x00" + fmt.Sprint(event["provider_event"]) +
+			"\x00" + fmt.Sprint(event["tool"]) + "\x00" + fmt.Sprint(event["action"]) +
+			"\x00" + fmt.Sprint(event["query"]) + "\x00" + fmt.Sprint(event["url"]) +
+			"\x00" + fmt.Sprint(event["pending_count"]) + "\x00" + fmt.Sprint(event["in_progress_count"]) +
+			"\x00" + fmt.Sprint(event["completed_count"]) + "\x00" + fmt.Sprint(event["blocked_count"]) +
+			"\x00" + fmt.Sprint(event["active_step"])
 		if seen[key] {
 			continue
 		}

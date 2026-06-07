@@ -87,6 +87,79 @@ func TestSummarizeAgentOutputExtractsCommandLifecycle(t *testing.T) {
 	}
 }
 
+func TestSummarizeAgentOutputExtractsCodexSessionAndToolEvents(t *testing.T) {
+	session := summarizeAgentOutput("stdout", `{"type":"thread.started","thread_id":"0199a213-81c0-7800-8aa1-bbab2a035a53"}`)
+	if len(session.AuditEvents) != 1 {
+		t.Fatalf("events = %#v, want one session event", session.AuditEvents)
+	}
+	if event := session.AuditEvents[0]; event["type"] != "agent.session" || event["thread_id"] != "0199a213-81c0-7800-8aa1-bbab2a035a53" {
+		t.Fatalf("unexpected session event: %#v", event)
+	}
+
+	tool := summarizeAgentOutput("stdout", `{"type":"item.started","item":{"id":"item_2","type":"mcp_tool_call","name":"mcp__github__search_issues","status":"in_progress","arguments":{"query":"is:open label:bug"}}}`)
+	if len(tool.AuditEvents) != 1 {
+		t.Fatalf("events = %#v, want one tool event", tool.AuditEvents)
+	}
+	event := tool.AuditEvents[0]
+	if event["type"] != "agent.tool" || event["tool"] != "mcp__github__search_issues" || event["item_id"] != "item_2" {
+		t.Fatalf("unexpected tool event: %#v", event)
+	}
+	if _, ok := event["arguments"]; ok {
+		t.Fatalf("tool event must not persist raw arguments: %#v", event)
+	}
+}
+
+func TestSummarizeAgentOutputExtractsClaudeToolUse(t *testing.T) {
+	summary := summarizeAgentOutput("stdout", `{"type":"assistant","message":{"type":"message","role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"Bash","input":{"command":"make test"}}]}}`)
+
+	var hasTool, hasCommand bool
+	for _, event := range summary.AuditEvents {
+		if event["type"] == "agent.tool" && event["tool"] == "Bash" && event["item_id"] == "toolu_1" {
+			hasTool = true
+		}
+		if event["type"] == "agent.command" && event["command"] == "make test" {
+			hasCommand = true
+		}
+	}
+	if !hasTool || !hasCommand {
+		t.Fatalf("missing Claude tool/command events: %#v", summary.AuditEvents)
+	}
+}
+
+func TestSummarizeAgentOutputExtractsFileChangeWebSearchAndPlanEvents(t *testing.T) {
+	fileChange := summarizeAgentOutput("stdout", `{"type":"item.completed","item":{"id":"item_3","type":"file_change","status":"completed","path":"internal/agent/output_filter.go","action":"edit","diff":"diff --git a/secret b/secret"}}`)
+	if len(fileChange.AuditEvents) != 1 {
+		t.Fatalf("events = %#v, want one file change event", fileChange.AuditEvents)
+	}
+	event := fileChange.AuditEvents[0]
+	if event["type"] != "agent.file_change" || event["path"] != "internal/agent/output_filter.go" || event["action"] != "edit" {
+		t.Fatalf("unexpected file change event: %#v", event)
+	}
+	if _, ok := event["diff"]; ok {
+		t.Fatalf("file change event must not persist raw diff: %#v", event)
+	}
+
+	web := summarizeAgentOutput("stdout", `{"type":"item.completed","item":{"type":"web_search","query":"codex exec json events","status":"completed"}}`)
+	if len(web.AuditEvents) != 1 {
+		t.Fatalf("events = %#v, want one web search event", web.AuditEvents)
+	}
+	if event := web.AuditEvents[0]; event["type"] != "agent.web_search" || event["query"] != "codex exec json events" {
+		t.Fatalf("unexpected web search event: %#v", event)
+	}
+
+	plan := summarizeAgentOutput("stdout", `{"type":"item.completed","item":{"type":"plan_update","plan":[{"status":"completed","step":"Inspect adapter contracts"},{"status":"in_progress","step":"Add normalized event extraction"},{"status":"pending","step":"Run tests"}]}}`)
+	if len(plan.AuditEvents) != 1 {
+		t.Fatalf("events = %#v, want one plan update event", plan.AuditEvents)
+	}
+	event = plan.AuditEvents[0]
+	if event["type"] != "agent.plan_update" || event["completed_count"] != 1 || event["in_progress_count"] != 1 || event["pending_count"] != 1 {
+		t.Fatalf("unexpected plan update event: %#v", event)
+	}
+	if event["active_step"] != "Add normalized event extraction" {
+		t.Fatalf("active step = %v, want normalized extraction step", event["active_step"])
+	}
+}
+
 func TestSummarizeAgentOutputPersistsAssistantMessage(t *testing.T) {
 	summary := summarizeAgentOutput("stdout", `{"type":"agent_message","message":"Inspecting renderer behavior before editing."}`)
 

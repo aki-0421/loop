@@ -53,10 +53,15 @@ Iteration and task `agent-events.jsonl` files contain normalized events. Coding-
 
 ```json
 {"type":"agent.started","ts":"2026-05-17T00:00:00Z","agent_type":"planner","command":"codex"}
+{"type":"agent.session","ts":"2026-05-17T00:00:00Z","agent_type":"planner","thread_id":"0199a213-81c0-7800-8aa1-bbab2a035a53","provider_event":"thread.started"}
 {"type":"agent.message","ts":"2026-05-17T00:00:00Z","agent_type":"planner","text":"Inspecting the task contract before editing."}
 {"type":"agent.usage","ts":"2026-05-17T00:00:00Z","agent_type":"coding","task_id":"add-tests","input_tokens":1200,"output_tokens":45,"cache_read_tokens":300,"cache_creation_tokens":0,"delta":true}
+{"type":"agent.tool","ts":"2026-05-17T00:00:01Z","agent_type":"coding","task_id":"add-tests","tool":"Bash","item_id":"toolu_1"}
 {"type":"agent.command","ts":"2026-05-17T00:00:01Z","agent_type":"coding","task_id":"add-tests","command":"make test"}
 {"type":"agent.file_read","ts":"2026-05-17T00:00:02Z","agent_type":"review","path":"internal/cli/renderer.go"}
+{"type":"agent.file_change","ts":"2026-05-17T00:00:02Z","agent_type":"coding","task_id":"add-tests","path":"internal/agent/output_filter.go","action":"edit"}
+{"type":"agent.web_search","ts":"2026-05-17T00:00:02Z","agent_type":"planner","query":"codex exec json events"}
+{"type":"agent.plan_update","ts":"2026-05-17T00:00:02Z","agent_type":"planner","completed_count":1,"in_progress_count":1,"pending_count":2,"active_step":"Add normalized event extraction"}
 {"type":"agent.exited","ts":"2026-05-17T00:00:03Z","agent_type":"review","exit_code":0}
 ```
 
@@ -64,11 +69,15 @@ Iteration and task `agent-events.jsonl` files contain normalized events. Coding-
 
 The built-in process adapter recognizes these provider streams without reading provider-owned session files:
 
+- Codex `exec --json` `thread.started` events as `agent.session`.
 - Codex `exec --json` `turn.completed.usage` events as usage deltas.
 - Codex `token_count.info.total_token_usage` events as usage snapshots.
 - Claude Code `--output-format stream-json` `result.usage` events as final usage snapshots.
+- Codex and Claude Code tool-use, file-change, web-search, and plan-update JSON objects as normalized `agent.tool`, `agent.file_change`, `agent.web_search`, and `agent.plan_update` audit events when those objects expose safe metadata.
 
 `agent.message` records short, filtered assistant-visible message snippets so durable logs preserve agent progress context. Raw agent transcripts are not persisted. File contents, diffs, and thinking text may be shown transiently by the renderer after filtering, but must not be written to disk. `agent.stdout.log`, `agent.stderr.log`, and `agent-exit.json` are not created.
+
+`agent.tool`, `agent.file_change`, `agent.web_search`, and `agent.plan_update` are metadata events. They may record tool names, provider item ids, status, changed file paths, short search queries, and compact plan status counts. They must not persist raw tool arguments, command output, file contents, patches, diffs, or hidden reasoning.
 
 ## Role Handoff Contract
 
