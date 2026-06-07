@@ -921,6 +921,89 @@ git:
 	assertBranchMissing(t, repo, "feat/role-pr-repair")
 }
 
+func TestRoleOrchestratedRecoversPRCreatePushFailure(t *testing.T) {
+	ctx := context.Background()
+	repo := newCleanupRepo(t)
+	mustWrite(t, filepath.Join(repo, "task.md"), "# Task\n\nRecover after PR creation push validation fails.\n")
+	agentCommand, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(t.TempDir(), "fail-pre-push")
+	mustWrite(t, filepath.Join(repo, ".loop", "config.yaml"), `version: 1
+
+agent:
+  default: roleprpushrepair
+  adapters:
+    roleprpushrepair:
+      command: `+yamlSingleQuote(agentCommand)+`
+      args: [-test.run=TestHelperProcessRoleAgent, --]
+      prompt: stdin
+      env:
+        LOOP_ROLE_TEST_AGENT: "1"
+        LOOP_ROLE_TEST_AGENT_MODE: "pr-create-push-failure-repair"
+        LOOP_TEST_PRE_PUSH_MARKER: `+yamlSingleQuote(marker)+`
+
+run:
+  maxIterations: 1
+
+git:
+  baseBranch: develop
+  integration:
+    mode: pr
+    pr:
+      push: true
+      waitChecks: true
+      checksStartupDelaySeconds: 0
+      checksDiscoveryTimeoutSeconds: 0
+      checksPollIntervalSeconds: 1
+      checksWatchTimeoutSeconds: 5
+`)
+	git(t, repo, "add", "task.md", ".loop/config.yaml")
+	git(t, repo, "commit", "-m", "T: add PR create push failure recovery fixture")
+	addBareOrigin(t, repo)
+
+	hookDir := t.TempDir()
+	hook := "#!/bin/sh\nif [ -f " + shellQuote(marker) + " ]; then\n  echo 'apps/web/src/app/final-visual-route-contract.test.ts typecheck failed' >&2\n  exit 1\nfi\n"
+	mustWrite(t, filepath.Join(hookDir, "pre-push"), hook)
+	if err := os.Chmod(filepath.Join(hookDir, "pre-push"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, marker, "fail\n")
+	git(t, repo, "config", "core.hooksPath", hookDir)
+
+	ghDir := t.TempDir()
+	ghLog := filepath.Join(ghDir, "gh.log")
+	writePassingFakeGH(t, ghDir, ghLog)
+	t.Setenv("PATH", ghDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	withWorkingDir(t, repo)
+
+	if _, err := captureStdout(t, func() error {
+		return commandRun(ctx, globals{Agent: "roleprpushrepair", JSON: true, NoColor: true}, []string{"task.md"})
+	}); err != nil {
+		t.Fatalf("loop run should recover from PR create push failure: %v", err)
+	}
+
+	state := readLatestRunState(t, repo)
+	if state.Stage != runstate.StageCompleted {
+		t.Fatalf("run stage = %s, want completed", state.Stage)
+	}
+	iterDir := filepath.Join(repo, ".loop", "runs", state.RunID, "iterations", "0001")
+	repairMerge := readText(t, filepath.Join(iterDir, "tasks", "0002", "task-merge.json"))
+	if !strings.Contains(repairMerge, `"task_id": "repair-pr-lifecycle"`) || !strings.Contains(repairMerge, `"iteration_branch": "feat/pr-create-push-repair"`) {
+		t.Fatalf("repair task should merge into the renamed PR branch:\n%s", repairMerge)
+	}
+	errorsLog := readText(t, filepath.Join(iterDir, "errors.log"))
+	if !strings.Contains(errorsLog, "pull request branch push failed for feat/pr-create-push-repair; see pr-checks artifact") {
+		t.Fatalf("errors.log missing push failure pointer:\n%s", errorsLog)
+	}
+	gh := readText(t, ghLog)
+	if !strings.Contains(gh, "pr create ") || !strings.Contains(gh, "pr merge 1 --squash") {
+		t.Fatalf("fake gh log missing PR create/merge after repair:\n%s", gh)
+	}
+	assertBranchMissing(t, repo, "feat/pr-create-push-repair")
+}
+
 func TestRoleOrchestratedParallelHumanReviewLeavesPendingPR(t *testing.T) {
 	ctx := context.Background()
 	repo := newCleanupRepo(t)
@@ -1290,7 +1373,7 @@ func runRoleTestAgent() int {
   ]
 }`
 			return exitCode(commandHandoff(ctx, globals{}, []string{"write", "task-tree", "--value", payload}))
-		case "pr-rename-repair":
+		case "pr-rename-repair", "pr-create-push-failure-repair":
 			payload := `{
   "schema_version": 1,
   "summary": "Run PR rename repair workflow",
@@ -1628,7 +1711,7 @@ func runRoleTestAgent() int {
 				return 1
 			}
 			return exitCode(commandTask(ctx, globals{}, []string{"merge", "--type", "F", "complete", taskID}))
-		case "pr-rename-repair":
+		case "pr-rename-repair", "pr-create-push-failure-repair":
 			filename := "initial-pr.txt"
 			message := "run initial PR task"
 			value := "initial\n"
@@ -1636,6 +1719,14 @@ func runRoleTestAgent() int {
 				filename = "repair-pr-check.txt"
 				message = "repair PR check"
 				value = "repair\n"
+			}
+			if taskID == "repair-pr-lifecycle" {
+				filename = "repair-pr-lifecycle.txt"
+				message = "repair PR lifecycle"
+				value = "push repaired\n"
+				if marker := strings.TrimSpace(os.Getenv("LOOP_TEST_PRE_PUSH_MARKER")); marker != "" {
+					_ = os.Remove(marker)
+				}
 			}
 			if err := startRoleTaskTodo(ctx, taskID, message); err != nil {
 				fmt.Fprintln(os.Stderr, err)
@@ -1757,6 +1848,9 @@ func runRoleTestAgent() int {
 		if os.Getenv("LOOP_ROLE_TEST_AGENT_MODE") == "pr-rename-repair" {
 			return runPRRenameRepairMergeAgent(ctx)
 		}
+		if os.Getenv("LOOP_ROLE_TEST_AGENT_MODE") == "pr-create-push-failure-repair" {
+			return runPRCreatePushFailureRepairMergeAgent(ctx)
+		}
 		if os.Getenv("LOOP_ROLE_TEST_AGENT_MODE") == "pr-human-pending" || os.Getenv("LOOP_ROLE_TEST_AGENT_MODE") == "pr-human-pending-then-wait" || os.Getenv("LOOP_ROLE_TEST_AGENT_MODE") == "pr-human-feedback-repair" {
 			return runPRHumanPendingMergeAgent(ctx)
 		}
@@ -1855,6 +1949,44 @@ func runPRRenameRepairMergeAgent(ctx context.Context) int {
   "schema_version": 1,
   "status": "merged",
   "summary": "Fake merge agent merged the repaired PR."
+}`
+	return exitCode(commandHandoff(ctx, globals{}, []string{"write", "merge-result", "--value", payload}))
+}
+
+func runPRCreatePushFailureRepairMergeAgent(ctx context.Context) int {
+	workDir := os.Getenv("LOOP_WORKDIR")
+	current, _ := (gitx.Runner{Dir: workDir}).CurrentBranch(ctx)
+	if current != "feat/pr-create-push-repair" {
+		if err := commandBranch(ctx, globals{}, []string{"rename", "--kind", "feat", "pr create push repair"}); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return exitCode(err)
+		}
+	}
+	iterDir := os.Getenv("LOOP_ITERATION_DIR")
+	if err := artifactdb.Write(iterDir, "pr-title", "Recover PR create push failure\n"); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	if err := artifactdb.Write(iterDir, "pr-body", "## Summary\n\nRecover after PR create push validation fails.\n"); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	if err := commandPR(ctx, globals{}, []string{"create"}); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return exitCode(err)
+	}
+	if err := commandPR(ctx, globals{}, []string{"checks"}); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return exitCode(err)
+	}
+	if err := commandPR(ctx, globals{}, []string{"merge"}); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return exitCode(err)
+	}
+	payload := `{
+  "schema_version": 1,
+  "status": "merged",
+  "summary": "Fake merge agent merged after repairing PR create push failure."
 }`
 	return exitCode(commandHandoff(ctx, globals{}, []string{"write", "merge-result", "--value", payload}))
 }

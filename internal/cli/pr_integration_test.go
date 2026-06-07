@@ -85,6 +85,91 @@ git:
 	}
 }
 
+func TestPRCreateRecordsPushFailureBeforePRState(t *testing.T) {
+	ctx := context.Background()
+	repo := newCleanupRepo(t)
+	addBareOrigin(t, repo)
+	mustWrite(t, filepath.Join(repo, ".loop", "config.yaml"), `version: 1
+
+git:
+  baseBranch: develop
+  integration:
+    mode: pr
+    pr:
+      push: true
+`)
+	git(t, repo, "add", ".loop/config.yaml")
+	git(t, repo, "commit", "-m", "T: add pr create push failure fixture config")
+	git(t, repo, "checkout", "-b", "feat/push-failure", "develop")
+	mustWrite(t, filepath.Join(repo, "change.txt"), "change\n")
+	git(t, repo, "add", "change.txt")
+	git(t, repo, "commit", "-m", "F: add push failure fixture")
+
+	runDir := filepath.Join(repo, ".loop", "runs", "run", "iterations", "0001")
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mustWriteRuntimeArtifact(t, runDir, map[string]any{
+		"run_id":            "run",
+		"iteration_id":      "0001",
+		"base_branch":       "develop",
+		"initial_branch":    "wip/0001",
+		"current_branch":    "feat/push-failure",
+		"branch_renamed":    true,
+		"integration_mode":  "pr",
+		"pull_request_mode": true,
+		"role_orchestrated": true,
+		"workdir":           repo,
+	})
+	if err := artifactdb.Write(runDir, "pr-title", "Push failure fixture\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := artifactdb.Write(runDir, "pr-body", "## Summary\n\nPush failure fixture.\n"); err != nil {
+		t.Fatal(err)
+	}
+
+	hookDir := t.TempDir()
+	mustWrite(t, filepath.Join(hookDir, "pre-push"), "#!/bin/sh\necho 'apps/web/src/app/final-visual-route-contract.test.ts typecheck failed' >&2\nexit 1\n")
+	if err := os.Chmod(filepath.Join(hookDir, "pre-push"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	git(t, repo, "config", "core.hooksPath", hookDir)
+	ghDir := t.TempDir()
+	ghLog := filepath.Join(ghDir, "gh.log")
+	writePassingFakeGH(t, ghDir, ghLog)
+	t.Setenv("PATH", ghDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	withWorkingDir(t, repo)
+
+	_, err := captureStdout(t, func() error {
+		return commandPR(ctx, globals{JSON: true, NoColor: true}, []string{"create", "--iteration-dir", runDir})
+	})
+	if err == nil {
+		t.Fatal("expected loop pr create to fail during branch push")
+	}
+	if !strings.Contains(err.Error(), "see `loop iteration read pr-checks`") {
+		t.Fatalf("error should point to pr-checks artifact: %v", err)
+	}
+	checks, err := artifactdb.Read(runDir, "pr-checks")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(checks, `"status": "failed"`) || !strings.Contains(checks, `"branch": "feat/push-failure"`) || !strings.Contains(checks, "final-visual-route-contract.test.ts") {
+		t.Fatalf("pr-checks artifact missing push failure details:\n%s", checks)
+	}
+	if _, ok, err := readPRState(runDir); err != nil || ok {
+		t.Fatalf("pr-state should not exist after push failure: ok=%v err=%v", ok, err)
+	}
+	errorsLog := readText(t, filepath.Join(runDir, "errors.log"))
+	if !strings.Contains(errorsLog, "pull request branch push failed for feat/push-failure; see pr-checks artifact") {
+		t.Fatalf("errors.log missing concise push failure pointer:\n%s", errorsLog)
+	}
+	if data, err := os.ReadFile(ghLog); err == nil && strings.Contains(string(data), "pr create") {
+		t.Fatalf("PR creation should not run after push failure:\n%s", data)
+	} else if err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+}
+
 func TestPRChecksMarksHumanReviewPRWaiting(t *testing.T) {
 	ctx := context.Background()
 	repo := newCleanupRepo(t)

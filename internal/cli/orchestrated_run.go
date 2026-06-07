@@ -941,11 +941,16 @@ func runOrchestratedIteration(ctx context.Context, req orchestrationRequest) (re
 			if err := lockRendererPRReviewModeArtifacts(&cfg, req.Renderer, &paths); err != nil {
 				return iterationWorkflowResult{}, codedError{1, err}
 			}
+			mergeStartedAt := time.Now().UTC()
 			merge, err = runMergeRole(ctx, cfg, iterationWorktree, paths, tree, completedTaskResults, validationResults, req.Renderer.AgentEvent)
 			preserveIterationIfOpenPR(paths, cleanup)
 			if err != nil {
-				req.Renderer.LockPRReviewMode(false)
-				return iterationWorkflowResult{}, codedError{6, err}
+				if recovered, ok := mergeResultFromPRFailureArtifact(paths, err, mergeStartedAt); ok {
+					merge = recovered
+				} else {
+					req.Renderer.LockPRReviewMode(false)
+					return iterationWorkflowResult{}, codedError{6, err}
+				}
 			}
 			if err := refreshTrackedBranch(ctx, iterationWorktree, &paths); err != nil {
 				return iterationWorkflowResult{}, codedError{4, err}
@@ -2158,7 +2163,7 @@ func buildRolePrompt(role string, paths pathSet, task workflow.Task, tree any, t
 				b.WriteString("\nIn pull request mode, rename the iteration branch with `loop branch rename`, read the template with `loop iteration read pr-template`, write `pr-title` and `pr-body`, run `loop pr create`, run `loop pr checks`, and run `loop pr merge` after checks pass.\n")
 			}
 		}
-		b.WriteString("\nIf `loop pr checks` fails, inspect the loop-owned PR check/log artifacts and write `merge-result` with `status: \"pr_check_failed\"` plus concrete repair findings.\n")
+		b.WriteString("\nIf `loop pr create`, `loop pr checks`, or `loop pr merge` fails because branch push, pre-push validation, or PR checks failed, inspect the loop-owned PR check/log artifacts and write `merge-result` with `status: \"pr_check_failed\"` plus concrete repair findings.\n")
 		b.WriteString("\nRead `pr-state` only after `loop pr create`, `loop pr checks`, or `loop pr merge` has written it; if it is absent before PR creation, continue the PR setup path instead of treating that as a lifecycle failure.\n")
 		b.WriteString("\nWrite one merge-result handoff:\n\n```bash\nloop handoff write merge-result --file merge-result.json\n```\n")
 		b.WriteString("\nUse `status: \"merged\"` only after `pr-state.status=merged`. Use `status: \"waiting_for_human\"` only after human-review PR checks pass and `pr-state.status=waiting_for_human`. Use `status: \"blocked\"` when PR lifecycle cannot continue without human intervention for a non-check reason.\n")
@@ -2200,6 +2205,61 @@ func repairTasksFromReview(review workflow.ReviewResult) []workflow.Task {
 
 func repairTasksFromMerge(merge workflow.MergeResult) []workflow.Task {
 	return repairTasksFromFindings(merge.Findings)
+}
+
+func mergeResultFromPRFailureArtifact(paths pathSet, roleErr error, startedAt time.Time) (workflow.MergeResult, bool) {
+	checks, ok, err := readPRChecks(paths.IterationDir)
+	if err != nil || !ok || strings.TrimSpace(checks.Status) != "failed" || !prChecksWrittenAfter(checks, startedAt) {
+		return workflow.MergeResult{}, false
+	}
+	branch := firstNonEmpty(checks.Branch, paths.CurrentBranch, paths.IterationBranch)
+	summary := "Pull request lifecycle failed before checks passed."
+	if strings.TrimSpace(checks.PR) == "" {
+		summary = "Pull request branch push failed before PR creation."
+	}
+	description := prFailureRepairDescription(checks, roleErr)
+	return workflow.MergeResult{
+		SchemaVersion: workflow.SchemaVersion,
+		Status:        "pr_check_failed",
+		Summary:       summary,
+		PR:            strings.TrimSpace(checks.PR),
+		Branch:        branch,
+		Findings: []workflow.ReviewFinding{{
+			ID:          "repair-pr-lifecycle",
+			Title:       "Repair pull request lifecycle failure",
+			Description: description,
+			Acceptance: []string{
+				"The failed pull request lifecycle command no longer fails.",
+				"Pull request checks pass or are recorded as skipped for the iteration branch.",
+			},
+		}},
+	}, true
+}
+
+func prChecksWrittenAfter(checks prChecksArtifact, startedAt time.Time) bool {
+	if startedAt.IsZero() {
+		return true
+	}
+	checkedAt, err := time.Parse(time.RFC3339, strings.TrimSpace(checks.CheckedAt))
+	if err != nil {
+		return false
+	}
+	return !checkedAt.Before(startedAt.Add(-2 * time.Second))
+}
+
+func prFailureRepairDescription(checks prChecksArtifact, roleErr error) string {
+	detail := strings.TrimSpace(strings.TrimSpace(checks.Stdout) + "\n" + strings.TrimSpace(checks.Stderr))
+	if detail == "" {
+		detail = strings.TrimSpace(checks.Error)
+	}
+	if detail == "" && roleErr != nil {
+		detail = roleErr.Error()
+	}
+	detail = strings.Join(strings.Fields(detail), " ")
+	if detail == "" {
+		return "Inspect the pr-checks artifact, repair the branch push or check failure, and rerun the PR lifecycle."
+	}
+	return "Inspect the pr-checks artifact, repair the branch push or check failure, and rerun the PR lifecycle. Failure detail: " + truncateDisplay(detail, 500)
 }
 
 func repairTasksFromFindings(findings []workflow.ReviewFinding) []workflow.Task {

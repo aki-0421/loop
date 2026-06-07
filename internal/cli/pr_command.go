@@ -109,8 +109,9 @@ func commandPRCreate(ctx context.Context, g globals, args []string) error {
 		}
 		runner := prRunner(prCtx.cfg, prCtx.workDir)
 		if prCtx.cfg.Git.Integration.PR.Push {
-			if _, err := runner.Push(ctx, prCtx.branch); err != nil {
-				return codedError{6, err}
+			pushResult, err := runner.Push(ctx, prCtx.branch)
+			if err != nil {
+				return recordPRPushFailure(prCtx, "", pushResult, err)
 			}
 		}
 		state := prState{
@@ -151,8 +152,9 @@ func commandPRCreate(ctx context.Context, g globals, args []string) error {
 
 	runner := prRunner(prCtx.cfg, prCtx.workDir)
 	if prCtx.cfg.Git.Integration.PR.Push {
-		if _, err := runner.Push(ctx, prCtx.branch); err != nil {
-			return codedError{6, err}
+		pushResult, err := runner.Push(ctx, prCtx.branch)
+		if err != nil {
+			return recordPRPushFailure(prCtx, "", pushResult, err)
 		}
 	}
 	prID := ""
@@ -205,8 +207,9 @@ func commandPRChecks(ctx context.Context, g globals, args []string) error {
 	}
 	runner := prRunner(prCtx.cfg, prCtx.workDir)
 	if prCtx.cfg.Git.Integration.PR.Push {
-		if _, err := runner.Push(ctx, prCtx.branch); err != nil {
-			return codedError{6, err}
+		pushResult, err := runner.Push(ctx, prCtx.branch)
+		if err != nil {
+			return recordPRPushFailure(prCtx, state.PR, pushResult, err)
 		}
 	}
 	session := &prIntegrationSession{runner: runner, prID: state.PR}
@@ -319,8 +322,9 @@ func commandPRMerge(ctx context.Context, g globals, args []string) error {
 
 	runner := prRunner(prCtx.cfg, prCtx.workDir)
 	if prCtx.cfg.Git.Integration.PR.Push {
-		if _, err := runner.Push(ctx, prCtx.branch); err != nil {
-			return codedError{6, err}
+		pushResult, err := runner.Push(ctx, prCtx.branch)
+		if err != nil {
+			return recordPRPushFailure(prCtx, state.PR, pushResult, err)
 		}
 	}
 	if prCtx.cfg.Git.Integration.PR.WaitChecks {
@@ -671,6 +675,25 @@ func readPRChecks(iterDir string) (prChecksArtifact, bool, error) {
 		return checks, false, err
 	}
 	return checks, true, nil
+}
+
+func recordPRPushFailure(prCtx prCommandContext, prID string, result pr.CommandResult, pushErr error) error {
+	artifact := prChecksArtifact{
+		SchemaVersion: 1,
+		Status:        "failed",
+		PR:            prID,
+		Branch:        prCtx.branch,
+		CheckedAt:     time.Now().UTC().Format(time.RFC3339),
+		ExitCode:      result.ExitCode,
+		Error:         prErrorString(pushErr),
+		Stdout:        result.Stdout,
+		Stderr:        result.Stderr,
+	}
+	if err := writePRChecks(prCtx.iterDir, artifact); err != nil {
+		return codedError{1, err}
+	}
+	appendErrorLog(prCtx.paths.Errors, fmt.Sprintf("pull request branch push failed for %s; see pr-checks artifact", prCtx.branch))
+	return codedError{6, fmt.Errorf("pull request branch push failed for %s; see `loop iteration read pr-checks`", prCtx.branch)}
 }
 
 func prChecksProgressWriter(iterDir, prID, branch string) prChecksProgressFunc {
