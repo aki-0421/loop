@@ -386,7 +386,7 @@ Iteration record fields:
 | `branch_current` | string | Optional current tracked branch name. |
 | `branch_final` | string | Optional final branch name after integration. |
 | `stage` | string | Required iteration stage. |
-| `result_path` | string | Optional result path. Current runs leave it empty because close handoffs are stored in `.loop/loop.db`. |
+| `result_path` | string | Optional result path. Current runs leave it empty because close handoffs are stored in the runtime `loop.db`. |
 | `summary_sentence` | string | Optional merge summary. |
 | `should_fully_stop` | boolean | Optional final stop decision from the iteration close. |
 
@@ -412,4 +412,4 @@ Validation requirements:
 | `git.integration.pr.checksDiscoveryTimeoutSeconds` | Must be non-negative. |
 | `git.integration.pr.checksPollIntervalSeconds` | Must be non-negative. |
 | `git.integration.pr.checksWatchTimeoutSeconds` | Must be positive. |
-| `logs.dir` | Required string. |
+| `logs.dir` | Required string. Relative values are resolved under the repository runtime store in `~/.loop/workspaces/<repo-id>/`; the legacy `.loop/runs` value is normalized to `runs`. |

@@ -72,7 +72,7 @@ The `loop commit` command remains available for agent-facing diagnostics and dir
 loop commit --type <type> <short imperative message>
 ```
 
-The CLI stages repository changes, validates the message, creates the commit on the current iteration branch, and prints the resulting commit SHA and subject. Runtime files under `.loop/runs/`, including `prompt.md`, `effective-config.yaml`, `agent-events.jsonl`, and `errors.log`, are not committed.
+The CLI stages repository changes, validates the message, creates the commit on the current iteration branch, and prints the resulting commit SHA and subject. Runtime files under `~/.loop/workspaces/<repo-id>/runs/`, including `prompt.md`, `effective-config.yaml`, `agent-events.jsonl`, and `errors.log`, are not inside the repository worktree and are not committed.
 
 Agents use `loop task todo stage`, `loop task todo complete`, or direct-iteration `loop commit` for commit creation. If `loop commit` rejects the type or message, the command exits non-zero with a human-readable validation error so the agent can immediately retry with corrected arguments.
 
@@ -165,4 +165,4 @@ Cleanup happens after both merge and skip-merge terminal actions:
 | Iteration worktree | remove |
 | Target branch | checkout and pull with `--ff-only` when an upstream is configured |
 
-Runtime logs remain under `.loop/runs/` until removed by the user.
+Runtime logs remain under `~/.loop/workspaces/<repo-id>/runs/` until removed by the user.

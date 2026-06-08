@@ -14,6 +14,8 @@ The effective configuration is written to each iteration directory as `effective
 
 The configuration contract is documented in this Markdown specification and summarized in `09-json-contracts.md`; loop does not maintain a separate JSON Schema file for config validation.
 
+Repository config remains in `.loop/config.yaml`. Runtime data is stored outside the repository under `~/.loop/workspaces/<repo-id>/` by default. Set `LOOP_HOME` to override the `~/.loop` root.
+
 ## Example
 
 `loop init` writes a minimal repository config. Built-in defaults supply everything else.
@@ -159,6 +161,14 @@ Each command has:
 
 Validation commands use the user's default shell instead of hard-coded `sh` where possible. On Unix, the CLI reads `SHELL`; zsh, bash, fish, ksh, and csh-family shells run as login command shells, `nu` runs with `-l -c`, PowerShell-compatible shells run with `-Command`, and other shells run with `-c`. If `SHELL` is empty, the CLI falls back to `sh -c`. On Windows, the CLI uses `COMSPEC /C`, falling back to `cmd /C`.
 
+## `logs`
+
+| Key | Type | Behavior |
+| --- | --- | --- |
+| `dir` | string | Run log directory relative to the repository runtime store. The built-in value is `runs`. The legacy `.loop/runs` value is normalized to `runs` so runtime logs still stay outside the repository. Absolute paths are accepted as explicit overrides. |
+| `retainRawAgentOutput` | boolean | Keep sanitized agent output events for audit. |
+| `redactEnv` | boolean | Redact configured environment keys in human-readable logs. |
+
 ## Environment variables
 
 | Variable | Behavior |
@@ -167,4 +177,5 @@ Validation commands use the user's default shell instead of hard-coded `sh` wher
 | `LOOP_CONFIG` | Overrides config path. |
 | `LOOP_MAX_ITERATIONS` | Overrides run iteration limit; `0` means unlimited. |
 | `LOOP_BASE_BRANCH` | Overrides base branch. |
+| `LOOP_HOME` | Overrides the runtime storage root used instead of `~/.loop`. |
 | `LOOP_NO_COLOR` | Disables color output. |

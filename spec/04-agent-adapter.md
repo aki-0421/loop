@@ -81,7 +81,7 @@ The built-in process adapter recognizes these provider streams without reading p
 
 ## Role Handoff Contract
 
-Role-orchestrated agents write planner, task, review, and merge handoffs with `loop handoff`. The CLI validates and stores those handoffs in `.loop/loop.db`, then copies audit JSON into the durable iteration directory. Agents do not run raw Git or GitHub lifecycle commands, create commits directly, or close iterations in the role-orchestrated workflow. Coding and merge agents use role-owned `loop task`, `loop branch`, and `loop pr` commands for lifecycle actions.
+Role-orchestrated agents write planner, task, review, and merge handoffs with `loop handoff`. The CLI validates and stores those handoffs in the runtime `loop.db`, then copies audit JSON into the durable iteration directory. Agents do not run raw Git or GitHub lifecycle commands, create commits directly, or close iterations in the role-orchestrated workflow. Coding and merge agents use role-owned `loop task`, `loop branch`, and `loop pr` commands for lifecycle actions.
 
 ## Terminal Close Handoff Contract
 

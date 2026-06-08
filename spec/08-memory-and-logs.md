@@ -3,10 +3,15 @@
 ## Directory layout
 
 ```text
-.loop/
-  config.yaml
-  .gitignore
+repo/
+  .loop/
+    config.yaml
+
+~/.loop/workspaces/<repo-id>/
   loop.db
+  worktrees/
+  tmp/
+  locks/
   runs/
     <run-id>/
       run-state.json
@@ -22,40 +27,24 @@
               task-merge.json
               agent-events.jsonl
           errors.log        # only when an error occurs
-  worktrees/
-  tmp/
-  locks/
+```
+
+`LOOP_HOME` overrides the `~/.loop` root. Each repository maps to a stable `<repo-id>` derived from the Git common directory path, so Conductor-style workspaces and loop-created worktrees share one runtime store for the same repository identity without nesting under the checked-out worktree.
+
+Repository files:
+
+```text
+.loop/
+  config.yaml
 ```
 
 Committed files:
 
 - `.loop/config.yaml`
 - `.agents/skills/` by default, or an existing discovered agent skill directory
-- `.loop/.gitignore`
 - `skills-lock.json` when written by `npx skills`
 
-Ignored files:
-
-- `.loop/runs/`
-- `.loop/worktrees/`
-- `.loop/tmp/`
-- `.loop/locks/`
-- `.loop/loop.db`
-- SQLite sidecar files
-
-Example `.loop/.gitignore`:
-
-```gitignore
-runs/
-worktrees/
-tmp/
-locks/
-loop.db
-*.db
-*.db-wal
-*.db-shm
-*.log
-```
+`loop init` does not create `.loop/.gitignore` because runtime files are not written under the repository `.loop/` directory.
 
 ## Runtime artifacts
 
@@ -91,7 +80,7 @@ After a merge or skip-merge terminal action, the active temp directory is remove
 
 ## GitHub context memory
 
-Long-term memory comes from GitHub pull requests, Issues, and Issue/PR comments. The local `.loop/loop.db` file is only a rebuildable cache of GitHub titles, bodies, and comments. GitHub is authoritative; local iteration summaries are not indexed as memory.
+Long-term memory comes from GitHub pull requests, Issues, and Issue/PR comments. The local `~/.loop/workspaces/<repo-id>/loop.db` file is only a rebuildable cache of GitHub titles, bodies, and comments. GitHub is authoritative; local iteration summaries are not indexed as memory.
 
 `loop run` syncs PR memory and GitHub Issue context before the first agent iteration when the repository has a GitHub `origin` remote. If the PR memory cache is empty and the initial PR sync fails, the run stops. If the Issue context cache is empty and the initial Issue sync fails, the run stops. After a successful initial sync, later per-iteration sync failures are recorded as warnings and the run continues with the existing cache. `loop pr merge` best-effort fetches the merged PR from GitHub and upserts it into PR memory after a successful host merge.
 
@@ -120,7 +109,7 @@ Completed implementation context is durable in the pull request body. The local 
 
 ## Search index
 
-`.loop/loop.db` stores searchable GitHub records and FTS5 indexes:
+`~/.loop/workspaces/<repo-id>/loop.db` stores searchable GitHub records and FTS5 indexes:
 
 ```text
 global_metadata(key, value)

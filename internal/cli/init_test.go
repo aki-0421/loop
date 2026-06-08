@@ -29,6 +29,9 @@ func TestInitWritesMinimalConfigForDefaults(t *testing.T) {
 			t.Fatalf("config should omit %q:\n%s", notWant, text)
 		}
 	}
+	if _, err := os.Stat(filepath.Join(repo, ".loop", ".gitignore")); !os.IsNotExist(err) {
+		t.Fatalf("loop init should not create .loop/.gitignore, err=%v", err)
+	}
 }
 
 func TestInitWritesPinnedBaseWhenRequested(t *testing.T) {

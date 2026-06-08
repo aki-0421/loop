@@ -127,6 +127,10 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 	if err != nil {
 		return codedError{3, err}
 	}
+	storage, err := loopStorageForRepo(ctx, root, cfg)
+	if err != nil {
+		return codedError{1, err}
+	}
 
 	runner := gitx.Runner{Dir: root}
 	startBranch, err := runner.CurrentBranch(ctx)
@@ -154,10 +158,10 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 	if err != nil {
 		return codedError{1, err}
 	}
-	runDir := filepath.Join(root, cfg.Logs.Dir, runID)
+	runDir := filepath.Join(storage.RunsDir, runID)
 	statePath := filepath.Join(runDir, "run-state.json")
 	state := runstate.New(runID, *goal, cfg.Git.BaseBranch, cfg.Agent.Default)
-	renderer := newRunRenderer(g, runID, cfg.Agent.Default, filepath.Base(root), "", cfg.Git.BaseBranch, *goal, rel(root, runDir), cfg.Run.MaxIterations)
+	renderer := newRunRenderer(g, runID, cfg.Agent.Default, filepath.Base(root), "", cfg.Git.BaseBranch, *goal, displayPath(root, runDir), cfg.Run.MaxIterations)
 	if cfg.Git.Integration.Mode == "pr" {
 		renderer.EnablePRReviewMode(cfg.Git.Integration.PR.ReviewMode)
 	}
@@ -177,7 +181,7 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 			return codedError{1, err}
 		}
 	}
-	if err := syncMemoryBeforeRun(ctx, root, cfg, renderer); err != nil {
+	if err := syncMemoryBeforeRun(ctx, root, storage.RunsDir, renderer); err != nil {
 		state.Stage = runstate.StageFailed
 		_ = runstate.Write(statePath, state)
 		return codedError{1, err}
@@ -198,6 +202,7 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 			Globals:         g,
 			Config:          cfg,
 			Root:            root,
+			Storage:         storage,
 			InstructionPath: instructionPath,
 			RunID:           runID,
 			IterationNumber: i,
@@ -234,7 +239,8 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 		state.Stage = runstate.StageCompleted
 		_ = runstate.Write(statePath, state)
 	}
-	if err := printResult(g, map[string]any{"run_id": runID, "status": state.Stage, "summary": last.Summary, "logs": rel(root, runDir)}, fmt.Sprintf("Run: %s\nStatus: %s\nSummary: %s\nLogs: %s\n", runID, state.Stage, last.Summary, rel(root, runDir))); err != nil {
+	logsPath := displayPath(root, runDir)
+	if err := printResult(g, map[string]any{"run_id": runID, "status": state.Stage, "summary": last.Summary, "logs": logsPath}, fmt.Sprintf("Run: %s\nStatus: %s\nSummary: %s\nLogs: %s\n", runID, state.Stage, last.Summary, logsPath)); err != nil {
 		return err
 	}
 	if gracefulStop {
@@ -247,6 +253,7 @@ type orchestrationRequest struct {
 	Globals         globals
 	Config          config.Config
 	Root            string
+	Storage         loopStoragePaths
 	InstructionPath string
 	RunID           string
 	IterationNumber int
@@ -324,7 +331,11 @@ func resumeRun(ctx context.Context, g globals, runID string, fromIteration int) 
 	if err != nil {
 		return codedError{3, err}
 	}
-	runDir := filepath.Join(root, baseCfg.Logs.Dir, runID)
+	storage, err := loopStorageForRepo(ctx, root, baseCfg)
+	if err != nil {
+		return codedError{1, err}
+	}
+	runDir := filepath.Join(storage.RunsDir, runID)
 	statePath := filepath.Join(runDir, "run-state.json")
 	state, err := runstate.Read(statePath)
 	if err != nil {
@@ -362,7 +373,7 @@ func resumeRun(ctx context.Context, g globals, runID string, fromIteration int) 
 	if _, err := os.Stat(instructionPath); err != nil {
 		return codedError{1, fmt.Errorf("resume instruction artifact: %w", err)}
 	}
-	renderer := newRunRenderer(g, runID, cfg.Agent.Default, filepath.Base(root), "", cfg.Git.BaseBranch, state.Goal, rel(root, runDir), cfg.Run.MaxIterations)
+	renderer := newRunRenderer(g, runID, cfg.Agent.Default, filepath.Base(root), "", cfg.Git.BaseBranch, state.Goal, displayPath(root, runDir), cfg.Run.MaxIterations)
 	if cfg.Git.Integration.Mode == "pr" {
 		renderer.EnablePRReviewMode(cfg.Git.Integration.PR.ReviewMode)
 	}
@@ -375,6 +386,7 @@ func resumeRun(ctx context.Context, g globals, runID string, fromIteration int) 
 		Globals:         g,
 		Config:          cfg,
 		Root:            root,
+		Storage:         storage,
 		InstructionPath: instructionPath,
 		RunID:           runID,
 		IterationNumber: iterationNumber,
@@ -401,7 +413,8 @@ func resumeRun(ctx context.Context, g globals, runID string, fromIteration int) 
 		state.Stage = runstate.StageCompleted
 		_ = runstate.Write(statePath, state)
 	}
-	return printResult(g, map[string]any{"run_id": runID, "status": state.Stage, "summary": result.Summary, "logs": rel(root, runDir)}, fmt.Sprintf("Run: %s\nStatus: %s\nSummary: %s\nLogs: %s\n", runID, state.Stage, result.Summary, rel(root, runDir)))
+	logsPath := displayPath(root, runDir)
+	return printResult(g, map[string]any{"run_id": runID, "status": state.Stage, "summary": result.Summary, "logs": logsPath}, fmt.Sprintf("Run: %s\nStatus: %s\nSummary: %s\nLogs: %s\n", runID, state.Stage, result.Summary, logsPath))
 }
 
 func parseIterationNumber(iterationID string) (int, error) {
@@ -421,14 +434,14 @@ func resumeOrchestratedIteration(ctx context.Context, req orchestrationRequest) 
 	rootRunner := gitx.Runner{Dir: req.Root}
 	iterationID := runstate.IterationID(req.IterationNumber)
 	iterDir := filepath.Join(req.RunDir, "iterations", iterationID)
-	activeDir, err := createIterationTempDir(req.RunID, iterationID+"-resume")
+	activeDir, err := createIterationTempDir(req.Storage.TmpDir, req.RunID, iterationID+"-resume")
 	if err != nil {
 		return iterationWorkflowResult{}, codedError{1, err}
 	}
 	record := iterationRecordByID(req.State, iterationID)
 	initialBranch := firstNonEmpty(record.BranchInitial, gitx.InitialBranchName(req.IterationNumber))
 	currentBranch := firstNonEmpty(record.BranchCurrent, record.BranchFinal, initialBranch)
-	iterationWorktree := filepath.Join(req.Root, ".loop", "worktrees", req.RunID, iterationID, "iteration")
+	iterationWorktree := filepath.Join(req.Storage.WorktreesDir, req.RunID, iterationID, "iteration")
 	paths := promptPathsWithActive(iterDir, activeDir)
 	paths.Goal = req.Goal
 	paths.Language = cfg.Language.Default
@@ -451,9 +464,9 @@ func resumeOrchestratedIteration(ctx context.Context, req orchestrationRequest) 
 		Branch:            currentBranch,
 		WorktreePath:      iterationWorktree,
 		WorkDir:           iterationWorktree,
-		TaskWorktreesRoot: filepath.Join(req.Root, ".loop", "worktrees", req.RunID, iterationID, "tasks"),
+		TaskWorktreesRoot: filepath.Join(req.Storage.WorktreesDir, req.RunID, iterationID, "tasks"),
 		TaskBranchPrefix:  "task/" + iterationID + "-",
-		LockDir:           filepath.Join(req.Root, ".loop", "locks", sanitizeTempPart(req.RunID)+"-"+sanitizeTempPart(iterationID)+"-task-merge.lock"),
+		LockDir:           filepath.Join(req.Storage.LocksDir, sanitizeTempPart(req.RunID)+"-"+sanitizeTempPart(iterationID)+"-task-merge.lock"),
 		ActiveDir:         activeDir,
 		Active:            true,
 		EventLogPath:      paths.Events,
@@ -501,6 +514,7 @@ func resumeOrchestratedIteration(ctx context.Context, req orchestrationRequest) 
 		taskSet, err := executeTaskSet(ctx, taskSetRequest{
 			Config:            cfg,
 			Root:              req.Root,
+			Storage:           req.Storage,
 			IterationWorktree: iterationWorktree,
 			IterationBranch:   currentBranch,
 			IterationDir:      iterDir,
@@ -647,13 +661,13 @@ func runOrchestratedIteration(ctx context.Context, req orchestrationRequest) (re
 	rootRunner := gitx.Runner{Dir: req.Root}
 	iterationID := runstate.IterationID(req.IterationNumber)
 	iterDir := filepath.Join(req.RunDir, "iterations", iterationID)
-	activeDir, err := createIterationTempDir(req.RunID, iterationID)
+	activeDir, err := createIterationTempDir(req.Storage.TmpDir, req.RunID, iterationID)
 	if err != nil {
 		return iterationWorkflowResult{}, codedError{1, err}
 	}
 	initialBranch := gitx.InitialBranchName(req.IterationNumber)
-	iterationWorktree := filepath.Join(req.Root, ".loop", "worktrees", req.RunID, iterationID, "iteration")
-	plannerWorktree := filepath.Join(req.Root, ".loop", "worktrees", req.RunID, iterationID, "planner")
+	iterationWorktree := filepath.Join(req.Storage.WorktreesDir, req.RunID, iterationID, "iteration")
+	plannerWorktree := filepath.Join(req.Storage.WorktreesDir, req.RunID, iterationID, "planner")
 	plannerWorktreeActive := false
 	cleanupPlannerWorktree := func() []string {
 		if !plannerWorktreeActive {
@@ -836,9 +850,9 @@ func runOrchestratedIteration(ctx context.Context, req orchestrationRequest) (re
 		Branch:            currentBranch,
 		WorktreePath:      iterationWorktree,
 		WorkDir:           iterationWorktree,
-		TaskWorktreesRoot: filepath.Join(req.Root, ".loop", "worktrees", req.RunID, iterationID, "tasks"),
+		TaskWorktreesRoot: filepath.Join(req.Storage.WorktreesDir, req.RunID, iterationID, "tasks"),
 		TaskBranchPrefix:  "task/" + iterationID + "-",
-		LockDir:           filepath.Join(req.Root, ".loop", "locks", sanitizeTempPart(req.RunID)+"-"+sanitizeTempPart(iterationID)+"-task-merge.lock"),
+		LockDir:           filepath.Join(req.Storage.LocksDir, sanitizeTempPart(req.RunID)+"-"+sanitizeTempPart(iterationID)+"-task-merge.lock"),
 		ActiveDir:         activeDir,
 		Active:            true,
 		EventLogPath:      paths.Events,
@@ -865,6 +879,7 @@ func runOrchestratedIteration(ctx context.Context, req orchestrationRequest) (re
 		taskSet, err := executeTaskSet(ctx, taskSetRequest{
 			Config:            cfg,
 			Root:              req.Root,
+			Storage:           req.Storage,
 			IterationWorktree: iterationWorktree,
 			IterationBranch:   firstNonEmpty(paths.IterationBranch, paths.CurrentBranch, initialBranch),
 			IterationDir:      iterDir,
@@ -1133,6 +1148,7 @@ func finalizeOrchestratedIteration(ctx context.Context, req orchestrationRequest
 type taskSetRequest struct {
 	Config            config.Config
 	Root              string
+	Storage           loopStoragePaths
 	IterationWorktree string
 	IterationBranch   string
 	IterationDir      string
@@ -1642,7 +1658,7 @@ func prepareCodingTaskAttempt(ctx context.Context, req taskSetRequest, task work
 	if err != nil {
 		return taskAttemptContext{}, err
 	}
-	worktree := filepath.Join(req.Root, ".loop", "worktrees", req.RunID, req.IterationID, "tasks", task.ID, attemptName)
+	worktree := filepath.Join(req.Storage.WorktreesDir, req.RunID, req.IterationID, "tasks", task.ID, attemptName)
 	if err := os.MkdirAll(filepath.Dir(worktree), 0o755); err != nil {
 		return taskAttemptContext{}, err
 	}
@@ -1650,7 +1666,7 @@ func prepareCodingTaskAttempt(ctx context.Context, req taskSetRequest, task work
 		deleteBranchLocked(ctx, rootRunner, branch, gitMu)
 		return taskAttemptContext{}, err
 	}
-	activeDir, err := createIterationTempDir(req.RunID, req.IterationID+"-"+task.ID+"-"+attemptName)
+	activeDir, err := createIterationTempDir(req.Storage.TmpDir, req.RunID, req.IterationID+"-"+task.ID+"-"+attemptName)
 	if err != nil {
 		removeWorktreeAndBranchLocked(ctx, rootRunner, worktree, branch, true, gitMu)
 		return taskAttemptContext{}, err

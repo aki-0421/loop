@@ -40,11 +40,11 @@ func TestRunSnapshotsInstructionPromptWithoutPersistingSourcePath(t *testing.T) 
 		t.Fatalf("loop run: %v", err)
 	}
 
-	runID, err := latestRun(filepath.Join(repo, ".loop", "runs"))
+	runID, err := latestRun(testRunsDir(t, repo))
 	if err != nil {
 		t.Fatal(err)
 	}
-	iterDir := filepath.Join(repo, ".loop", "runs", runID, "iterations", "0001")
+	iterDir := testIterationDir(t, repo, runID, "0001")
 	promptBytes, err := os.ReadFile(filepath.Join(iterDir, "prompt.md"))
 	if err != nil {
 		t.Fatal(err)
@@ -72,7 +72,7 @@ func TestRunSnapshotsInstructionPromptWithoutPersistingSourcePath(t *testing.T) 
 		t.Fatalf("instruction path should be hidden, got err=%v", err)
 	}
 
-	stateBytes, err := os.ReadFile(filepath.Join(repo, ".loop", "runs", runID, "run-state.json"))
+	stateBytes, err := os.ReadFile(filepath.Join(testRunDir(t, repo, runID), "run-state.json"))
 	if err != nil {
 		t.Fatal(err)
 	}

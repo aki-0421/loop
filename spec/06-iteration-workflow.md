@@ -2,7 +2,7 @@
 
 ## Run Creation
 
-At `loop run` start, the CLI finds the repository root, loads configuration, validates the instruction file, detects the base branch, requires a clean repository unless explicitly allowed, creates a run id, writes `.loop/runs/<run-id>/run-state.json`, and starts iteration `0001`.
+At `loop run` start, the CLI finds the repository root, loads configuration, resolves the repository runtime store under `~/.loop/workspaces/<repo-id>/`, validates the instruction file, detects the base branch, requires a clean repository unless explicitly allowed, creates a run id, writes `runs/<run-id>/run-state.json` in that runtime store, and starts iteration `0001`.
 
 The instruction file is copied to each iteration's durable `prompt.md`. The CLI-generated bootstrap is sent to agents in memory and is not written into `prompt.md`.
 
@@ -34,7 +34,7 @@ One iteration maps to one AI sprint-sized pull request. The planner should selec
 Durable iteration files include:
 
 ```text
-.loop/runs/<run-id>/iterations/0001/
+~/.loop/workspaces/<repo-id>/runs/<run-id>/iterations/0001/
   prompt.md
   effective-config.yaml
   agent-events.jsonl
@@ -52,7 +52,7 @@ Durable iteration files include:
   errors.log
 ```
 
-Runtime context, validation output, prompt audits, and transient task active directories are disposable. After the planner handoff is validated, the CLI creates durable task directories under `tasks/<sequence>/`. Coding-agent result handoff copies and event logs are written to the assigned task directory, not to a separate `task-results/` directory or the iteration-level `agent-events.jsonl`. Role handoffs are stored in `.loop/loop.db` and copied to durable JSON files for audit.
+Runtime context, validation output, prompt audits, and transient task active directories are disposable. After the planner handoff is validated, the CLI creates durable task directories under `tasks/<sequence>/`. Coding-agent result handoff copies and event logs are written to the assigned task directory, not to a separate `task-results/` directory or the iteration-level `agent-events.jsonl`. Role handoffs are stored in the runtime `loop.db` and copied to durable JSON files for audit.
 
 ## Role Handoffs
 

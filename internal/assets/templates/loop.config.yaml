@@ -58,6 +58,6 @@ validation:
   requireRequiredCommandsToPass: true
 
 logs:
-  dir: .loop/runs
+  dir: runs
   retainRawAgentOutput: true
   redactEnv: true

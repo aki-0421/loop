@@ -167,6 +167,22 @@ git:
 	if state.Stage != runstate.StageCompleted || len(state.Iterations) != 1 {
 		t.Fatalf("state = %#v, want one completed role iteration", state)
 	}
+	storage := testStorage(t, repo)
+	workspaceRoot := filepath.Join(os.Getenv("HOME"), ".loop", "workspaces")
+	if rel, err := filepath.Rel(workspaceRoot, storage.Root); err != nil || rel == "." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) || filepath.IsAbs(rel) {
+		t.Fatalf("storage root = %s, want under %s", storage.Root, workspaceRoot)
+	}
+	for _, path := range []string{
+		filepath.Join(repo, ".loop", "runs"),
+		filepath.Join(repo, ".loop", "worktrees"),
+		filepath.Join(repo, ".loop", "locks"),
+		filepath.Join(repo, ".loop", "tmp"),
+		filepath.Join(repo, ".loop", "loop.db"),
+	} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("runtime path should not be created in repository: %s err=%v", path, err)
+		}
+	}
 	if !state.Iterations[0].ShouldFullyStop {
 		t.Fatalf("role review should complete the supplied goal: %#v", state.Iterations[0])
 	}
@@ -469,10 +485,10 @@ git:
 
 	runID := "resume-review-run"
 	iterationID := "0001"
-	runDir := filepath.Join(repo, ".loop", "runs", runID)
+	runDir := testRunDir(t, repo, runID)
 	iterDir := filepath.Join(runDir, "iterations", iterationID)
 	taskDir := filepath.Join(iterDir, "tasks", "0001")
-	worktree := filepath.Join(repo, ".loop", "worktrees", runID, iterationID, "iteration")
+	worktree := filepath.Join(testStorage(t, repo).WorktreesDir, runID, iterationID, "iteration")
 	if err := os.MkdirAll(taskDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -666,14 +682,14 @@ git:
 	if state.Stage != runstate.StageFailed {
 		t.Fatalf("run stage = %s, want failed", state.Stage)
 	}
-	iterDir := filepath.Join(repo, ".loop", "runs", state.RunID, "iterations", "0001")
+	iterDir := testIterationDir(t, repo, state.RunID, "0001")
 	if got := countEventType(t, iterDir, "run.error_cleanup.completed"); got != 1 {
 		t.Fatalf("error cleanup events = %d, want 1", got)
 	}
 	if got := countEventType(t, iterDir, "iteration.active_temp.cleanup.completed"); got != 1 {
 		t.Fatalf("active temp cleanup events = %d, want 1", got)
 	}
-	if _, err := os.Stat(filepath.Join(repo, ".loop", "worktrees", state.RunID, "0001", "iteration")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(testStorage(t, repo).WorktreesDir, state.RunID, "0001", "iteration")); !os.IsNotExist(err) {
 		t.Fatalf("iteration worktree should be removed, err=%v", err)
 	}
 	assertBranchMissing(t, repo, "wip/0001")
@@ -905,7 +921,7 @@ git:
 	if got := state.Iterations[0].BranchCurrent; got != "feat/role-pr-repair" {
 		t.Fatalf("branch_current = %q, want renamed branch", got)
 	}
-	iterDir := filepath.Join(repo, ".loop", "runs", state.RunID, "iterations", "0001")
+	iterDir := testIterationDir(t, repo, state.RunID, "0001")
 	repairMerge := readText(t, filepath.Join(iterDir, "tasks", "0002", "task-merge.json"))
 	if !strings.Contains(repairMerge, `"iteration_branch": "feat/role-pr-repair"`) {
 		t.Fatalf("repair task should merge into renamed branch:\n%s", repairMerge)
@@ -988,7 +1004,7 @@ git:
 	if state.Stage != runstate.StageCompleted {
 		t.Fatalf("run stage = %s, want completed", state.Stage)
 	}
-	iterDir := filepath.Join(repo, ".loop", "runs", state.RunID, "iterations", "0001")
+	iterDir := testIterationDir(t, repo, state.RunID, "0001")
 	repairMerge := readText(t, filepath.Join(iterDir, "tasks", "0002", "task-merge.json"))
 	if !strings.Contains(repairMerge, `"task_id": "repair-pr-lifecycle"`) || !strings.Contains(repairMerge, `"iteration_branch": "feat/pr-create-push-repair"`) {
 		t.Fatalf("repair task should merge into the renamed PR branch:\n%s", repairMerge)
@@ -1068,7 +1084,7 @@ git:
 	if !containsString(pending.ChangedFiles, "pending-human-pr.txt") {
 		t.Fatalf("pending changed files = %#v, want pending-human-pr.txt", pending.ChangedFiles)
 	}
-	iterDir := filepath.Join(repo, ".loop", "runs", state.RunID, "iterations", "0001")
+	iterDir := testIterationDir(t, repo, state.RunID, "0001")
 	prStateText, err := artifactdb.Read(iterDir, "pr-state")
 	if err != nil {
 		t.Fatal(err)
@@ -1154,11 +1170,11 @@ git:
 	if len(state.Iterations) != 2 {
 		t.Fatalf("iterations = %d, want 2", len(state.Iterations))
 	}
-	secondTaskTree := readText(t, filepath.Join(repo, ".loop", "runs", state.RunID, "iterations", "0002", "task-tree.json"))
+	secondTaskTree := readText(t, filepath.Join(testIterationDir(t, repo, state.RunID, "0002"), "task-tree.json"))
 	if !strings.Contains(secondTaskTree, `"wait_for_pending_prs": true`) {
 		t.Fatalf("second task tree should contain wait_for_pending_prs:\n%s", secondTaskTree)
 	}
-	events := readText(t, filepath.Join(repo, ".loop", "runs", state.RunID, "iterations", "0002", "agent-events.jsonl"))
+	events := readText(t, filepath.Join(testIterationDir(t, repo, state.RunID, "0002"), "agent-events.jsonl"))
 	if !strings.Contains(events, "pr.human_review.pending_waiting") || !strings.Contains(events, "pr.human_review.pending_updated") {
 		t.Fatalf("pending PR wait events missing:\n%s", events)
 	}
@@ -1248,11 +1264,11 @@ git:
 	if got := git(t, repo, "show", "origin/feat/human-pending-pr:review-feedback.txt"); got != "feedback repair\n" {
 		t.Fatalf("remote PR branch repair file = %q", got)
 	}
-	secondTaskTree := readText(t, filepath.Join(repo, ".loop", "runs", state.RunID, "iterations", "0002", "task-tree.json"))
+	secondTaskTree := readText(t, filepath.Join(testIterationDir(t, repo, state.RunID, "0002"), "task-tree.json"))
 	if !strings.Contains(secondTaskTree, `"id": "human-pr-feedback"`) {
 		t.Fatalf("second task tree missing PR feedback task:\n%s", secondTaskTree)
 	}
-	secondEvents := readText(t, filepath.Join(repo, ".loop", "runs", state.RunID, "iterations", "0002", "agent-events.jsonl"))
+	secondEvents := readText(t, filepath.Join(testIterationDir(t, repo, state.RunID, "0002"), "agent-events.jsonl"))
 	if !strings.Contains(secondEvents, "pr.human_review.repair_started") {
 		t.Fatalf("second events missing repair start:\n%s", secondEvents)
 	}

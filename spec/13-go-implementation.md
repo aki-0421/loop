@@ -11,6 +11,7 @@ internal/cli/
   commit.go
   branch.go
   branch_runtime.go
+  storage.go
   iteration_artifact.go
   iteration_plan_todo.go
   iteration_result.go
@@ -93,6 +94,10 @@ Responsibilities:
 
 The CLI exposes `loop iteration path/read/write/append` for fixed artifact names and `loop handoff` for role handoff JSON. Role-orchestrated runs use `task-tree`, `task-result`, `review-result`, and `merge-result` handoffs, task-local TODO commands, branch rename, and PR commands. `loop iteration plan`, `loop iteration todo`, `loop iteration close`, and `loop commit` commands remain available as agent-facing utilities and diagnostics.
 
+### Runtime storage
+
+Repository config remains in `.loop/config.yaml`. Runs, worktrees, locks, temporary files, and the rebuildable `loop.db` cache live under `~/.loop/workspaces/<repo-id>/` by default, with `LOOP_HOME` overriding the `~/.loop` root. The repository id is derived from the Git common directory path so linked worktrees for the same repository identity share one runtime store.
+
 ### `internal/workflow`
 
 Responsibilities:
@@ -141,7 +146,7 @@ Responsibilities:
 - Sync open and merged pull request titles and bodies through `gh api graphql`.
 - Sync repository Issues and Issue/PR comment diffs through `gh api graphql`.
 - Create clarification and improvement proposal Issues and ensure `loop:question` and `loop:proposal` labels.
-- Store PR memory and GitHub context in the rebuildable `.loop/loop.db` cache.
+- Store PR memory and GitHub context in the rebuildable runtime `loop.db` cache.
 - Search recent and older PR, Issue, and comment context with SQLite FTS.
 - Fetch and upsert a merged PR after `loop pr merge`.
 
@@ -162,15 +167,15 @@ run-state.json.tmp
 run-state.json
 ```
 
-Ordinary state files use atomic writes. Role handoffs are stored in `.loop/loop.db` through `loop handoff` and copied to durable iteration JSON files for audit. Terminal close handoffs are also stored in `.loop/loop.db`.
+Ordinary state files use atomic writes. Role handoffs are stored in the runtime `loop.db` through `loop handoff` and copied to durable iteration JSON files for audit. Terminal close handoffs are also stored in the runtime `loop.db`.
 
 ## Locking
 
 The CLI uses lock files:
 
 ```text
-.loop/locks/repo.lock
-.loop/runs/<run-id>/run.lock
+~/.loop/workspaces/<repo-id>/locks/repo.lock
+~/.loop/workspaces/<repo-id>/runs/<run-id>/run.lock
 ```
 
 Only one `loop run` may integrate into the same repository at a time. Multiple read-only commands may run concurrently.
@@ -194,7 +199,7 @@ Human-readable CLI output is concise by default:
 Run: 20260517-000000-a1b2c3
 Status: completed
 Summary: Add login flow
-Logs: .loop/runs/20260517-000000-a1b2c3
+Logs: ~/.loop/workspaces/<repo-id>/runs/20260517-000000-a1b2c3
 ```
 
 `--json` prints a structured object with the corresponding run id, status, summary, and log path fields.

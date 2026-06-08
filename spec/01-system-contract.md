@@ -5,7 +5,7 @@
 `loop` wraps a coding agent CLI and gives it a repeatable harness:
 
 1. Read a persistent Markdown instruction file.
-2. Load recent GitHub PR, Issue, and comment context from the local `.loop/loop.db` cache.
+2. Load recent GitHub PR, Issue, and comment context from the local runtime `loop.db` cache.
 3. Run the configured adapter as planner, coding, QA review, and merge agents with compact role prompts.
 4. Validate the planner task tree, schedule coding tasks by dependency and conflict metadata, and run coding agents in CLI-created worktrees.
 5. Require coding agents to create initial task-local TODOs before editing, allow pending follow-up TODOs after the fixed completed/current boundary, complete commit TODOs as CLI-created task-branch commits, complete no_commit TODOs only when they leave no repository changes, then complete `loop task merge` to merge the task branch into the iteration branch while preserving task commit history.

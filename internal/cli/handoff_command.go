@@ -94,7 +94,7 @@ func commandHandoffWrite(ctx context.Context, g globals, args []string) error {
 	}
 	globalPath := artifactdb.GlobalDBPathForIteration(resolvedDir)
 	if globalPath == "" {
-		return codedError{2, errors.New("iteration directory must be under .loop/runs")}
+		return codedError{2, errors.New("iteration directory must be under the loop runs directory")}
 	}
 	if err := artifactdb.WriteRoleHandoff(globalPath, run, iter, kind, task, string(normalized)); err != nil {
 		return codedError{1, err}

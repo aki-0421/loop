@@ -402,7 +402,7 @@ func TestIterationCommandPathUsesArtifactName(t *testing.T) {
 
 func TestIterationCommandResolvesRunAndIteration(t *testing.T) {
 	repo := newCleanupRepo(t)
-	iterDir := filepath.Join(repo, ".loop", "runs", "run-1", "iterations", "0002")
+	iterDir := testIterationDir(t, repo, "run-1", "0002")
 	if err := os.MkdirAll(iterDir, 0o755); err != nil {
 		t.Fatal(err)
 	}

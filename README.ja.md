@@ -35,7 +35,7 @@
 - 設定されたvalidationをレビュー前に実行する。
 - QA review agentが統合済みブランチを確認し、必要なら具体的な修正指摘を返す。
 - merge agentがPR本文、PR作成、check待機、merge、またはhuman reviewへの引き渡しを`loop`コマンドで担当する。
-- すべてのrunが、あとから調査できる`.loop/` artifactsを残す。
+- すべてのrunが、あとから調査できる`~/.loop/workspaces/<repo-id>/` artifactsを残す。
 
 ## Dashboard
 
@@ -119,7 +119,7 @@ flowchart TD
     reviewMode{"Review mode"}
     autoMerge["auto_merge<br/>loop pr merge"]
     humanReview["human review<br/>parallel or serial handoff"]
-    audit[".loop/runs/...<br/>durable audit trail"]
+    audit["~/.loop/workspaces/.../runs/...<br/>durable audit trail"]
     next["Next iteration"]
 
     instruction --> planner --> tasks --> mergeTasks --> validation --> qa
@@ -156,19 +156,26 @@ interactive rendererでは、PR run中に`r`を押すと`auto merge`、`parallel
 
 ## 何が残るか
 
-run後、`.loop/`には証拠が残ります。
+`loop init`後、repositoryには設定だけが残ります。
 
 ```text
 .loop/config.yaml
-.loop/runs/
-.loop/worktrees/
-.loop/locks/
-.loop/loop.db
+```
+
+run後、durable evidenceとtemporary worktreesはdefaultでrepository外に残ります。
+
+```text
+~/.loop/workspaces/<repo-id>/
+  runs/
+  worktrees/
+  locks/
+  tmp/
+  loop.db
 ```
 
 iteration artifactには、instruction snapshot、effective config、agent event logs、task tree、task result、task merge audit、validation evidence、QA review result、merge result、PR state、PR checks、errors、GitHub update summariesが含まれます。
 
-このaudit trailは、localでdurableに残ることを意図しています。「エージェントが何かした」ではなく、「plan、work、validation、review、PR、cleanup recordがここにある」と言えるようにするためです。
+このaudit trailはlocalでdurableに残りますが、repository worktreeの外に置かれるため、file watcherや外部workspace toolがloop-created worktreeを再帰的に追いかけません。`LOOP_HOME`で`~/.loop` rootを上書きできます。
 
 ## 自律ルール
 

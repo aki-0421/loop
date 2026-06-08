@@ -237,7 +237,7 @@ func resolveIterationDir(ctx context.Context, g globals, iterationDir, runID, it
 	if strings.TrimSpace(runID) == "" {
 		return "", nil
 	}
-	root, err := loopStorageRoot(ctx)
+	root, err := gitx.RepoRoot(ctx, ".")
 	if err != nil {
 		return "", err
 	}
@@ -245,14 +245,18 @@ func resolveIterationDir(ctx context.Context, g globals, iterationDir, runID, it
 	if err != nil {
 		return "", err
 	}
+	storage, err := loopStorageForRepo(ctx, root, cfg)
+	if err != nil {
+		return "", err
+	}
 	iter := strings.TrimSpace(iteration)
 	if iter == "" || iter == "latest" {
-		iter, err = latestIteration(filepath.Join(root, cfg.Logs.Dir, runID, "iterations"))
+		iter, err = latestIteration(filepath.Join(storage.RunsDir, runID, "iterations"))
 		if err != nil {
 			return "", err
 		}
 	}
-	return filepath.Join(root, cfg.Logs.Dir, runID, "iterations", iter), nil
+	return filepath.Join(storage.RunsDir, runID, "iterations", iter), nil
 }
 
 func matchingIterationDirFromEnv(runID, iteration string) string {
@@ -277,28 +281,6 @@ func defaultIterationEnv() string {
 		return value
 	}
 	return "latest"
-}
-
-func loopStorageRoot(ctx context.Context) (string, error) {
-	root, err := gitx.RepoRoot(ctx, ".")
-	if err != nil {
-		return "", err
-	}
-	common, err := (gitx.Runner{Dir: root}).Run(ctx, "rev-parse", "--git-common-dir")
-	if err != nil {
-		return root, nil
-	}
-	common = strings.TrimSpace(common)
-	if common == "" {
-		return root, nil
-	}
-	if !filepath.IsAbs(common) {
-		common = filepath.Join(root, common)
-	}
-	if filepath.Base(common) == ".git" {
-		return filepath.Dir(common), nil
-	}
-	return root, nil
 }
 
 func resolveIterationArtifact(ctx context.Context, iterationDir, name string) (string, iterationArtifact, error) {

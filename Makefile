@@ -3,6 +3,7 @@ CGO_ENABLED ?= 0
 GO_TAGS ?=
 GO_TAG_FLAGS := $(if $(strip $(GO_TAGS)),-tags $(GO_TAGS),)
 BIN ?= dist/loop
+INSTALLED_BIN := $(shell gobin="$$( $(GO) env GOBIN )"; if [ -n "$$gobin" ]; then printf "%s/loop" "$$gobin"; else printf "%s/bin/loop" "$$( $(GO) env GOPATH )"; fi)
 GORELEASER ?= goreleaser
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 COMMIT ?= $(shell git rev-parse HEAD 2>/dev/null || echo none)
@@ -26,6 +27,8 @@ install:
 
 replace-local: install
 	@command -v loop
+	@echo $(INSTALLED_BIN)
+	@$(INSTALLED_BIN) version
 	@loop version
 
 ci: test build verify

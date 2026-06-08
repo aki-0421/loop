@@ -117,7 +117,7 @@ func commandBranchRename(ctx context.Context, g globals, args []string) error {
 }
 
 func loadBranchCommandRoot(ctx context.Context, g globals) (string, error) {
-	root, err := loopStorageRoot(ctx)
+	root, err := gitx.RepoRoot(ctx, ".")
 	if err != nil {
 		return "", err
 	}

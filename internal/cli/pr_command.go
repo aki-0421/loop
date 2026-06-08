@@ -7,7 +7,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -48,7 +47,8 @@ type prChecksArtifact struct {
 }
 
 type prCommandContext struct {
-	root              string
+	runsDir           string
+	tmpDir            string
 	workDir           string
 	iterDir           string
 	paths             pathSet
@@ -144,7 +144,7 @@ func commandPRCreate(ctx context.Context, g globals, args []string) error {
 		body = fallbackPRBody(prCtx.branch, template)
 		_ = artifactdb.Write(prCtx.iterDir, "pr-body", body)
 	}
-	bodyFile, cleanupBody, err := materializePRBody(prCtx.root, body)
+	bodyFile, cleanupBody, err := materializePRBody(prCtx.tmpDir, body)
 	if err != nil {
 		return codedError{1, err}
 	}
@@ -263,7 +263,7 @@ func commandPRFeedback(ctx context.Context, g globals, args []string) error {
 		return codedError{2, err}
 	}
 	prID := strings.TrimSpace(argsWithoutPRLocatorFlags(args)[0])
-	feedback, _, err := prRunner(prCtx.cfg, prCtx.root).ViewReviewFeedback(ctx, prID)
+	feedback, _, err := prRunner(prCtx.cfg, prCtx.workDir).ViewReviewFeedback(ctx, prID)
 	if err != nil {
 		return codedError{6, err}
 	}
@@ -364,7 +364,7 @@ func commandPRMerge(ctx context.Context, g globals, args []string) error {
 	bodyFile := ""
 	if body != "" {
 		var cleanupBody func()
-		bodyFile, cleanupBody, err = materializePRBody(prCtx.root, body)
+		bodyFile, cleanupBody, err = materializePRBody(prCtx.tmpDir, body)
 		if err != nil {
 			return codedError{1, err}
 		}
@@ -399,7 +399,7 @@ func commandPRMerge(ctx context.Context, g globals, args []string) error {
 func fetchPullRequestAfterMerge(ctx context.Context, prCtx prCommandContext, ref string) (memory.Record, error) {
 	return memory.FetchPullRequest(ctx, memory.FetchOptions{
 		WorkDir: prCtx.workDir,
-		RunsDir: filepath.Join(prCtx.root, prCtx.cfg.Logs.Dir),
+		RunsDir: prCtx.runsDir,
 		Ref:     ref,
 	})
 }
@@ -448,13 +448,13 @@ func loadPRCommandContext(ctx context.Context, g globals, subcommand string, arg
 	if err != nil {
 		return prCommandContext{}, codedError{1, fmt.Errorf("not inside a git repository: %w", err)}
 	}
-	storageRoot, err := loopStorageRoot(ctx)
-	if err != nil {
-		storageRoot = workRoot
-	}
 	cfg, err := config.Load(config.LoadOptions{CWD: workRoot, ConfigPath: g.ConfigPath, Overrides: config.Overrides{Agent: g.Agent, NoColor: g.NoColor}})
 	if err != nil {
 		return prCommandContext{}, codedError{3, err}
+	}
+	storage, err := loopStorageForRepo(ctx, workRoot, cfg)
+	if err != nil {
+		return prCommandContext{}, codedError{1, err}
 	}
 	paths := promptPaths(resolvedDir)
 	runtime := readResultRuntime(resolvedDir)
@@ -485,7 +485,8 @@ func loadPRCommandContext(ctx context.Context, g globals, subcommand string, arg
 	}
 	paths.PendingPRRepair = repairPR
 	return prCommandContext{
-		root:              storageRoot,
+		runsDir:           storage.RunsDir,
+		tmpDir:            storage.TmpDir,
 		workDir:           workDir,
 		iterDir:           resolvedDir,
 		paths:             paths,

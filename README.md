@@ -35,7 +35,7 @@ Most coding agents are good at working inside a prompt-sized window. Real reposi
 - Configured validation runs before review.
 - A QA review agent checks the integrated branch and returns concrete repair findings when needed.
 - A merge agent owns PR text, PR creation, check waiting, merge, or human-review handoff through `loop` commands.
-- Every run leaves durable `.loop/` artifacts so you can inspect what happened.
+- Every run leaves durable local artifacts under `~/.loop/workspaces/<repo-id>/` so you can inspect what happened.
 
 ## Dashboard
 
@@ -119,7 +119,7 @@ flowchart TD
     reviewMode{"Review mode"}
     autoMerge["auto_merge<br/>loop pr merge"]
     humanReview["human review<br/>parallel or serial handoff"]
-    audit[".loop/runs/...<br/>durable audit trail"]
+    audit["~/.loop/workspaces/.../runs/...<br/>durable audit trail"]
     next["Next iteration"]
 
     instruction --> planner --> tasks --> mergeTasks --> validation --> qa
@@ -156,19 +156,26 @@ In the interactive renderer, press `r` during PR runs to cycle between `auto mer
 
 ## What You Get Back
 
-After a run, `.loop/` contains the evidence:
+After `loop init`, the repository keeps only the repository-local config:
 
 ```text
 .loop/config.yaml
-.loop/runs/
-.loop/worktrees/
-.loop/locks/
-.loop/loop.db
+```
+
+After a run, durable evidence and temporary worktrees live outside the repository by default:
+
+```text
+~/.loop/workspaces/<repo-id>/
+  runs/
+  worktrees/
+  locks/
+  tmp/
+  loop.db
 ```
 
 Iteration artifacts include instruction snapshots, effective config, agent event logs, task trees, task results, task merge audits, validation evidence, QA review results, merge results, PR state, PR checks, errors, and GitHub update summaries.
 
-That audit trail is intentionally local and durable. It is the difference between "an agent did something" and "here is the plan, the work, the validation, the review, the PR, and the cleanup record."
+That audit trail is intentionally local and durable, but kept out of the repository worktree so file watchers and external workspace tools do not recurse through loop-created worktrees. Set `LOOP_HOME` to override the `~/.loop` root.
 
 ## Autonomy Rules
 

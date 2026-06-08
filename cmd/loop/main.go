@@ -16,7 +16,7 @@ var (
 )
 
 func main() {
-	if len(os.Args) > 1 && (os.Args[1] == "version" || os.Args[1] == "--version" || os.Args[1] == "-v") {
+	if isVersionRequest(os.Args[1:]) {
 		v, c, d := resolvedBuildInfo()
 		fmt.Printf("loop %s (commit %s, built %s)\n", v, c, d)
 		return
@@ -31,6 +31,33 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+}
+
+func isVersionRequest(args []string) bool {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "version" || arg == "--version" || arg == "-v" {
+			return true
+		}
+		if !strings.HasPrefix(arg, "--") {
+			return false
+		}
+		name, _, hasValue := strings.Cut(strings.TrimPrefix(arg, "--"), "=")
+		if hasValue {
+			continue
+		}
+		switch name {
+		case "agent", "config", "cwd", "log-level":
+			i++
+			if i >= len(args) {
+				return false
+			}
+		case "json", "no-color", "help":
+		default:
+			return false
+		}
+	}
+	return false
 }
 
 func resolvedBuildInfo() (string, string, string) {

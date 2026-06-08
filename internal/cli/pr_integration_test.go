@@ -38,7 +38,7 @@ git:
 	git(t, repo, "add", "change.txt")
 	git(t, repo, "commit", "-m", "F: add fake change")
 
-	runDir := filepath.Join(repo, ".loop", "runs", "run", "iterations", "0001")
+	runDir := testIterationDir(t, repo, "run", "0001")
 	if err := os.MkdirAll(runDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +105,7 @@ git:
 	git(t, repo, "add", "change.txt")
 	git(t, repo, "commit", "-m", "F: add push failure fixture")
 
-	runDir := filepath.Join(repo, ".loop", "runs", "run", "iterations", "0001")
+	runDir := testIterationDir(t, repo, "run", "0001")
 	if err := os.MkdirAll(runDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -196,7 +196,7 @@ git:
 	git(t, repo, "add", "human-review.txt")
 	git(t, repo, "commit", "-m", "F: add human review fixture")
 
-	runDir := filepath.Join(repo, ".loop", "runs", "run", "iterations", "0001")
+	runDir := testIterationDir(t, repo, "run", "0001")
 	if err := os.MkdirAll(runDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -263,7 +263,7 @@ git:
 	git(t, repo, "add", "change.txt")
 	git(t, repo, "commit", "-m", "Add preview claim screen (#4)")
 
-	runDir := filepath.Join(repo, ".loop", "runs", "run", "iterations", "0001")
+	runDir := testIterationDir(t, repo, "run", "0001")
 	if err := os.MkdirAll(runDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -324,7 +324,7 @@ git:
 	git(t, repo, "add", "change.txt")
 	git(t, repo, "commit", "-m", "F: add fake change")
 
-	runDir := filepath.Join(repo, ".loop", "runs", "run", "iterations", "0001")
+	runDir := testIterationDir(t, repo, "run", "0001")
 	if err := os.MkdirAll(runDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -354,7 +354,7 @@ git:
 	}); err != nil {
 		t.Fatalf("loop pr merge: %v", err)
 	}
-	hits, err := artifactdb.SearchPRMemory(filepath.Join(repo, ".loop", "loop.db"), artifactdb.PRMemorySearchOptions{Query: "merge fetch memory", Repo: "acme/app", Limit: 10})
+	hits, err := artifactdb.SearchPRMemory(testStorage(t, repo).DBPath, artifactdb.PRMemorySearchOptions{Query: "merge fetch memory", Repo: "acme/app", Limit: 10})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -389,7 +389,7 @@ git:
 	git(t, repo, "add", "change.txt")
 	git(t, repo, "commit", "-m", "F: add fake change")
 
-	runDir := filepath.Join(repo, ".loop", "runs", "run", "iterations", "0001")
+	runDir := testIterationDir(t, repo, "run", "0001")
 	if err := os.MkdirAll(runDir, 0o755); err != nil {
 		t.Fatal(err)
 	}

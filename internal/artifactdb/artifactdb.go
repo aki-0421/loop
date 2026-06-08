@@ -104,9 +104,9 @@ type GitHubContextSearchHit struct {
 func GlobalDBPathForIteration(iterationDir string) string {
 	clean := filepath.Clean(iterationDir)
 	parts := splitPath(clean)
-	for i := 0; i < len(parts)-1; i++ {
-		if parts[i] == ".loop" && parts[i+1] == "runs" {
-			return filepath.Join(joinPath(parts[:i+1]), GlobalDBName)
+	for i := 0; i < len(parts)-3; i++ {
+		if parts[i] == "runs" && parts[i+2] == "iterations" {
+			return filepath.Join(joinPath(parts[:i]), GlobalDBName)
 		}
 	}
 	return ""
@@ -115,9 +115,9 @@ func GlobalDBPathForIteration(iterationDir string) string {
 func GlobalDBPathFromRunsPath(path string) string {
 	clean := filepath.Clean(path)
 	parts := splitPath(clean)
-	for i := 0; i < len(parts)-1; i++ {
-		if parts[i] == ".loop" && parts[i+1] == "runs" {
-			return filepath.Join(joinPath(parts[:i+1]), GlobalDBName)
+	for i := 0; i < len(parts); i++ {
+		if parts[i] == "runs" {
+			return filepath.Join(joinPath(parts[:i]), GlobalDBName)
 		}
 	}
 	return filepath.Join(filepath.Dir(clean), GlobalDBName)
@@ -126,8 +126,8 @@ func GlobalDBPathFromRunsPath(path string) string {
 func ParseIterationDir(iterationDir string) (string, string) {
 	parts := splitPath(filepath.Clean(iterationDir))
 	for i := 0; i < len(parts)-3; i++ {
-		if parts[i] == ".loop" && parts[i+1] == "runs" && parts[i+3] == "iterations" && i+4 < len(parts) {
-			return parts[i+2], parts[i+4]
+		if parts[i] == "runs" && parts[i+2] == "iterations" && i+3 < len(parts) {
+			return parts[i+1], parts[i+3]
 		}
 	}
 	if len(parts) >= 1 {

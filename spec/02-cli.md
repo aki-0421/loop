@@ -68,7 +68,6 @@ Default generated tree for the built-in Codex adapter:
 ```text
 .loop/
   config.yaml
-  .gitignore
 skills-lock.json
 .agents/skills/
   loop/SKILL.md
@@ -80,7 +79,7 @@ With `--skills`, `loop init` runs:
 npx --yes skills add aki-0421/loop --skill loop --agent <agent> --yes
 ```
 
-`loop` maps built-in adapter names to the agent names expected by the skills CLI, such as `codex` to `codex` and `claude` to `claude-code`. If an existing discovered `loop` skill is present and `--force` is not set, `loop init` skips the `npx skills` invocation to avoid overwriting repository-customized skill content. `loop init` must not directly copy `SKILL.md` from embedded templates, and it must not create `.loop/skills/` or `.loop/runs/`.
+`loop` maps built-in adapter names to the agent names expected by the skills CLI, such as `codex` to `codex` and `claude` to `claude-code`. If an existing discovered `loop` skill is present and `--force` is not set, `loop init` skips the `npx skills` invocation to avoid overwriting repository-customized skill content. `loop init` must not directly copy `SKILL.md` from embedded templates, and it must not create `.loop/skills/`, `.loop/runs/`, or `.loop/.gitignore`.
 
 Agent-specific skill directories may differ from the Codex default; for example, `--agent claude` installs through the skills CLI's `claude-code` target and records `.claude/skills` as `skills.sourceDir`.
 
@@ -167,7 +166,7 @@ Flags:
 | --- | --- | --- |
 | `--from-iteration <n>` | latest incomplete | Accepted for older scripts; currently ignored |
 
-`loop resume` currently loads `.loop/runs/<run-id>/run-state.json` and prints the same run summary as `loop status <run-id>`. It does not relaunch agent, validation, or integration phases.
+`loop resume` currently loads `~/.loop/workspaces/<repo-id>/runs/<run-id>/run-state.json` and prints the same run summary as `loop status <run-id>`. It does not relaunch agent, validation, or integration phases.
 
 ## `loop status`
 
@@ -217,7 +216,7 @@ loop iteration todo <list|insert|edit|complete> ...
 loop iteration close (--merge|--skip-merge) [--iteration-dir <dir>|--run <run-id> --iteration <n>] --should-stop <bool> --goal-evaluation <text> [flags]
 ```
 
-If `--iteration-dir` is omitted, commands resolve the current agent iteration automatically. If `--run` is supplied, the CLI resolves `.loop/runs/<run-id>/iterations/<n>` using the configured log directory; `--iteration latest` selects the newest iteration.
+If `--iteration-dir` is omitted, commands resolve the current agent iteration automatically. If `--run` is supplied, the CLI resolves `runs/<run-id>/iterations/<n>` inside the repository runtime store under `~/.loop/workspaces/<repo-id>/`; `--iteration latest` selects the newest iteration.
 
 Writable artifacts are `plan`, `todo`, `task-tree`, `review-result`, `merge-result`, `pr-title`, and `pr-body`. Read-only artifacts include `runtime`, `instruction`, `prompt`, `effective-config`, `validation`, `events`, `errors`, `github-updates`, `pr-state`, `pr-checks`, and `pr-check-log`. Role-orchestrated runs use planner, task, review, and merge handoffs instead of terminal iteration close JSON.
 PR command artifacts `pr-state`, `pr-checks`, and `pr-check-log` are read-only to the agent and written by `loop pr`. `github-updates` is written by the CLI when new GitHub Issue, PR, or comment diffs are observed at an iteration boundary or sleep wake cycle.
@@ -238,7 +237,7 @@ loop handoff read <task-tree|task-result|review-result|merge-result> [--task <id
 loop handoff list [--kind <task-tree|task-result|review-result|merge-result>]
 ```
 
-`task-tree` is written by the planner. `task-result` is written by coding agents and requires `--task`. `review-result` is written by the QA review agent. `merge-result` is written by the merge agent. The CLI validates each JSON payload and rejects unknown fields before storing the handoff in `.loop/loop.db` and writing durable audit copies in the iteration directory.
+`task-tree` is written by the planner. `task-result` is written by coding agents and requires `--task`. `review-result` is written by the QA review agent. `merge-result` is written by the merge agent. The CLI validates each JSON payload and rejects unknown fields before storing the handoff in the runtime `loop.db` and writing durable audit copies in the iteration directory.
 
 ## `loop task`
 

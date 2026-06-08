@@ -246,10 +246,6 @@ func commandInit(ctx context.Context, g globals, args []string) error {
 	if err := writeUnlessExists(configPath, initConfig, *force); err != nil {
 		return codedError{1, err}
 	}
-	ignorePath := filepath.Join(root, ".loop", ".gitignore")
-	if err := writeUnlessExists(ignorePath, []byte("runs/\nworktrees/\ntmp/\nlocks/\nloop.db\n*.db\n*.db-wal\n*.db-shm\n*.log\n"), *force); err != nil {
-		return codedError{1, err}
-	}
 	if *syncAgentSkills {
 		if _, err := skills.Sync(root, cfg); err != nil {
 			return codedError{1, err}
@@ -637,9 +633,12 @@ func removeEmptyDir(path string) {
 	_ = os.Remove(path)
 }
 
-func createIterationTempDir(runID, iterationID string) (string, error) {
+func createIterationTempDir(tmpRoot, runID, iterationID string) (string, error) {
 	prefix := "loop-" + sanitizeTempPart(runID) + "-" + sanitizeTempPart(iterationID) + "-"
-	dir, err := os.MkdirTemp("", prefix)
+	if err := os.MkdirAll(tmpRoot, 0o755); err != nil {
+		return "", err
+	}
+	dir, err := os.MkdirTemp(tmpRoot, prefix)
 	if err != nil {
 		return "", err
 	}
@@ -720,6 +719,7 @@ func cleanupDisposableIterationFiles(activeDir, eventLogPath string) []string {
 func runGitCleanPreservingLoopRuntime(ctx context.Context, runner gitx.Runner) (string, error) {
 	args := []string{
 		"clean", "-fd",
+		"-e", ".loop/config.yaml",
 		"-e", ".loop/runs/",
 		"-e", ".loop/worktrees/",
 		"-e", ".loop/tmp/",
@@ -877,16 +877,21 @@ func commandStatus(ctx context.Context, g globals, args []string) error {
 		return codedError{1, err}
 	}
 	cfg, _ := config.Load(config.LoadOptions{CWD: root, ConfigPath: g.ConfigPath, Overrides: config.Overrides{Agent: g.Agent}})
+	storage, err := loopStorageForRepo(ctx, root, cfg)
+	if err != nil {
+		return codedError{1, err}
+	}
 	runID := ""
 	if len(args) > 0 {
 		runID = args[0]
 	} else {
-		runID, err = latestRun(filepath.Join(root, cfg.Logs.Dir))
+		runID, err = latestRun(storage.RunsDir)
 		if err != nil {
 			return codedError{1, err}
 		}
 	}
-	state, err := runstate.Read(filepath.Join(root, cfg.Logs.Dir, runID, "run-state.json"))
+	runDir := filepath.Join(storage.RunsDir, runID)
+	state, err := runstate.Read(filepath.Join(runDir, "run-state.json"))
 	if err != nil {
 		return codedError{1, err}
 	}
@@ -899,7 +904,7 @@ func commandStatus(ctx context.Context, g globals, args []string) error {
 		lastSummary = state.Iterations[len(state.Iterations)-1].SummarySentence
 	}
 	out := map[string]any{"run_id": state.RunID, "base": state.BaseBranch, "iteration": state.CurrentIteration, "stage": state.Stage, "last_summary": lastSummary, "next": next}
-	text := fmt.Sprintf("Run: %s\nBase: %s\nIteration: %s\nStage: %s\nLast summary: %s\nNext: %s\nLogs: %s\n", state.RunID, state.BaseBranch, state.CurrentIteration, state.Stage, lastSummary, next, filepath.Join(cfg.Logs.Dir, runID))
+	text := fmt.Sprintf("Run: %s\nBase: %s\nIteration: %s\nStage: %s\nLast summary: %s\nNext: %s\nLogs: %s\n", state.RunID, state.BaseBranch, state.CurrentIteration, state.Stage, lastSummary, next, displayPath(root, runDir))
 	return printResult(g, out, text)
 }
 
@@ -921,9 +926,13 @@ func commandLogs(ctx context.Context, g globals, args []string) error {
 		return codedError{1, err}
 	}
 	cfg, _ := config.Load(config.LoadOptions{CWD: root, ConfigPath: g.ConfigPath, Overrides: config.Overrides{Agent: g.Agent}})
+	storage, err := loopStorageForRepo(ctx, root, cfg)
+	if err != nil {
+		return codedError{1, err}
+	}
 	iter := *iteration
 	if iter == "latest" {
-		iter, err = latestIteration(filepath.Join(root, cfg.Logs.Dir, fs.Arg(0), "iterations"))
+		iter, err = latestIteration(filepath.Join(storage.RunsDir, fs.Arg(0), "iterations"))
 		if err != nil {
 			return codedError{1, err}
 		}
@@ -932,7 +941,7 @@ func commandLogs(ctx context.Context, g globals, args []string) error {
 	if name == "" {
 		name = "agent-events.jsonl"
 	}
-	iterDir := filepath.Join(root, cfg.Logs.Dir, fs.Arg(0), "iterations", iter)
+	iterDir := filepath.Join(storage.RunsDir, fs.Arg(0), "iterations", iter)
 	if artifact, err := lookupIterationArtifact(name); err == nil && artifact.Database {
 		data, err := artifactdb.Read(iterDir, artifact.Name)
 		if err != nil {
@@ -1062,13 +1071,13 @@ func commandIssueAsk(ctx context.Context, g globals, args []string) error {
 	if err != nil {
 		return codedError{1, err}
 	}
-	storageRoot, err := loopStorageRoot(ctx)
-	if err != nil {
-		return codedError{1, err}
-	}
-	cfg, err := config.Load(config.LoadOptions{CWD: storageRoot, ConfigPath: g.ConfigPath, Overrides: config.Overrides{Agent: g.Agent, NoColor: g.NoColor}})
+	cfg, err := config.Load(config.LoadOptions{CWD: root, ConfigPath: g.ConfigPath, Overrides: config.Overrides{Agent: g.Agent, NoColor: g.NoColor}})
 	if err != nil {
 		return codedError{3, err}
+	}
+	storage, err := loopStorageForRepo(ctx, root, cfg)
+	if err != nil {
+		return codedError{1, err}
 	}
 	resolvedDir, err := resolveIterationDir(ctx, g, *iterDir, *runID, *iteration)
 	if err != nil {
@@ -1087,7 +1096,7 @@ func commandIssueAsk(ctx context.Context, g globals, args []string) error {
 	}
 	record, err := memory.CreateIssueQuestion(ctx, memory.IssueQuestionOptions{
 		WorkDir:     root,
-		RunsDir:     filepath.Join(storageRoot, cfg.Logs.Dir),
+		RunsDir:     storage.RunsDir,
 		Title:       *title,
 		Body:        *body,
 		RunID:       metadataRunID,
@@ -1139,13 +1148,13 @@ func commandIssueReport(ctx context.Context, g globals, args []string) error {
 	if err != nil {
 		return codedError{1, err}
 	}
-	storageRoot, err := loopStorageRoot(ctx)
-	if err != nil {
-		return codedError{1, err}
-	}
-	cfg, err := config.Load(config.LoadOptions{CWD: storageRoot, ConfigPath: g.ConfigPath, Overrides: config.Overrides{Agent: g.Agent, NoColor: g.NoColor}})
+	cfg, err := config.Load(config.LoadOptions{CWD: root, ConfigPath: g.ConfigPath, Overrides: config.Overrides{Agent: g.Agent, NoColor: g.NoColor}})
 	if err != nil {
 		return codedError{3, err}
+	}
+	storage, err := loopStorageForRepo(ctx, root, cfg)
+	if err != nil {
+		return codedError{1, err}
 	}
 	resolvedDir, err := resolveIterationDir(ctx, g, *iterDir, *runID, *iteration)
 	if err != nil {
@@ -1164,7 +1173,7 @@ func commandIssueReport(ctx context.Context, g globals, args []string) error {
 	}
 	record, err := memory.CreateIssueReport(ctx, memory.IssueReportOptions{
 		WorkDir:     root,
-		RunsDir:     filepath.Join(storageRoot, cfg.Logs.Dir),
+		RunsDir:     storage.RunsDir,
 		Title:       *title,
 		Body:        *body,
 		Kind:        *kind,
@@ -1183,8 +1192,7 @@ func commandIssueReport(ctx context.Context, g globals, args []string) error {
 	return printResult(g, value, fmt.Sprintf("reported issue #%d %s\n", record.Number, record.URL))
 }
 
-func syncMemoryBeforeRun(ctx context.Context, root string, cfg config.Config, renderer *runRenderer) error {
-	runsDir := filepath.Join(root, cfg.Logs.Dir)
+func syncMemoryBeforeRun(ctx context.Context, root, runsDir string, renderer *runRenderer) error {
 	repo, _, _, err := memory.ResolveGitHubRepository(ctx, root)
 	if errors.Is(err, memory.ErrNoGitHubRemote) {
 		return nil
@@ -1228,8 +1236,7 @@ func syncMemoryBeforeRun(ctx context.Context, root string, cfg config.Config, re
 	return nil
 }
 
-func syncMemoryBeforeIteration(ctx context.Context, root string, cfg config.Config, paths pathSet) {
-	runsDir := filepath.Join(root, cfg.Logs.Dir)
+func syncMemoryBeforeIteration(ctx context.Context, root, runsDir string, paths pathSet) {
 	_, _, _, err := memory.ResolveGitHubRepository(ctx, root)
 	if errors.Is(err, memory.ErrNoGitHubRemote) {
 		return
@@ -1764,8 +1771,7 @@ func readArtifactOptional(iterationDir, artifactName string) string {
 	return ""
 }
 
-func materializePRBody(root, body string) (string, func(), error) {
-	tmpDir := filepath.Join(root, ".loop", "tmp")
+func materializePRBody(tmpDir, body string) (string, func(), error) {
 	if err := os.MkdirAll(tmpDir, 0o755); err != nil {
 		return "", func() {}, err
 	}

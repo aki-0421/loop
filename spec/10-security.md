@@ -5,6 +5,7 @@
 `loop` runs inside one Git repository. It must not read or write outside the repository except for:
 
 - User config under `~/.config/loop/`.
+- Loop runtime storage under `~/.loop/workspaces/<repo-id>/`, or the equivalent `LOOP_HOME` override.
 - Agent-specific skill targets configured by the user.
 - Temporary files inside system temp directories when required by the OS.
 

@@ -4,6 +4,8 @@ This guide covers common repository configuration. The full contract is in [the 
 
 `loop init` writes a small `.loop/config.yaml`. Built-in defaults supply normal agent, run, Git, validation, memory, and log settings. Keep repository config focused on values that differ from those defaults.
 
+Runtime files are stored outside the repository by default under `~/.loop/workspaces/<repo-id>/`. The repository `.loop/` directory contains config only; `loop init` does not create `.loop/.gitignore`.
+
 ## Lookup Order
 
 `loop` builds the effective configuration from lowest to highest precedence:
@@ -167,6 +169,7 @@ Common environment overrides:
 | `LOOP_CONFIG` | Overrides the config path. |
 | `LOOP_MAX_ITERATIONS` | Overrides the run iteration limit; `0` means unlimited. |
 | `LOOP_BASE_BRANCH` | Overrides the base branch. |
+| `LOOP_HOME` | Overrides the runtime storage root used instead of `~/.loop`. |
 | `LOOP_NO_COLOR` | Disables color output. |
 
 See [the CLI specification](../spec/02-cli.md) and [the configuration specification](../spec/03-configuration.md) for exhaustive details.

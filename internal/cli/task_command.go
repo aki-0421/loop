@@ -28,7 +28,7 @@ type taskMergeContext struct {
 	TaskBranch        string
 	IterationBranch   string
 	IterationWorktree string
-	RepoRoot          string
+	StorageRoot       string
 	Task              workflow.Task
 }
 
@@ -622,9 +622,10 @@ func resolveTaskMergeContext(ctx context.Context, g globals, iterDir, runID, ite
 	if taskID == "" {
 		return taskMergeContext{}, errors.New("task id is required")
 	}
-	root, err := loopStorageRoot(ctx)
-	if err != nil {
-		root = repoRootFromIterationDir(resolvedDir)
+	repoRoot, _ := gitx.RepoRoot(ctx, ".")
+	storageRoot := storageRootFromIterationDir(resolvedDir)
+	if storageRoot == "" {
+		storageRoot = repoRoot
 	}
 	taskDir := firstNonEmpty(runtimeString(runtime, "task_dir"), os.Getenv("LOOP_TASK_DIR"))
 	if taskDir == "" {
@@ -657,10 +658,10 @@ func resolveTaskMergeContext(ctx context.Context, g globals, iterDir, runID, ite
 		iterationBranch = gitx.InitialBranchName(iterationNumberFromID(iter))
 	}
 	iterationWorktree := firstNonEmpty(runtimeString(runtime, "iteration_worktree"), os.Getenv("LOOP_ITERATION_WORKTREE"))
-	if iterationWorktree == "" && root != "" {
-		iterationWorktree = filepath.Join(root, ".loop", "worktrees", run, iter, "iteration")
+	if iterationWorktree == "" && storageRoot != "" {
+		iterationWorktree = filepath.Join(storageRoot, "worktrees", run, iter, "iteration")
 	}
-	if taskWorktree == "" || taskBranch == "" || iterationBranch == "" || iterationWorktree == "" || root == "" {
+	if taskWorktree == "" || taskBranch == "" || iterationBranch == "" || iterationWorktree == "" || storageRoot == "" {
 		return taskMergeContext{}, errors.New("task merge context is incomplete; run inside a loop coding task")
 	}
 	return taskMergeContext{
@@ -673,7 +674,7 @@ func resolveTaskMergeContext(ctx context.Context, g globals, iterDir, runID, ite
 		TaskBranch:        taskBranch,
 		IterationBranch:   iterationBranch,
 		IterationWorktree: iterationWorktree,
-		RepoRoot:          root,
+		StorageRoot:       storageRoot,
 		Task:              task,
 	}, nil
 }
@@ -1548,7 +1549,7 @@ func acquireTaskMergeLock(ctx context.Context, mergeCtx taskMergeContext) (strin
 
 func taskMergeLockDir(mergeCtx taskMergeContext) string {
 	name := sanitizeTempPart(mergeCtx.RunID) + "-" + sanitizeTempPart(mergeCtx.IterationID) + "-task-merge.lock"
-	return filepath.Join(mergeCtx.RepoRoot, ".loop", "locks", name)
+	return filepath.Join(mergeCtx.StorageRoot, "locks", name)
 }
 
 func writeTaskMergeLock(lockDir string, lock taskMergeLock) error {
@@ -1596,10 +1597,10 @@ func appendTaskMergeEvent(mergeCtx taskMergeContext, event runstate.Event) {
 }
 
 func cleanupPendingTaskMerge(ctx context.Context, paths pathSet) {
-	root := repoRootFromIterationDir(paths.IterationDir)
+	root := storageRootFromIterationDir(paths.IterationDir)
 	ownsLock := true
 	if root != "" && paths.RunID != "" && paths.IterationID != "" {
-		lockDir := filepath.Join(root, ".loop", "locks", sanitizeTempPart(paths.RunID)+"-"+sanitizeTempPart(paths.IterationID)+"-task-merge.lock")
+		lockDir := filepath.Join(root, "locks", sanitizeTempPart(paths.RunID)+"-"+sanitizeTempPart(paths.IterationID)+"-task-merge.lock")
 		if lock, err := readTaskMergeLock(lockDir); err == nil {
 			ownsLock = lock.TaskID == "" || lock.TaskID == paths.TaskID
 			if ownsLock && lock.Branch != "" && paths.CurrentBranch != "" {
@@ -1630,18 +1631,12 @@ func cleanupPendingTaskMerge(ctx context.Context, paths pathSet) {
 	}
 }
 
-func repoRootFromIterationDir(iterationDir string) string {
-	clean := filepath.Clean(iterationDir)
-	sep := string(os.PathSeparator)
-	marker := sep + ".loop" + sep + "runs" + sep
-	if idx := strings.Index(clean, marker); idx >= 0 {
-		return clean[:idx]
+func storageRootFromIterationDir(iterationDir string) string {
+	globalPath := artifactdb.GlobalDBPathForIteration(iterationDir)
+	if globalPath == "" {
+		return ""
 	}
-	relativeMarker := ".loop" + sep + "runs" + sep
-	if strings.HasPrefix(clean, relativeMarker) {
-		return "."
-	}
-	return ""
+	return filepath.Dir(globalPath)
 }
 
 func iterationNumberFromID(iterationID string) int {

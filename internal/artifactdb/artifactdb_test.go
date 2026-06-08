@@ -34,6 +34,22 @@ func TestWriteAppendReadUsesIterationFilesOnly(t *testing.T) {
 	}
 }
 
+func TestGlobalPathsSupportRuntimeStorageRoot(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "workspaces", "repo-123")
+	iterDir := filepath.Join(root, "runs", "run-1", "iterations", "0001")
+
+	if got, want := GlobalDBPathForIteration(iterDir), filepath.Join(root, GlobalDBName); got != want {
+		t.Fatalf("GlobalDBPathForIteration = %s, want %s", got, want)
+	}
+	if got, want := GlobalDBPathFromRunsPath(filepath.Join(root, "runs")), filepath.Join(root, GlobalDBName); got != want {
+		t.Fatalf("GlobalDBPathFromRunsPath = %s, want %s", got, want)
+	}
+	runID, iterationID := ParseIterationDir(iterDir)
+	if runID != "run-1" || iterationID != "0001" {
+		t.Fatalf("ParseIterationDir = %s/%s, want run-1/0001", runID, iterationID)
+	}
+}
+
 func TestActiveArtifactsUseTempDirFromEnvironment(t *testing.T) {
 	root := t.TempDir()
 	iterDir := filepath.Join(root, ".loop", "runs", "run-1", "iterations", "0001")

@@ -133,7 +133,7 @@ func commandIterationClose(ctx context.Context, g globals, args []string) error 
 	}
 	globalPath := artifactdb.GlobalDBPathForIteration(resolvedDir)
 	if globalPath == "" {
-		return codedError{2, errors.New("iteration directory must be under .loop/runs")}
+		return codedError{2, errors.New("iteration directory must be under the loop runs directory")}
 	}
 	if err := artifactdb.WriteResultHandoff(globalPath, handoffRunID, handoffIterationID, string(data)); err != nil {
 		return codedError{1, err}

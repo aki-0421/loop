@@ -32,7 +32,7 @@ func TestBranchRenameTracksRuntime(t *testing.T) {
 	if runtime["initial_branch"] != "wip/0001" || runtime["iteration_branch"] != "feat/add-user-profile" || runtime["current_branch"] != "feat/add-user-profile" || runtime["branch_renamed"] != true {
 		t.Fatalf("runtime = %#v", runtime)
 	}
-	state, err := runstate.Read(filepath.Join(repo, ".loop", "runs", "run-1", "run-state.json"))
+	state, err := runstate.Read(filepath.Join(testRunDir(t, repo, "run-1"), "run-state.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,7 +167,7 @@ func setupBranchRenameIteration(t *testing.T) (string, string) {
 	t.Helper()
 	repo := newCleanupRepo(t)
 	git(t, repo, "checkout", "-b", "wip/0001", "develop")
-	iterDir := filepath.Join(repo, ".loop", "runs", "run-1", "iterations", "0001")
+	iterDir := testIterationDir(t, repo, "run-1", "0001")
 	if err := artifactdb.Write(iterDir, "runtime", `{
   "run_id": "run-1",
   "iteration_id": "0001",
@@ -190,7 +190,7 @@ func setupBranchRenameIteration(t *testing.T) (string, string) {
 		BranchCurrent: "wip/0001",
 		Stage:         string(runstate.StageAgentRunning),
 	})
-	if err := runstate.Write(filepath.Join(repo, ".loop", "runs", "run-1", "run-state.json"), state); err != nil {
+	if err := runstate.Write(filepath.Join(testRunDir(t, repo, "run-1"), "run-state.json"), state); err != nil {
 		t.Fatal(err)
 	}
 	return repo, iterDir

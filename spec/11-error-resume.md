@@ -50,7 +50,7 @@ When a role agent subprocess exits after printing a waitable Codex or Claude Cod
 
 ## Stored Run State
 
-When a role-orchestrated iteration stops on an error before integration completes, the CLI removes local task worktrees, task branches, task merge locks, the iteration worktree, the iteration branch, and disposable active-temp files. Cleanup failures are recorded in the iteration event log; durable audit files remain under `.loop/runs/`.
+When a role-orchestrated iteration stops on an error before integration completes, the CLI removes local task worktrees, task branches, task merge locks, the iteration worktree, the iteration branch, and disposable active-temp files. Cleanup failures are recorded in the iteration event log; durable audit files remain under `~/.loop/workspaces/<repo-id>/runs/`.
 
 `loop resume <run-id>` currently reports stored run state and does not relaunch a run stage. Stored stages still describe where a run stopped:
 
