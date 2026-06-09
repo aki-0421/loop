@@ -156,6 +156,8 @@ In the interactive renderer, press `r` during PR runs to cycle between `auto mer
 
 Use `--merge-method merge_commit` or `git.integration.mergeMethod: merge_commit` when you want the final iteration boundary to remain as a `--no-ff` merge commit. The default `squash` method writes the iteration's internal commit list into the squash commit body.
 
+Use `--local-merge` for a one-off local integration run instead of pull request integration.
+
 ## What You Get Back
 
 After `loop init`, the repository keeps only the repository-local config:

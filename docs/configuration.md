@@ -77,6 +77,12 @@ git:
     mode: local_merge
 ```
 
+Or select it for one run:
+
+```sh
+loop run task.md --local-merge
+```
+
 Choose how approved iterations merge into the base branch:
 
 ```yaml

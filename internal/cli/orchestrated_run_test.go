@@ -147,15 +147,13 @@ run:
 
 git:
   baseBranch: develop
-  integration:
-    mode: local_merge
 `)
 	git(t, repo, "add", "task.md", ".loop/config.yaml")
 	git(t, repo, "commit", "-m", "T: add role workflow fixture")
 	withWorkingDir(t, repo)
 
 	if _, err := captureStdout(t, func() error {
-		return commandRun(ctx, globals{Agent: "rolefake", JSON: true, NoColor: true}, []string{"task.md", "--goal", "The fake role workflow is complete."})
+		return commandRun(ctx, globals{Agent: "rolefake", JSON: true, NoColor: true}, []string{"task.md", "--goal", "The fake role workflow is complete.", "--local-merge"})
 	}); err != nil {
 		t.Fatalf("loop run: %v", err)
 	}

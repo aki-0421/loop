@@ -99,7 +99,8 @@ Flags:
 | --- | --- | --- |
 | `--goal <text>` | empty | Natural-language stop condition stored in runtime context |
 | `--max-iterations <n>` | config value | Stop after `n` iterations; `0` means unlimited |
-| `--pr` | config value | Use pull request integration instead of local squash merge |
+| `--pr` | config value | Use pull request integration |
+| `--local-merge` | config value | Use local merge integration |
 | `--human-review` | config value | Compatibility shortcut for `--review-mode serial_human_review` |
 | `--review-mode <mode>` | config value | PR review policy: `auto_merge`, `parallel_human_review`, or `serial_human_review` |
 | `--merge-method <method>` | config value | Iteration merge method: `squash` or `merge_commit` |

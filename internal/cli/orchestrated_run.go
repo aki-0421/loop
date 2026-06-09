@@ -70,6 +70,7 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 	goal := fs.String("goal", "", "natural-language stop condition")
 	maxIterations := fs.Int("max-iterations", 0, "maximum iterations, 0 for unlimited")
 	prFlag := fs.Bool("pr", false, "use pull request integration")
+	localMergeFlag := fs.Bool("local-merge", false, "use local merge integration")
 	base := fs.String("base", "", "base branch")
 	humanReview := fs.Bool("human-review", false, "open pull requests and pause for external post-hoc review before merge")
 	reviewMode := fs.String("review-mode", "", "PR review mode: auto_merge, parallel_human_review, or serial_human_review")
@@ -104,10 +105,14 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 	overrides := config.Overrides{Agent: *agentName, BaseBranch: *base, NoColor: g.NoColor}
 	humanReviewSet := false
 	reviewModeSet := false
+	prModeSet := false
+	localMergeSet := false
 	fs.Visit(func(f *flag.Flag) {
 		switch f.Name {
 		case "max-iterations":
 			overrides.MaxIterations = maxIterations
+		case "pr":
+			prModeSet = true
 		case "human-review":
 			humanReviewSet = true
 			v := *humanReview
@@ -119,11 +124,24 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 			overrides.MergeMethod = *mergeMethod
 		}
 	})
+	if *localMergeFlag {
+		localMergeSet = true
+	}
+	if prModeSet && localMergeSet {
+		return codedError{2, fmt.Errorf("--pr and --local-merge cannot be used together")}
+	}
 	if humanReviewSet && !reviewModeSet {
 		overrides.ReviewMode = config.ReviewModeSerialHumanReview
 	}
-	if *prFlag {
+	if prModeSet {
 		v := true
+		if !*prFlag {
+			v = false
+		}
+		overrides.PRMode = &v
+	}
+	if localMergeSet {
+		v := false
 		overrides.PRMode = &v
 	}
 	cfg, err := config.Load(config.LoadOptions{CWD: root, ConfigPath: g.ConfigPath, Overrides: overrides})

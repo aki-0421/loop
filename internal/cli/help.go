@@ -529,6 +529,7 @@ func allHelpCommands() []helpCommand {
 				{Name: "--goal <text>", Description: "natural-language stop condition"},
 				{Name: "--max-iterations <n>", Description: "maximum iterations; 0 means unlimited", Default: "config value"},
 				{Name: "--pr", Description: "use pull request integration", Default: "config value"},
+				{Name: "--local-merge", Description: "use local merge integration", Default: "config value"},
 				{Name: "--human-review", Description: "open the PR and pause for external post-hoc review instead of auto-merging", Default: "config value"},
 				{Name: "--review-mode <mode>", Description: "PR mode: auto_merge, parallel_human_review, or serial_human_review", Default: "config value"},
 				{Name: "--merge-method <method>", Description: "iteration merge method: squash or merge_commit", Default: "config value"},
