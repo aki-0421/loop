@@ -26,10 +26,18 @@ install:
 	CGO_ENABLED=$(CGO_ENABLED) $(GO) install $(GO_TAG_FLAGS) ./cmd/loop
 
 replace-local: install
-	@command -v loop
-	@echo $(INSTALLED_BIN)
-	@$(INSTALLED_BIN) version
-	@loop version
+	@path="$$(command -v loop 2>/dev/null || true)"; \
+	installed="$(INSTALLED_BIN)"; \
+	echo "$$installed"; \
+	if [ -n "$$path" ] && [ "$$path" != "$$installed" ]; then \
+		real="$$(sed -n 's/^REAL_LOOP="\([^"]*\)"/\1/p' "$$path" 2>/dev/null | head -n 1)"; \
+		if [ "$$real" = "$$installed" ]; then \
+			echo "PATH wrapper: $$path -> $$installed"; \
+		else \
+			echo "warning: PATH resolves loop to $$path"; \
+		fi; \
+	fi; \
+	"$$installed" version
 
 ci: test build verify
 
