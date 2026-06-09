@@ -367,7 +367,7 @@ func TestTaskMergePreservesTaskCommitHistory(t *testing.T) {
 		git(t, iterationWorktree, "merge-base", "--is-ancestor", sha, "HEAD")
 	}
 	log := git(t, iterationWorktree, "log", "--format=%s", "develop..HEAD")
-	for _, want := range []string{"F: complete fake task", "F: add marker", "T: add marker test"} {
+	for _, want := range []string{"Task 1 done: Fake task", "F: add marker", "T: add marker test"} {
 		if !strings.Contains(log, want) {
 			t.Fatalf("iteration branch log missing %q:\n%s", want, log)
 		}
@@ -376,8 +376,8 @@ func TestTaskMergePreservesTaskCommitHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if record.MergeCommit.SHA != mergeSHA || record.MergeCommit.Subject != "F: complete fake task" {
-		t.Fatalf("merge record merge commit = %#v, want %s F: complete fake task", record.MergeCommit, mergeSHA)
+	if record.MergeCommit.SHA != mergeSHA || record.MergeCommit.Subject != "Task 1 done: Fake task" {
+		t.Fatalf("merge record merge commit = %#v, want %s Task 1 done: Fake task", record.MergeCommit, mergeSHA)
 	}
 }
 

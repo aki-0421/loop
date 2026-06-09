@@ -35,9 +35,10 @@ run:
 			"LOOP_AGENT=codex",
 			"LOOP_MAX_ITERATIONS=9",
 			"LOOP_BASE_BRANCH=release",
+			"LOOP_MERGE_METHOD=merge_commit",
 			"LOOP_NO_COLOR=1",
 		},
-		Overrides: Overrides{MaxIterations: intPtr(11)},
+		Overrides: Overrides{MaxIterations: intPtr(11), MergeMethod: MergeMethodSquash},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -62,6 +63,9 @@ run:
 	}
 	if cfg.Git.Integration.Mode != "pr" {
 		t.Fatalf("default integration mode = %q, want pr", cfg.Git.Integration.Mode)
+	}
+	if cfg.Git.Integration.MergeMethod != MergeMethodSquash {
+		t.Fatalf("merge method override = %q, want %s", cfg.Git.Integration.MergeMethod, MergeMethodSquash)
 	}
 	if cfg.Git.Integration.PR.ChecksStartupDelaySeconds != 5 {
 		t.Fatalf("default checks startup delay = %d, want 5", cfg.Git.Integration.PR.ChecksStartupDelaySeconds)
@@ -112,6 +116,9 @@ func TestCodexAdapterUsesNonInteractiveExec(t *testing.T) {
 	}
 	if cfg.Git.BaseBranch != "" {
 		t.Fatalf("default base branch = %q, want empty", cfg.Git.BaseBranch)
+	}
+	if cfg.Git.Integration.MergeMethod != MergeMethodSquash {
+		t.Fatalf("default merge method = %q, want %s", cfg.Git.Integration.MergeMethod, MergeMethodSquash)
 	}
 	codex := cfg.Agent.Adapters["codex"]
 	if len(codex.Args) < 2 || codex.Args[0] != "exec" || codex.Args[1] != "--json" {
@@ -281,6 +288,17 @@ git:
 	_, err = Load(LoadOptions{CWD: repo, Env: []string{}, ConfigPath: filepath.Join(repo, ".loop", "config.yaml")})
 	if err == nil || !strings.Contains(err.Error(), "git.integration.pr.reviewMode") {
 		t.Fatalf("expected PR review mode validation error, got %v", err)
+	}
+
+	repo = t.TempDir()
+	mustWrite(t, filepath.Join(repo, ".loop", "config.yaml"), `version: 1
+git:
+  integration:
+    mergeMethod: rebase
+`)
+	_, err = Load(LoadOptions{CWD: repo, Env: []string{}, ConfigPath: filepath.Join(repo, ".loop", "config.yaml")})
+	if err == nil || !strings.Contains(err.Error(), "git.integration.mergeMethod") {
+		t.Fatalf("expected merge method validation error, got %v", err)
 	}
 
 	repo = t.TempDir()

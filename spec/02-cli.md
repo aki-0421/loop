@@ -102,6 +102,7 @@ Flags:
 | `--pr` | config value | Use pull request integration instead of local squash merge |
 | `--human-review` | config value | Compatibility shortcut for `--review-mode serial_human_review` |
 | `--review-mode <mode>` | config value | PR review policy: `auto_merge`, `parallel_human_review`, or `serial_human_review` |
+| `--merge-method <method>` | config value | Iteration merge method: `squash` or `merge_commit` |
 | `--base <branch>` | current branch at run start | Base branch for integration |
 | `--resume <run-id>` | empty | Accepted for older scripts; use `loop resume <run-id>` |
 | `--from-iteration <n>` | latest | Accepted for older scripts with `--resume`; currently ignored |

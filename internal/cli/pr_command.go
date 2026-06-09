@@ -356,11 +356,16 @@ func commandPRMerge(ctx context.Context, g globals, args []string) error {
 			return codedError{6, fmt.Errorf("pull request checks failed for %s; see `loop iteration read pr-checks`", state.PR)}
 		}
 	}
-	if err := validatePRBranchCommits(ctx, prCtx); err != nil {
+	commits, err := prBranchCommits(ctx, prCtx)
+	if err != nil {
+		return codedError{4, err}
+	}
+	if err := validateIterationCommitSubjects(commits); err != nil {
 		return codedError{4, err}
 	}
 
-	body := strings.TrimSpace(readArtifactOptional(prCtx.iterDir, "pr-body"))
+	mergeMethod := prMergeMethod(prCtx)
+	body := buildIntegrationCommitBody(readArtifactOptional(prCtx.iterDir, "pr-body"), commits)
 	bodyFile := ""
 	if body != "" {
 		var cleanupBody func()
@@ -371,7 +376,7 @@ func commandPRMerge(ctx context.Context, g globals, args []string) error {
 		defer cleanupBody()
 	}
 	var fetchedPR memory.Record
-	if _, err := runner.Merge(ctx, pr.MergeOptions{PR: state.PR, Subject: state.Title, BodyFile: bodyFile}); err != nil {
+	if _, err := runner.Merge(ctx, pr.MergeOptions{PR: state.PR, Method: mergeMethod, Subject: prMergeSubject(prCtx, state, mergeMethod), BodyFile: bodyFile}); err != nil {
 		recovered, recoveryErr := fetchMergedPullRequest(ctx, prCtx, state.PR)
 		if recoveryErr != nil {
 			return codedError{6, fmt.Errorf("%w; also failed to verify whether the pull request was already merged: %v", err, recoveryErr)}
@@ -475,6 +480,7 @@ func loadPRCommandContext(ctx context.Context, g globals, subcommand string, arg
 	paths.IterationBranch = firstNonEmpty(runtime["iteration_branch"], os.Getenv("LOOP_ITERATION_BRANCH"), branch)
 	paths.CurrentBranch = branch
 	paths.IntegrationMode = firstNonEmpty(runtime["integration_mode"], cfg.Git.Integration.Mode)
+	paths.IntegrationMergeMethod = firstNonEmpty(runtime["merge_method"], cfg.Git.Integration.MergeMethod)
 	paths.PRReviewMode = firstNonEmpty(runtime["pr_review_mode"], cfg.Git.Integration.PR.ReviewMode)
 	paths.PullRequestMode = paths.IntegrationMode == "pr"
 	paths.RoleOrchestrated = strings.EqualFold(strings.TrimSpace(runtime["role_orchestrated"]), "true")
@@ -608,15 +614,33 @@ func prReviewMode(prCtx prCommandContext) string {
 	return mode
 }
 
-func validatePRBranchCommits(ctx context.Context, prCtx prCommandContext) error {
+func prBranchCommits(ctx context.Context, prCtx prCommandContext) ([]gitx.Commit, error) {
 	commits, err := (gitx.Runner{Dir: prCtx.workDir}).ListCommits(ctx, prCtx.base, prCtx.branch)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if len(commits) == 0 {
-		return fmt.Errorf("mergeable iteration did not create commits")
+		return nil, fmt.Errorf("mergeable iteration did not create commits")
 	}
-	return validateIterationCommitSubjects(commits)
+	return commits, nil
+}
+
+func prMergeMethod(prCtx prCommandContext) string {
+	method := strings.TrimSpace(prCtx.paths.IntegrationMergeMethod)
+	if method == "" {
+		method = strings.TrimSpace(prCtx.cfg.Git.Integration.MergeMethod)
+	}
+	if method == "" {
+		return config.MergeMethodSquash
+	}
+	return method
+}
+
+func prMergeSubject(prCtx prCommandContext, state prState, method string) string {
+	if method == config.MergeMethodMergeCommit {
+		return iterationBoundarySubject(prCtx.paths.IterationID, state.Title)
+	}
+	return state.Title
 }
 
 func requirePRState(iterDir string) (prState, error) {

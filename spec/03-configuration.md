@@ -115,10 +115,17 @@ Modes:
 
 | Mode | Behavior |
 | --- | --- |
-| `local_merge` | Squash merge the approved iteration branch into the base branch locally. |
+| `local_merge` | Merge the approved iteration branch into the base branch locally using `git.integration.mergeMethod`. |
 | `pr` | The merge agent creates, checks, and merges the pull request through loop-owned PR commands after QA review approval; the CLI verifies merged state before cleanup. |
 
 Pull request mode is the built-in default and uses `gh` commands. In role-orchestrated mode, the merge agent reads the PR template, writes `pr-title` and `pr-body`, and then invokes `loop pr create`.
+
+Iteration merge methods:
+
+| Method | Behavior |
+| --- | --- |
+| `squash` | Built-in default. Local mode creates one squash commit on the base branch, and PR auto-merge uses `gh pr merge --squash`. The commit body includes the iteration's internal commits so task-level history remains inspectable after the branch is deleted. |
+| `merge_commit` | Local mode uses `git merge --no-ff`, and PR auto-merge uses `gh pr merge --merge`. The merge commit subject uses `Iteration N done: <summary>` so the iteration boundary is visible in history. |
 
 Pull request review modes:
 

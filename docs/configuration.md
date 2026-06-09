@@ -77,6 +77,18 @@ git:
     mode: local_merge
 ```
 
+Choose how approved iterations merge into the base branch:
+
+```yaml
+version: 1
+
+git:
+  integration:
+    mergeMethod: merge_commit
+```
+
+`squash` is the default and writes the iteration's internal commit list into the squash commit body. `merge_commit` preserves the iteration branch graph with a `--no-ff` merge commit named `Iteration N done: <summary>`.
+
 Choose a pull request review policy:
 
 ```yaml

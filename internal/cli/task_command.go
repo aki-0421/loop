@@ -593,10 +593,10 @@ func commandTaskMerge(ctx context.Context, g globals, args []string) error {
 	if *continueMerge {
 		return continueTaskMerge(ctx, g, mergeCtx)
 	}
-	subject, err := buildLoopCommitSubject(*kind, strings.Join(fs.Args(), " "), loopCommitMessageMaxLength)
-	if err != nil {
+	if _, err := normalizeLoopCommitType(*kind); err != nil {
 		return codedError{2, err}
 	}
+	subject := buildTaskMergeSubject(mergeCtx)
 	return startTaskMerge(ctx, g, mergeCtx, subject)
 }
 
@@ -1460,6 +1460,56 @@ func buildTaskMergeRecord(mergeCtx taskMergeContext, taskCommits []taskMergeComm
 		MergeCommit:     mergeCommit,
 		MergedAt:        time.Now().UTC().Format(time.RFC3339),
 	}
+}
+
+func buildTaskMergeSubject(mergeCtx taskMergeContext) string {
+	number := taskSequenceNumber(mergeCtx)
+	description := taskShortDescription(mergeCtx.Task, mergeCtx.TaskID)
+	return fmt.Sprintf("Task %d done: %s", number, description)
+}
+
+func taskSequenceNumber(mergeCtx taskMergeContext) int {
+	base := filepath.Base(strings.TrimSpace(mergeCtx.TaskDir))
+	if n, err := strconv.Atoi(strings.TrimLeft(base, "0")); err == nil && n > 0 {
+		return n
+	}
+	for _, part := range strings.FieldsFunc(mergeCtx.TaskID, func(r rune) bool { return r < '0' || r > '9' }) {
+		if n, err := strconv.Atoi(part); err == nil && n > 0 {
+			return n
+		}
+	}
+	return 1
+}
+
+func taskShortDescription(task workflow.Task, taskID string) string {
+	description := strings.TrimSpace(task.Title)
+	if description == "" {
+		description = firstSentence(task.Description)
+	}
+	if description == "" {
+		description = strings.ReplaceAll(strings.TrimSpace(taskID), "-", " ")
+	}
+	description = collapseWhitespace(description)
+	description = strings.TrimSuffix(description, ".")
+	if description == "" {
+		return "task"
+	}
+	return description
+}
+
+func firstSentence(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if i := strings.Index(value, "."); i >= 0 {
+		return value[:i]
+	}
+	return value
+}
+
+func collapseWhitespace(value string) string {
+	return strings.Join(strings.Fields(value), " ")
 }
 
 func printTaskMergeResult(g globals, record taskMergeRecord) error {

@@ -62,7 +62,7 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 	args = flagsFirst(args, map[string]bool{
 		"agent": true, "goal": true, "max-iterations": true, "base": true,
 		"resume": true, "from-iteration": true, "keep-branches": true, "keep-worktrees": true,
-		"human-review": true, "review-mode": true,
+		"human-review": true, "review-mode": true, "merge-method": true,
 	})
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -73,6 +73,7 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 	base := fs.String("base", "", "base branch")
 	humanReview := fs.Bool("human-review", false, "open pull requests and pause for external post-hoc review before merge")
 	reviewMode := fs.String("review-mode", "", "PR review mode: auto_merge, parallel_human_review, or serial_human_review")
+	mergeMethod := fs.String("merge-method", "", "iteration merge method: squash or merge_commit")
 	resumeID := fs.String("resume", "", "accepted for older scripts; use loop resume")
 	fromIteration := fs.Int("from-iteration", 0, "accepted for older scripts; currently ignored")
 	keepBranches := fs.String("keep-branches", "", "accepted for older scripts; cleanup is automatic")
@@ -114,6 +115,8 @@ func commandRun(ctx context.Context, g globals, args []string) error {
 		case "review-mode":
 			reviewModeSet = true
 			overrides.ReviewMode = *reviewMode
+		case "merge-method":
+			overrides.MergeMethod = *mergeMethod
 		}
 	})
 	if humanReviewSet && !reviewModeSet {
@@ -452,6 +455,7 @@ func resumeOrchestratedIteration(ctx context.Context, req orchestrationRequest) 
 	paths.IterationBranch = currentBranch
 	paths.CurrentBranch = currentBranch
 	paths.IntegrationMode = cfg.Git.Integration.Mode
+	paths.IntegrationMergeMethod = cfg.Git.Integration.MergeMethod
 	paths.PRReviewMode = cfg.Git.Integration.PR.ReviewMode
 	paths.PullRequestMode = cfg.Git.Integration.Mode == "pr"
 	paths.RoleOrchestrated = true
@@ -695,6 +699,7 @@ func runOrchestratedIteration(ctx context.Context, req orchestrationRequest) (re
 	paths.IterationBranch = ""
 	paths.CurrentBranch = cfg.Git.BaseBranch
 	paths.IntegrationMode = cfg.Git.Integration.Mode
+	paths.IntegrationMergeMethod = cfg.Git.Integration.MergeMethod
 	paths.PRReviewMode = cfg.Git.Integration.PR.ReviewMode
 	paths.PullRequestMode = cfg.Git.Integration.Mode == "pr"
 	paths.RoleOrchestrated = true
@@ -1115,6 +1120,11 @@ func finalizeOrchestratedIteration(ctx context.Context, req orchestrationRequest
 			return iterationWorkflowResult{}, codedError{3, fmt.Errorf("unsupported PR review mode %q", cfg.Git.Integration.PR.ReviewMode)}
 		}
 	} else {
+		iterationCommits, err := rootRunner.ListCommits(ctx, cfg.Git.BaseBranch, finalBranch)
+		if err != nil {
+			return iterationWorkflowResult{}, codedError{6, err}
+		}
+		integrationBody := buildIntegrationCommitBody("", iterationCommits)
 		if err := rootRunner.RemoveWorktree(ctx, iterationWorktree, false); err != nil {
 			return iterationWorkflowResult{}, codedError{6, err}
 		}
@@ -1122,8 +1132,18 @@ func finalizeOrchestratedIteration(ctx context.Context, req orchestrationRequest
 		cleanup.DirectIntegrating = true
 		baseHead, _ := rootRunner.Run(context.Background(), "rev-parse", cfg.Git.BaseBranch)
 		cleanup.BaseHead = strings.TrimSpace(baseHead)
-		if err := rootRunner.SquashMerge(ctx, cfg.Git.BaseBranch, finalBranch, summary, false); err != nil {
-			return iterationWorkflowResult{}, codedError{6, err}
+		switch cfg.Git.Integration.MergeMethod {
+		case config.MergeMethodSquash:
+			if err := rootRunner.SquashMergeWithBody(ctx, cfg.Git.BaseBranch, finalBranch, squashIntegrationSubject(summary), integrationBody, false); err != nil {
+				return iterationWorkflowResult{}, codedError{6, err}
+			}
+		case config.MergeMethodMergeCommit:
+			subject := iterationBoundarySubject(iterationID, summary)
+			if err := rootRunner.MergeNoFF(ctx, cfg.Git.BaseBranch, finalBranch, subject, integrationBody, false); err != nil {
+				return iterationWorkflowResult{}, codedError{6, err}
+			}
+		default:
+			return iterationWorkflowResult{}, codedError{3, fmt.Errorf("unsupported merge method %q", cfg.Git.Integration.MergeMethod)}
 		}
 		cleanup.Integrated = true
 		_ = rootRunner.DeleteBranch(ctx, finalBranch, true)
@@ -1143,6 +1163,52 @@ func finalizeOrchestratedIteration(ctx context.Context, req orchestrationRequest
 	req.State.Iterations[len(req.State.Iterations)-1].ShouldFullyStop = goalComplete
 	_ = runstate.Write(req.StatePath, *req.State)
 	return iterationWorkflowResult{Summary: summary, GoalComplete: goalComplete, GoalEvaluation: review.GoalEvaluation, Commits: allCommits, Integrated: integrated}, nil
+}
+
+func squashIntegrationSubject(summary string) string {
+	subject := collapseWhitespace(summary)
+	if subject == "" {
+		return "Complete iteration"
+	}
+	return subject
+}
+
+func iterationBoundarySubject(iterationID, summary string) string {
+	description := collapseWhitespace(summary)
+	description = strings.TrimSuffix(description, ".")
+	if description == "" {
+		description = "iteration"
+	}
+	return fmt.Sprintf("Iteration %d done: %s", iterationOrdinal(iterationID), description)
+}
+
+func iterationOrdinal(iterationID string) int {
+	n, err := strconv.Atoi(strings.TrimLeft(strings.TrimSpace(iterationID), "0"))
+	if err != nil || n <= 0 {
+		return 1
+	}
+	return n
+}
+
+func buildIntegrationCommitBody(existing string, commits []gitx.Commit) string {
+	var b strings.Builder
+	if body := strings.TrimSpace(existing); body != "" {
+		b.WriteString(body)
+		b.WriteString("\n\n")
+	}
+	b.WriteString("Included commits:\n")
+	for _, commit := range chronologicalCommits(commits) {
+		fmt.Fprintf(&b, "- %s %s\n", shortSHA(commit.Hash), strings.TrimSpace(commit.Subject))
+	}
+	return strings.TrimSpace(b.String())
+}
+
+func chronologicalCommits(commits []gitx.Commit) []gitx.Commit {
+	out := append([]gitx.Commit(nil), commits...)
+	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+		out[i], out[j] = out[j], out[i]
+	}
+	return out
 }
 
 type taskSetRequest struct {
@@ -1986,6 +2052,7 @@ func runRoleAgentOnce(ctx context.Context, cfg config.Config, workDir string, pa
 		"LOOP_CURRENT_BRANCH":            paths.CurrentBranch,
 		"LOOP_ITERATION_WORKTREE":        paths.IterationWorktree,
 		"LOOP_INTEGRATION_MODE":          paths.IntegrationMode,
+		"LOOP_MERGE_METHOD":              paths.IntegrationMergeMethod,
 		"LOOP_PR_REVIEW_MODE":            paths.PRReviewMode,
 		"LOOP_PULL_REQUEST_MODE":         loopBoolEnv(paths.PullRequestMode),
 		"LOOP_PR_MODE":                   loopBoolEnv(paths.PullRequestMode),
@@ -2147,7 +2214,7 @@ func buildRolePrompt(role string, paths pathSet, task workflow.Task, tree any, t
 		b.WriteString("\nProcess TODOs serially. For each item, run `loop task todo start <n>`. For commit TODOs, make only that TODO's changes, then run `loop task todo stage <n>` to inspect staged commit candidates and remove unrelated files with `loop task todo stage <n> --remove <path>` if needed. Run `loop task todo complete <n>` after the staged file list matches the TODO. For no_commit TODOs, keep files unstaged and complete with a clean task worktree. To cancel an active TODO, run `loop task todo cancel <n> --discard-changes`; this discards task worktree and index changes before marking the TODO cancelled. Complete or cancel the current TODO before starting the next TODO.\n")
 		b.WriteString("\nAfter all TODOs are complete, write the handoff source outside repository changes, then merge the completed task:\n\n```bash\ncat > \"$LOOP_TASK_DIR/task-result.json\" <<'JSON'\n{...}\nJSON\nloop handoff write task-result --task \"" + task.ID + "\" --file \"$LOOP_TASK_DIR/task-result.json\"\nloop task merge --type F complete " + task.ID + "\n```\n")
 		b.WriteString("\nIf this task should be abandoned, run `loop task discard --reason <reason>` and exit without merging.\n")
-		b.WriteString("\nIf `loop task merge` reports conflicts, resolve them in the printed iteration worktree and run `loop task merge --continue`. Continue until the merge command succeeds.\n")
+		b.WriteString("\nThe CLI generates the task merge commit subject as `Task N done: <task title>`. If `loop task merge` reports conflicts, resolve them in the printed iteration worktree and run `loop task merge --continue`. Continue until the merge command succeeds.\n")
 		b.WriteString("\nThe JSON must match this schema: " + taskResultSchemaHelpText() + "\n")
 	case "review":
 		treeData, _ := workflow.MarshalIndent(tree)

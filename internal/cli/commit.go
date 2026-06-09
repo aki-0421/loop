@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/aki-0421/loop/internal/gitx"
@@ -138,7 +139,7 @@ func validateLoopCommitSubject(subject string, maxLength int) error {
 func validateIterationCommitSubjects(commits []gitx.Commit) error {
 	var problems []string
 	for _, commit := range commits {
-		if err := validateLoopCommitSubject(commit.Subject, loopCommitMessageMaxLength); err != nil {
+		if err := validateIterationCommitSubject(commit.Subject); err != nil {
 			problems = append(problems, fmt.Sprintf("commit %s %q is invalid: %v", shortSHA(commit.Hash), commit.Subject, err))
 		}
 	}
@@ -146,6 +147,29 @@ func validateIterationCommitSubjects(commits []gitx.Commit) error {
 		return errors.New(strings.Join(problems, "; "))
 	}
 	return nil
+}
+
+func validateIterationCommitSubject(subject string) error {
+	if isTaskMergeCommitSubject(subject) {
+		return nil
+	}
+	return validateLoopCommitSubject(subject, loopCommitMessageMaxLength)
+}
+
+func isTaskMergeCommitSubject(subject string) bool {
+	subject = strings.TrimSpace(subject)
+	if strings.ContainsAny(subject, "\r\n") {
+		return false
+	}
+	prefix, body, ok := strings.Cut(subject, " done: ")
+	if !ok || strings.TrimSpace(body) == "" {
+		return false
+	}
+	if !strings.HasPrefix(prefix, "Task ") {
+		return false
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(strings.TrimPrefix(prefix, "Task ")))
+	return err == nil && n > 0
 }
 
 func isLoopCommitPrefix(prefix string) bool {

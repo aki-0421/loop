@@ -41,6 +41,10 @@ func (r Runner) ListCommits(ctx context.Context, from, to string) ([]Commit, err
 }
 
 func (r Runner) SquashMerge(ctx context.Context, base, branch, message string, pull bool) error {
+	return r.SquashMergeWithBody(ctx, base, branch, message, "", pull)
+}
+
+func (r Runner) SquashMergeWithBody(ctx context.Context, base, branch, subject, body string, pull bool) error {
 	if _, err := r.Run(ctx, "checkout", base); err != nil {
 		return err
 	}
@@ -52,6 +56,36 @@ func (r Runner) SquashMerge(ctx context.Context, base, branch, message string, p
 	if _, err := r.Run(ctx, "merge", "--squash", branch); err != nil {
 		return err
 	}
-	_, err := r.Run(ctx, "commit", "-m", message)
+	_, err := r.Run(ctx, commitMessageArgs(subject, body)...)
 	return err
+}
+
+func (r Runner) MergeNoFF(ctx context.Context, base, branch, subject, body string, pull bool) error {
+	if _, err := r.Run(ctx, "checkout", base); err != nil {
+		return err
+	}
+	if pull {
+		if _, err := r.Run(ctx, "pull", "--ff-only"); err != nil {
+			return err
+		}
+	}
+	args := []string{"merge", "--no-ff"}
+	args = append(args, messageArgs(subject, body)...)
+	args = append(args, branch)
+	_, err := r.Run(ctx, args...)
+	return err
+}
+
+func commitMessageArgs(subject, body string) []string {
+	args := []string{"commit"}
+	args = append(args, messageArgs(subject, body)...)
+	return args
+}
+
+func messageArgs(subject, body string) []string {
+	args := []string{"-m", subject}
+	if strings.TrimSpace(body) != "" {
+		args = append(args, "-m", body)
+	}
+	return args
 }

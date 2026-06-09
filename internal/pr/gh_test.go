@@ -108,6 +108,17 @@ func TestMergeArgsPreservesPRLinkInSubject(t *testing.T) {
 	}
 }
 
+func TestMergeArgsUsesMergeCommitMethod(t *testing.T) {
+	args := MergeArgs(MergeOptions{PR: "42", Method: "merge_commit", Subject: "Iteration 1 done: Add usage report"})
+	log := strings.Join(args, " ")
+	if !strings.Contains(log, "pr merge 42 --merge") {
+		t.Fatalf("merge args = %#v, want --merge", args)
+	}
+	if strings.Contains(log, "--squash") {
+		t.Fatalf("merge args should not include --squash: %#v", args)
+	}
+}
+
 func TestGHWrapperChecksUsesWatchOptions(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()

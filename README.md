@@ -154,6 +154,8 @@ loop run task.md --pr --review-mode serial_human_review
 
 In the interactive renderer, press `r` during PR runs to cycle between `auto merge`, `parallel review`, and `serial review`. The renderer also shows PR branch metadata and live check progress during PR integration.
 
+Use `--merge-method merge_commit` or `git.integration.mergeMethod: merge_commit` when you want the final iteration boundary to remain as a `--no-ff` merge commit. The default `squash` method writes the iteration's internal commit list into the squash commit body.
+
 ## What You Get Back
 
 After `loop init`, the repository keeps only the repository-local config:
@@ -218,6 +220,7 @@ Important defaults:
 
 - `agent.default` is `codex`.
 - Pull request integration is the default workflow.
+- Iteration merge method is `squash`.
 - `run.maxIterations` is `0`, meaning unlimited.
 - `run.maxParallelTasks` is `2`.
 - Validation commands are repository-owned and empty until configured.

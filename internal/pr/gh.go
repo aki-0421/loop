@@ -497,7 +497,7 @@ func (r Runner) Close(ctx context.Context, pr string) (CommandResult, error) {
 }
 
 func MergeArgs(opts MergeOptions) []string {
-	args := []string{"pr", "merge", opts.PR, "--squash"}
+	args := []string{"pr", "merge", opts.PR, mergeFlag(opts.Method)}
 	if subject := mergeSubject(opts.Subject, opts.PR); subject != "" {
 		args = append(args, "--subject", subject)
 	}
@@ -508,6 +508,15 @@ func MergeArgs(opts MergeOptions) []string {
 		args = append(args, "--delete-branch")
 	}
 	return args
+}
+
+func mergeFlag(method string) string {
+	switch strings.TrimSpace(method) {
+	case "merge_commit", "merge":
+		return "--merge"
+	default:
+		return "--squash"
+	}
 }
 
 func mergeSubject(subject, pr string) string {
@@ -565,6 +574,7 @@ func allDigits(value string) bool {
 
 type MergeOptions struct {
 	PR           string
+	Method       string
 	Subject      string
 	BodyFile     string
 	DeleteBranch bool

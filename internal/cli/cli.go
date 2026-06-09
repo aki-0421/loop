@@ -1383,26 +1383,27 @@ type pathSet struct {
 	PRBody          string
 	Errors          string
 
-	Goal              string
-	Language          string
-	RunID             string
-	IterationID       string
-	BaseBranch        string
-	InitialBranch     string
-	IterationBranch   string
-	CurrentBranch     string
-	BranchRenamed     bool
-	IntegrationMode   string
-	PRReviewMode      string
-	PullRequestMode   bool
-	RoleOrchestrated  bool
-	WorkDir           string
-	TaskID            string
-	TaskDir           string
-	IterationWorktree string
-	PendingPRs        []runstate.PendingPullRequest
-	PendingPRRepair   *runstate.PendingPullRequest
-	AgentPromptExtra  string
+	Goal                   string
+	Language               string
+	RunID                  string
+	IterationID            string
+	BaseBranch             string
+	InitialBranch          string
+	IterationBranch        string
+	CurrentBranch          string
+	BranchRenamed          bool
+	IntegrationMode        string
+	IntegrationMergeMethod string
+	PRReviewMode           string
+	PullRequestMode        bool
+	RoleOrchestrated       bool
+	WorkDir                string
+	TaskID                 string
+	TaskDir                string
+	IterationWorktree      string
+	PendingPRs             []runstate.PendingPullRequest
+	PendingPRRepair        *runstate.PendingPullRequest
+	AgentPromptExtra       string
 }
 
 func promptPaths(iterDir string) pathSet {
@@ -1448,6 +1449,7 @@ func writeRuntimeArtifact(paths pathSet) error {
 		"current_branch":    paths.CurrentBranch,
 		"branch_renamed":    branchRenamed,
 		"integration_mode":  paths.IntegrationMode,
+		"merge_method":      paths.IntegrationMergeMethod,
 		"pr_review_mode":    paths.PRReviewMode,
 		"pull_request_mode": paths.PullRequestMode,
 		"role_orchestrated": paths.RoleOrchestrated,

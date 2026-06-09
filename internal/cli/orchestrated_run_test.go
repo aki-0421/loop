@@ -163,6 +163,12 @@ git:
 	if data := readText(t, filepath.Join(repo, "loop-fake-role-change.txt")); !strings.Contains(data, "fake role change") {
 		t.Fatalf("merged fake role change missing:\n%s", data)
 	}
+	squashCommitBody := git(t, repo, "log", "--format=%B", "-1", "develop")
+	for _, want := range []string{"Included commits:", "Task 1 done: Fake task", "F: run fake role workflow"} {
+		if !strings.Contains(squashCommitBody, want) {
+			t.Fatalf("squash commit body missing %q:\n%s", want, squashCommitBody)
+		}
+	}
 	state := readLatestRunState(t, repo)
 	if state.Stage != runstate.StageCompleted || len(state.Iterations) != 1 {
 		t.Fatalf("state = %#v, want one completed role iteration", state)
@@ -218,6 +224,58 @@ git:
 	for _, want := range []string{`"agent_type":"coding"`, `"task_id":"fake-task"`} {
 		if !strings.Contains(taskEvents, want) {
 			t.Fatalf("task events missing %s:\n%s", want, taskEvents)
+		}
+	}
+	assertBranchMissing(t, repo, "wip/0001")
+}
+
+func TestRoleOrchestratedLocalMergeCommitMethodCreatesBoundaryCommit(t *testing.T) {
+	ctx := context.Background()
+	repo := newCleanupRepo(t)
+	mustWrite(t, filepath.Join(repo, "task.md"), "# Task\n\nRun the role workflow with a merge commit.\n")
+	agentCommand, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, filepath.Join(repo, ".loop", "config.yaml"), `version: 1
+
+agent:
+  default: rolefake
+  adapters:
+    rolefake:
+      command: `+yamlSingleQuote(agentCommand)+`
+      args: [-test.run=TestHelperProcessRoleAgent, --]
+      prompt: stdin
+      env:
+        LOOP_ROLE_TEST_AGENT: "1"
+
+run:
+  maxIterations: 1
+
+git:
+  baseBranch: develop
+  integration:
+    mode: local_merge
+    mergeMethod: merge_commit
+`)
+	git(t, repo, "add", "task.md", ".loop/config.yaml")
+	git(t, repo, "commit", "-m", "T: add merge commit fixture")
+	withWorkingDir(t, repo)
+
+	if _, err := captureStdout(t, func() error {
+		return commandRun(ctx, globals{Agent: "rolefake", JSON: true, NoColor: true}, []string{"task.md"})
+	}); err != nil {
+		t.Fatalf("loop run: %v", err)
+	}
+
+	parents := strings.Fields(git(t, repo, "show", "-s", "--format=%P", "develop"))
+	if len(parents) != 2 {
+		t.Fatalf("develop HEAD parents = %#v, want merge commit", parents)
+	}
+	body := git(t, repo, "log", "--format=%B", "-1", "develop")
+	for _, want := range []string{"Iteration 1 done: Fake review approved the iteration", "Included commits:", "Task 1 done: Fake task", "F: run fake role workflow"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("merge commit body missing %q:\n%s", want, body)
 		}
 	}
 	assertBranchMissing(t, repo, "wip/0001")

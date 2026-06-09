@@ -36,6 +36,7 @@ skills:
 git:
   integration:
     mode: pr
+    mergeMethod: squash
     local_merge:
       squash: true
       deleteBranch: true

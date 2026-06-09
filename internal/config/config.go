@@ -20,6 +20,9 @@ const (
 	ReviewModeAutoMerge           = "auto_merge"
 	ReviewModeParallelHumanReview = "parallel_human_review"
 	ReviewModeSerialHumanReview   = "serial_human_review"
+
+	MergeMethodSquash      = "squash"
+	MergeMethodMergeCommit = "merge_commit"
 )
 
 type Config struct {
@@ -76,9 +79,10 @@ type GitConfig struct {
 }
 
 type IntegrationConfig struct {
-	Mode       string           `yaml:"mode" json:"mode"`
-	LocalMerge LocalMergeConfig `yaml:"local_merge" json:"local_merge"`
-	PR         PRConfig         `yaml:"pr" json:"pr"`
+	Mode        string           `yaml:"mode" json:"mode"`
+	MergeMethod string           `yaml:"mergeMethod" json:"mergeMethod"`
+	LocalMerge  LocalMergeConfig `yaml:"local_merge" json:"local_merge"`
+	PR          PRConfig         `yaml:"pr" json:"pr"`
 }
 
 type LocalMergeConfig struct {
@@ -133,6 +137,7 @@ type Overrides struct {
 	PRMode        *bool
 	HumanReview   *bool
 	ReviewMode    string
+	MergeMethod   string
 	NoColor       bool
 }
 
@@ -295,6 +300,9 @@ func Validate(cfg Config) error {
 	if !oneOf(cfg.Git.Integration.Mode, "local_merge", "pr") {
 		errs = append(errs, "git.integration.mode must be local_merge or pr")
 	}
+	if !oneOf(cfg.Git.Integration.MergeMethod, MergeMethodSquash, MergeMethodMergeCommit) {
+		errs = append(errs, "git.integration.mergeMethod must be squash or merge_commit")
+	}
 	if !oneOf(cfg.Git.Integration.PR.ReviewMode, ReviewModeAutoMerge, ReviewModeParallelHumanReview, ReviewModeSerialHumanReview) {
 		errs = append(errs, "git.integration.pr.reviewMode must be auto_merge, parallel_human_review, or serial_human_review")
 	}
@@ -425,6 +433,9 @@ func applyEnv(m map[string]any, env []string) {
 	if v := strings.TrimSpace(values["LOOP_BASE_BRANCH"]); v != "" {
 		setPath(m, v, "git", "baseBranch")
 	}
+	if v := strings.TrimSpace(values["LOOP_MERGE_METHOD"]); v != "" {
+		setPath(m, v, "git", "integration", "mergeMethod")
+	}
 }
 
 func applyOverrides(m map[string]any, o Overrides) {
@@ -449,6 +460,9 @@ func applyOverrides(m map[string]any, o Overrides) {
 	}
 	if strings.TrimSpace(o.ReviewMode) != "" {
 		setPath(m, strings.TrimSpace(o.ReviewMode), "git", "integration", "pr", "reviewMode")
+	}
+	if strings.TrimSpace(o.MergeMethod) != "" {
+		setPath(m, strings.TrimSpace(o.MergeMethod), "git", "integration", "mergeMethod")
 	}
 }
 
@@ -492,7 +506,17 @@ func normalize(c *Config) {
 	if c.Validation.Commands == nil {
 		c.Validation.Commands = []ValidationCommand{}
 	}
+	normalizeIntegrationMergeMethod(c)
 	normalizePRReviewMode(c)
+}
+
+func normalizeIntegrationMergeMethod(c *Config) {
+	method := strings.TrimSpace(c.Git.Integration.MergeMethod)
+	if method == "" {
+		method = MergeMethodSquash
+	}
+	c.Git.Integration.MergeMethod = method
+	c.Git.Integration.LocalMerge.Squash = method == MergeMethodSquash
 }
 
 func normalizePRReviewMode(c *Config) {

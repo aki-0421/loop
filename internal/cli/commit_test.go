@@ -92,3 +92,13 @@ func TestValidateIterationCommitSubjectsReportsBadCommit(t *testing.T) {
 		t.Fatalf("error = %v", err)
 	}
 }
+
+func TestValidateIterationCommitSubjectsAcceptsTaskMergeCommit(t *testing.T) {
+	err := validateIterationCommitSubjects([]gitx.Commit{
+		{Hash: "abc1234567890", Subject: "Task 1 done: Fake task"},
+		{Hash: "def1234567890", Subject: "F: add weather app"},
+	})
+	if err != nil {
+		t.Fatalf("task merge commit subject should be accepted: %v", err)
+	}
+}

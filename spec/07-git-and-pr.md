@@ -8,7 +8,7 @@ Before each iteration, the CLI updates the base branch when configured to pull a
 
 ## Branch And Task Worktrees
 
-Role-orchestrated runs create the iteration branch before planning and one task branch/worktree for each coding task. Coding agents create initial task-local TODOs before editing. During implementation they may add or reorder pending follow-up TODOs after the fixed done/active/cancelled boundary. Commit TODOs are started, implemented, staged for inspection with `loop task todo stage`, and completed serially with `loop task todo complete`, which commits the staged changes as one task-branch commit. no_commit TODOs are started and completed serially without staging or committing, and completion is rejected if repository changes remain. After writing a completed task handoff, the coding agent runs `loop task merge --type <type> <summary>`, which serializes access to the iteration branch and merges the task branch into the iteration branch while preserving task commit history. If the merge conflicts, the coding agent resolves conflicts in the iteration worktree and runs `loop task merge --continue`; the task is not complete until that command succeeds.
+Role-orchestrated runs create the iteration branch before planning and one task branch/worktree for each coding task. Coding agents create initial task-local TODOs before editing. During implementation they may add or reorder pending follow-up TODOs after the fixed done/active/cancelled boundary. Commit TODOs are started, implemented, staged for inspection with `loop task todo stage`, and completed serially with `loop task todo complete`, which commits the staged changes as one task-branch commit. no_commit TODOs are started and completed serially without staging or committing, and completion is rejected if repository changes remain. After writing a completed task handoff, the coding agent runs `loop task merge --type <type> <summary>`, which serializes access to the iteration branch and merges the task branch into the iteration branch while preserving task commit history. The CLI generates the task merge commit subject as `Task N done: <task title>`. If the merge conflicts, the coding agent resolves conflicts in the iteration worktree and runs `loop task merge --continue`; the task is not complete until that command succeeds.
 
 After creating a planner, iteration, or task worktree, the CLI reads `.worktreeinclude` from the repository root when the file exists. It copies only paths that match `.worktreeinclude` patterns and are also ignored by Git's standard ignore rules. This opt-in copy step lets repositories include local ignored files such as `.env` in loop-created worktrees without copying every ignored file. Copied path names are recorded as a `worktree.include_copied` event. The CLI does not sync these files back from worktrees; ignored local files remain outside task commit and merge ownership.
 
@@ -64,7 +64,7 @@ Branch slugs:
 
 ## Commit Creation Through The CLI
 
-In role-orchestrated runs, coding agents use `loop task todo stage <n>` to inspect and adjust commit candidates, then `loop task todo complete <n>` to ask the CLI to create commits from staged changes. Commit metadata comes from coding-agent task TODOs. `loop task merge --type <type> <summary>` creates an iteration-branch merge commit for the completed task branch and preserves the task-branch commits in history.
+In role-orchestrated runs, coding agents use `loop task todo stage <n>` to inspect and adjust commit candidates, then `loop task todo complete <n>` to ask the CLI to create commits from staged changes. Commit metadata comes from coding-agent task TODOs. `loop task merge --type <type> <summary>` creates an iteration-branch merge commit for the completed task branch, names it `Task N done: <task title>`, and preserves the task-branch commits in history.
 
 The `loop commit` command remains available for agent-facing diagnostics and direct iteration utilities:
 
@@ -100,13 +100,21 @@ Task TODOs are sized so that one completed commit TODO corresponds to one task-b
 
 ## Local merge mode
 
-Local merge mode runs locally:
+Local merge mode runs locally. With the default `git.integration.mergeMethod=squash`, the CLI runs:
 
 ```bash
 git checkout <base>
 git pull --ff-only
 git merge --squash <iteration-branch>
-git commit -m "<summary_sentence>"
+git commit -m "<summary_sentence>" -m "<included iteration commits>"
+```
+
+With `git.integration.mergeMethod=merge_commit`, the CLI runs:
+
+```bash
+git checkout <base>
+git pull --ff-only
+git merge --no-ff -m "Iteration <n> done: <summary_sentence>" -m "<included iteration commits>" <iteration-branch>
 ```
 
 After commit, the CLI deletes the iteration branch, removes the worktree, checks out the base branch, and pulls with `--ff-only` when an upstream is configured.
@@ -152,7 +160,7 @@ When pull request mode has `waitChecks=true`, `loop pr checks` and `loop pr merg
 
 If `git push` fails during `loop pr create`, `loop pr checks`, or `loop pr merge` before provider checks can run, the CLI records the push output in the same `pr-checks` artifact with `status=failed` and writes only a concise pointer to `errors.log`. In role-orchestrated mode, that failed artifact is treated as a repairable PR lifecycle failure; if the merge agent exits before writing a handoff, the orchestrator may synthesize `merge-result.status=pr_check_failed` from the artifact so the next repair task can fix the branch push or pre-push validation failure.
 
-`mergeWhenChecksPass` is retained for configuration compatibility, but PR-mode auto merge is now triggered by `loop pr merge`. Human-review modes use `merge-result.status=waiting_for_human` and external human merge observation.
+`mergeWhenChecksPass` is retained for configuration compatibility, but PR-mode auto merge is now triggered by `loop pr merge`. With `git.integration.mergeMethod=squash`, `loop pr merge` runs `gh pr merge --squash` and includes the iteration commit list in the merge body. With `git.integration.mergeMethod=merge_commit`, it runs `gh pr merge --merge` and uses an `Iteration N done: <title>` subject. Human-review modes use `merge-result.status=waiting_for_human` and external human merge observation.
 
 ## Cleanup
 

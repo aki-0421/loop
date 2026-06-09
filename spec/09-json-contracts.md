@@ -119,7 +119,7 @@ Required fields:
 | `branch` | string | Task branch that was merged. |
 | `iteration_branch` | string | Iteration branch that received the task branch merge. |
 | `task_commits` | array | Task-branch TODO commits as `sha` and `subject`. |
-| `merge_commit` | object | The iteration branch merge commit as `sha` and `subject`. |
+| `merge_commit` | object | The iteration branch merge commit as `sha` and `subject`; subjects use `Task N done: <task title>`. |
 | `merged_at` | string | UTC timestamp when the merge completed. |
 
 ## Pending Pull Requests
@@ -408,6 +408,7 @@ Validation requirements:
 | `skills.sourceDir` | Required string. |
 | `skills.targets.*.mode` | Must be `copy`, `symlink`, or `off`. |
 | `git.integration.mode` | Must be `local_merge` or `pr`. |
+| `git.integration.mergeMethod` | Must be `squash` or `merge_commit`. |
 | `git.integration.pr.checksStartupDelaySeconds` | Must be non-negative. |
 | `git.integration.pr.checksDiscoveryTimeoutSeconds` | Must be non-negative. |
 | `git.integration.pr.checksPollIntervalSeconds` | Must be non-negative. |
