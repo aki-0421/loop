@@ -95,7 +95,7 @@ func TestValidateIterationCommitSubjectsReportsBadCommit(t *testing.T) {
 
 func TestValidateIterationCommitSubjectsAcceptsTaskMergeCommit(t *testing.T) {
 	err := validateIterationCommitSubjects([]gitx.Commit{
-		{Hash: "abc1234567890", Subject: "Task 1 done: Fake task"},
+		{Hash: "abc1234567890", Subject: "Complete work: Fake task"},
 		{Hash: "def1234567890", Subject: "F: add weather app"},
 	})
 	if err != nil {

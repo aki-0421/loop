@@ -125,7 +125,7 @@ Iteration merge methods:
 | Method | Behavior |
 | --- | --- |
 | `squash` | Built-in default. Local mode creates one squash commit on the base branch, and PR auto-merge uses `gh pr merge --squash`. The commit body includes the iteration's internal commits so task-level history remains inspectable after the branch is deleted. |
-| `merge_commit` | Local mode uses `git merge --no-ff`, and PR auto-merge uses `gh pr merge --merge`. The merge commit subject uses `Iteration N done: <summary>` so the iteration boundary is visible in history. |
+| `merge_commit` | Local mode uses `git merge --no-ff`, and PR auto-merge uses `gh pr merge --merge`. The merge commit subject uses `Complete change set: <summary>` so the boundary is visible in history. |
 
 Pull request review modes:
 

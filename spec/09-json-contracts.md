@@ -119,7 +119,7 @@ Required fields:
 | `branch` | string | Task branch that was merged. |
 | `iteration_branch` | string | Iteration branch that received the task branch merge. |
 | `task_commits` | array | Task-branch TODO commits as `sha` and `subject`. |
-| `merge_commit` | object | The iteration branch merge commit as `sha` and `subject`; subjects use `Task N done: <task title>`. |
+| `merge_commit` | object | The iteration branch merge commit as `sha` and `subject`; subjects use `Complete work: <task title>`. |
 | `merged_at` | string | UTC timestamp when the merge completed. |
 
 ## Pending Pull Requests

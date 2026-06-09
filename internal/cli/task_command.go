@@ -1463,22 +1463,8 @@ func buildTaskMergeRecord(mergeCtx taskMergeContext, taskCommits []taskMergeComm
 }
 
 func buildTaskMergeSubject(mergeCtx taskMergeContext) string {
-	number := taskSequenceNumber(mergeCtx)
 	description := taskShortDescription(mergeCtx.Task, mergeCtx.TaskID)
-	return fmt.Sprintf("Task %d done: %s", number, description)
-}
-
-func taskSequenceNumber(mergeCtx taskMergeContext) int {
-	base := filepath.Base(strings.TrimSpace(mergeCtx.TaskDir))
-	if n, err := strconv.Atoi(strings.TrimLeft(base, "0")); err == nil && n > 0 {
-		return n
-	}
-	for _, part := range strings.FieldsFunc(mergeCtx.TaskID, func(r rune) bool { return r < '0' || r > '9' }) {
-		if n, err := strconv.Atoi(part); err == nil && n > 0 {
-			return n
-		}
-	}
-	return 1
+	return fmt.Sprintf("Complete work: %s", description)
 }
 
 func taskShortDescription(task workflow.Task, taskID string) string {

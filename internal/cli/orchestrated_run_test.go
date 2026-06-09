@@ -162,7 +162,7 @@ git:
 		t.Fatalf("merged fake role change missing:\n%s", data)
 	}
 	squashCommitBody := git(t, repo, "log", "--format=%B", "-1", "develop")
-	for _, want := range []string{"Included commits:", "Task 1 done: Fake task", "F: run fake role workflow"} {
+	for _, want := range []string{"Included commits:", "Complete work: Fake task", "F: run fake role workflow"} {
 		if !strings.Contains(squashCommitBody, want) {
 			t.Fatalf("squash commit body missing %q:\n%s", want, squashCommitBody)
 		}
@@ -271,7 +271,7 @@ git:
 		t.Fatalf("develop HEAD parents = %#v, want merge commit", parents)
 	}
 	body := git(t, repo, "log", "--format=%B", "-1", "develop")
-	for _, want := range []string{"Iteration 1 done: Fake review approved the iteration", "Included commits:", "Task 1 done: Fake task", "F: run fake role workflow"} {
+	for _, want := range []string{"Complete change set: Run fake role workflow", "Included commits:", "Complete work: Fake task", "F: run fake role workflow"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("merge commit body missing %q:\n%s", want, body)
 		}

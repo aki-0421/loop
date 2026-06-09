@@ -638,7 +638,7 @@ func prMergeMethod(prCtx prCommandContext) string {
 
 func prMergeSubject(prCtx prCommandContext, state prState, method string) string {
 	if method == config.MergeMethodMergeCommit {
-		return iterationBoundarySubject(prCtx.paths.IterationID, state.Title)
+		return changeSetBoundarySubject(state.Title)
 	}
 	return state.Title
 }

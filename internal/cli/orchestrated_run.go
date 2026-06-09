@@ -1041,7 +1041,7 @@ func finalizeOrchestratedIteration(ctx context.Context, req orchestrationRequest
 	req.State.Stage = runstate.StagePullRequest
 	_ = runstate.Write(req.StatePath, *req.State)
 	req.Renderer.Stage(runstate.StagePullRequest, "integrating iteration")
-	summary := firstNonEmpty(strings.TrimSpace(review.Summary), tree.Summary)
+	summary := firstNonEmpty(strings.TrimSpace(tree.Summary), strings.TrimSpace(review.Summary))
 	goalComplete := review.GoalComplete && strings.TrimSpace(req.Goal) != ""
 	finalBranch := firstNonEmpty(paths.IterationBranch, paths.CurrentBranch, initialBranch)
 	integrated := false
@@ -1156,7 +1156,7 @@ func finalizeOrchestratedIteration(ctx context.Context, req orchestrationRequest
 				return iterationWorkflowResult{}, codedError{6, err}
 			}
 		case config.MergeMethodMergeCommit:
-			subject := iterationBoundarySubject(iterationID, summary)
+			subject := changeSetBoundarySubject(summary)
 			if err := rootRunner.MergeNoFF(ctx, cfg.Git.BaseBranch, finalBranch, subject, integrationBody, false); err != nil {
 				return iterationWorkflowResult{}, codedError{6, err}
 			}
@@ -1191,21 +1191,13 @@ func squashIntegrationSubject(summary string) string {
 	return subject
 }
 
-func iterationBoundarySubject(iterationID, summary string) string {
+func changeSetBoundarySubject(summary string) string {
 	description := collapseWhitespace(summary)
 	description = strings.TrimSuffix(description, ".")
 	if description == "" {
-		description = "iteration"
+		description = "change set"
 	}
-	return fmt.Sprintf("Iteration %d done: %s", iterationOrdinal(iterationID), description)
-}
-
-func iterationOrdinal(iterationID string) int {
-	n, err := strconv.Atoi(strings.TrimLeft(strings.TrimSpace(iterationID), "0"))
-	if err != nil || n <= 0 {
-		return 1
-	}
-	return n
+	return fmt.Sprintf("Complete change set: %s", description)
 }
 
 func buildIntegrationCommitBody(existing string, commits []gitx.Commit) string {
@@ -2232,7 +2224,7 @@ func buildRolePrompt(role string, paths pathSet, task workflow.Task, tree any, t
 		b.WriteString("\nProcess TODOs serially. For each item, run `loop task todo start <n>`. For commit TODOs, make only that TODO's changes, then run `loop task todo stage <n>` to inspect staged commit candidates and remove unrelated files with `loop task todo stage <n> --remove <path>` if needed. Run `loop task todo complete <n>` after the staged file list matches the TODO. For no_commit TODOs, keep files unstaged and complete with a clean task worktree. To cancel an active TODO, run `loop task todo cancel <n> --discard-changes`; this discards task worktree and index changes before marking the TODO cancelled. Complete or cancel the current TODO before starting the next TODO.\n")
 		b.WriteString("\nAfter all TODOs are complete, write the handoff source outside repository changes, then merge the completed task:\n\n```bash\ncat > \"$LOOP_TASK_DIR/task-result.json\" <<'JSON'\n{...}\nJSON\nloop handoff write task-result --task \"" + task.ID + "\" --file \"$LOOP_TASK_DIR/task-result.json\"\nloop task merge --type F complete " + task.ID + "\n```\n")
 		b.WriteString("\nIf this task should be abandoned, run `loop task discard --reason <reason>` and exit without merging.\n")
-		b.WriteString("\nThe CLI generates the task merge commit subject as `Task N done: <task title>`. If `loop task merge` reports conflicts, resolve them in the printed iteration worktree and run `loop task merge --continue`. Continue until the merge command succeeds.\n")
+		b.WriteString("\nThe CLI generates the task merge commit subject as `Complete work: <task title>`. If `loop task merge` reports conflicts, resolve them in the printed iteration worktree and run `loop task merge --continue`. Continue until the merge command succeeds.\n")
 		b.WriteString("\nThe JSON must match this schema: " + taskResultSchemaHelpText() + "\n")
 	case "review":
 		treeData, _ := workflow.MarshalIndent(tree)

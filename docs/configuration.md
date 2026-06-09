@@ -93,7 +93,7 @@ git:
     mergeMethod: merge_commit
 ```
 
-`squash` is the default and writes the iteration's internal commit list into the squash commit body. `merge_commit` preserves the iteration branch graph with a `--no-ff` merge commit named `Iteration N done: <summary>`.
+`squash` is the default and writes the iteration's internal commit list into the squash commit body. `merge_commit` preserves the iteration branch graph with a `--no-ff` merge commit named `Complete change set: <summary>`.
 
 Choose a pull request review policy:
 

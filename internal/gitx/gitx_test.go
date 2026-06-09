@@ -147,7 +147,7 @@ func TestMergeNoFFCreatesBoundaryCommit(t *testing.T) {
 	git(t, repo, "add", "change.txt")
 	git(t, repo, "commit", "-m", "F: add change")
 
-	if err := r.MergeNoFF(ctx, "main", "wip/0001", "Iteration 1 done: Add change", "Included commits:\n- F: add change", false); err != nil {
+	if err := r.MergeNoFF(ctx, "main", "wip/0001", "Complete change set: Add change", "Included commits:\n- F: add change", false); err != nil {
 		t.Fatalf("MergeNoFF: %v", err)
 	}
 	parents := strings.Fields(git(t, repo, "show", "-s", "--format=%P", "HEAD"))
@@ -155,7 +155,7 @@ func TestMergeNoFFCreatesBoundaryCommit(t *testing.T) {
 		t.Fatalf("merge commit parents = %#v, want two", parents)
 	}
 	body := git(t, repo, "log", "--format=%B", "-1")
-	for _, want := range []string{"Iteration 1 done: Add change", "Included commits:", "F: add change"} {
+	for _, want := range []string{"Complete change set: Add change", "Included commits:", "F: add change"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("merge commit body missing %q:\n%s", want, body)
 		}

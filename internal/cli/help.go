@@ -1011,7 +1011,7 @@ func allHelpCommands() []helpCommand {
 			Path:        []string{"task", "merge"},
 			Usage:       "loop task merge --type <type> <summary> [--task <id>] [--iteration-dir <dir>|--run <run-id> --iteration <n>]",
 			Summary:     "Merge the completed coding task",
-			Description: "Requires all task TODOs to be committed, serializes access to the iteration branch, merges the task branch with its commits preserved, creates a `Task N done: <task title>` merge commit, and records task-merge.json. If conflicts are reported, resolve them in the printed iteration worktree and rerun with --continue.",
+			Description: "Requires all task TODOs to be committed, serializes access to the iteration branch, merges the task branch with its commits preserved, creates a `Complete work: <task title>` merge commit, and records task-merge.json. If conflicts are reported, resolve them in the printed iteration worktree and rerun with --continue.",
 			Flags: append(iterationLocatorFlags(),
 				helpFlag{Name: "--task <id>", Description: "task id"},
 				helpFlag{Name: "--type <type>", Description: "merge commit type: F, T, R, D, S, V, or C"},

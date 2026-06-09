@@ -107,7 +107,7 @@ Pull request mode is the primary integration path:
 - With `git.integration.pr.reviewMode=serial_human_review`, the merge agent creates the PR and runs checks but does not merge. The CLI shows a PR review wait screen and polls every 5 minutes for an external human merge before cleanup and before starting another iteration.
 - If checks fail, the merge agent writes `pr_check_failed` findings in `merge-result` instead of using QA `changes_requested`.
 
-Local merge mode remains available for local-only repositories and tests. It uses `git.integration.mergeMethod`, defaulting to a squash commit whose body lists the internal iteration commits. When configured as `merge_commit`, local mode uses a `--no-ff` merge commit with an `Iteration N done: <summary>` subject.
+Local merge mode remains available for local-only repositories and tests. It uses `git.integration.mergeMethod`, defaulting to a squash commit whose body lists the internal iteration commits. When configured as `merge_commit`, local mode uses a `--no-ff` merge commit with a `Complete change set: <summary>` subject.
 
 ## Stop Condition
 

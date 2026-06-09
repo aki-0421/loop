@@ -109,7 +109,7 @@ func TestMergeArgsPreservesPRLinkInSubject(t *testing.T) {
 }
 
 func TestMergeArgsUsesMergeCommitMethod(t *testing.T) {
-	args := MergeArgs(MergeOptions{PR: "42", Method: "merge_commit", Subject: "Iteration 1 done: Add usage report"})
+	args := MergeArgs(MergeOptions{PR: "42", Method: "merge_commit", Subject: "Complete change set: Add usage report"})
 	log := strings.Join(args, " ")
 	if !strings.Contains(log, "pr merge 42 --merge") {
 		t.Fatalf("merge args = %#v, want --merge", args)

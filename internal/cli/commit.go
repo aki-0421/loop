@@ -6,7 +6,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"strconv"
 	"strings"
 
 	"github.com/aki-0421/loop/internal/gitx"
@@ -161,15 +160,8 @@ func isTaskMergeCommitSubject(subject string) bool {
 	if strings.ContainsAny(subject, "\r\n") {
 		return false
 	}
-	prefix, body, ok := strings.Cut(subject, " done: ")
-	if !ok || strings.TrimSpace(body) == "" {
-		return false
-	}
-	if !strings.HasPrefix(prefix, "Task ") {
-		return false
-	}
-	n, err := strconv.Atoi(strings.TrimSpace(strings.TrimPrefix(prefix, "Task ")))
-	return err == nil && n > 0
+	body, ok := strings.CutPrefix(subject, "Complete work: ")
+	return ok && strings.TrimSpace(body) != ""
 }
 
 func isLoopCommitPrefix(prefix string) bool {
