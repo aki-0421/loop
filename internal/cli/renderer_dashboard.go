@@ -61,6 +61,7 @@ type rendererSnapshot struct {
 	PRMode             bool
 	PRReviewMode       string
 	PRReviewModeLocked bool
+	TaskScroll         int
 }
 
 type rendererPullRequest struct {
@@ -107,7 +108,16 @@ type dashboardSymbols struct {
 	FooterSep string
 }
 
+type dashboardRenderResult struct {
+	Lines         []string
+	TaskScrollMax int
+}
+
 func renderDashboard(s rendererSnapshot, width, height int) []string {
+	return renderDashboardWithMetadata(s, width, height).Lines
+}
+
+func renderDashboardWithMetadata(s rendererSnapshot, width, height int) dashboardRenderResult {
 	if width <= 0 {
 		width = 80
 	}
@@ -116,34 +126,50 @@ func renderDashboard(s rendererSnapshot, width, height int) []string {
 	}
 	symbols := symbolsForEnvironment()
 	if s.Confirmation != nil {
-		return renderConfirmationDashboard(s, symbols, width, height)
+		return dashboardRenderResult{Lines: renderConfirmationDashboard(s, symbols, width, height)}
 	}
 	if s.Sleeping {
-		return renderSleepDashboard(s, symbols, width, height)
+		return dashboardRenderResult{Lines: renderSleepDashboard(s, symbols, width, height)}
 	}
 	switch {
 	case width >= 120:
-		return renderWideDashboard(s, symbols, width, height)
+		return renderWideDashboardWithMetadata(s, symbols, width, height)
 	case width >= 90:
-		return renderMediumDashboard(s, symbols, width, height)
+		return renderMediumDashboardWithMetadata(s, symbols, width, height)
 	default:
-		return renderNarrowDashboard(s, symbols, width, height)
+		return renderNarrowDashboardWithMetadata(s, symbols, width, height)
 	}
 }
 
 func renderWideDashboard(s rendererSnapshot, symbols dashboardSymbols, width, height int) []string {
-	return renderFocusedDashboard(s, symbols, width, height, false)
+	return renderWideDashboardWithMetadata(s, symbols, width, height).Lines
 }
 
 func renderMediumDashboard(s rendererSnapshot, symbols dashboardSymbols, width, height int) []string {
-	return renderFocusedDashboard(s, symbols, width, height, false)
+	return renderMediumDashboardWithMetadata(s, symbols, width, height).Lines
 }
 
 func renderNarrowDashboard(s rendererSnapshot, symbols dashboardSymbols, width, height int) []string {
-	return renderFocusedDashboard(s, symbols, width, height, true)
+	return renderNarrowDashboardWithMetadata(s, symbols, width, height).Lines
+}
+
+func renderWideDashboardWithMetadata(s rendererSnapshot, symbols dashboardSymbols, width, height int) dashboardRenderResult {
+	return renderFocusedDashboardWithMetadata(s, symbols, width, height, false)
+}
+
+func renderMediumDashboardWithMetadata(s rendererSnapshot, symbols dashboardSymbols, width, height int) dashboardRenderResult {
+	return renderFocusedDashboardWithMetadata(s, symbols, width, height, false)
+}
+
+func renderNarrowDashboardWithMetadata(s rendererSnapshot, symbols dashboardSymbols, width, height int) dashboardRenderResult {
+	return renderFocusedDashboardWithMetadata(s, symbols, width, height, true)
 }
 
 func renderFocusedDashboard(s rendererSnapshot, symbols dashboardSymbols, width, height int, compact bool) []string {
+	return renderFocusedDashboardWithMetadata(s, symbols, width, height, compact).Lines
+}
+
+func renderFocusedDashboardWithMetadata(s rendererSnapshot, symbols dashboardSymbols, width, height int, compact bool) dashboardRenderResult {
 	contentWidth := minInt(width-8, 84)
 	if contentWidth < 48 {
 		contentWidth = width - 2
@@ -204,12 +230,17 @@ func renderFocusedDashboard(s rendererSnapshot, symbols dashboardSymbols, width,
 	if shouldRenderPullRequestBlock(s) {
 		lines = append(lines, pullRequestBlock(s, symbols, width, contentWidth, taskLimit)...)
 	} else if total > 0 {
-		lines = append(lines, taskListBlock(s, symbols, width, contentWidth, taskLimit, items)...)
+		taskList := taskListBlock(s, symbols, width, contentWidth, taskLimit, items)
+		lines = append(lines, taskList.Lines...)
+		return dashboardRenderResult{
+			Lines:         fitCanvasLines(lines, colorize(s, ansiDim, footerText(s, symbols)), width, height, contentWidth),
+			TaskScrollMax: taskList.ScrollMax,
+		}
 	} else if taskLimit > 0 {
 		lines = append(lines, statusBlock(s, width, contentWidth, taskLimit)...)
 	}
 
-	return fitCanvasLines(lines, colorize(s, ansiDim, footerText(s, symbols)), width, height, contentWidth)
+	return dashboardRenderResult{Lines: fitCanvasLines(lines, colorize(s, ansiDim, footerText(s, symbols)), width, height, contentWidth)}
 }
 
 func shouldRenderPullRequestBlock(s rendererSnapshot) bool {
@@ -491,22 +522,28 @@ func splitDisplayLine(text string, width int) (string, string) {
 	return text, ""
 }
 
-func taskListBlock(s rendererSnapshot, symbols dashboardSymbols, screenWidth, blockWidth, limit int, items []taskItem) []string {
+type taskListRenderResult struct {
+	Lines     []string
+	ScrollMax int
+}
+
+type taskLine struct {
+	line string
+}
+
+func taskListBlock(s rendererSnapshot, symbols dashboardSymbols, screenWidth, blockWidth, limit int, items []taskItem) taskListRenderResult {
 	if limit <= 0 {
-		return nil
+		return taskListRenderResult{}
 	}
 	_, total := taskProgress(items)
 	if total == 0 {
-		return []string{centerLine(colorize(s, ansiDim, "waiting for task tree"), screenWidth)}
+		return taskListRenderResult{Lines: []string{centerLine(colorize(s, ansiDim, "waiting for task tree"), screenWidth)}}
 	}
 	maxBlockWidth := blockWidth
 	if maxBlockWidth > 68 {
 		maxBlockWidth = 68
 	}
 
-	type taskLine struct {
-		line string
-	}
 	rows := []taskLine{}
 	markerWidth := 0
 	active := activeTaskIndex(items)
@@ -543,18 +580,7 @@ func taskListBlock(s rendererSnapshot, symbols dashboardSymbols, screenWidth, bl
 			}
 		}
 	}
-	hiddenBelow := 0
-	if len(rows) > limit {
-		visibleRows := limit - 1
-		if visibleRows < 0 {
-			visibleRows = 0
-		}
-		hiddenBelow = len(rows) - visibleRows
-		rows = rows[:visibleRows]
-	}
-	if hiddenBelow > 0 {
-		rows = append(rows, taskLine{line: colorize(s, ansiDim, fmt.Sprintf("%d hidden below", hiddenBelow))})
-	}
+	rows, scrollMax := visibleTaskListRows(s, rows, limit, s.TaskScroll)
 
 	blockWidth = 1
 	for _, row := range rows {
@@ -570,7 +596,78 @@ func taskListBlock(s rendererSnapshot, symbols dashboardSymbols, screenWidth, bl
 	for _, row := range rows {
 		lines = append(lines, centeredBlockLine(row.line, screenWidth, blockWidth))
 	}
-	return lines
+	return taskListRenderResult{Lines: lines, ScrollMax: scrollMax}
+}
+
+func visibleTaskListRows(s rendererSnapshot, rows []taskLine, limit, scroll int) ([]taskLine, int) {
+	if limit <= 0 {
+		return nil, 0
+	}
+	if len(rows) <= limit {
+		return rows, 0
+	}
+	if limit == 1 {
+		return []taskLine{{line: taskListHiddenLine(s, len(rows), "below")}}, 0
+	}
+	scrollMax := maxTaskListScroll(len(rows), limit)
+	if scroll < 0 {
+		scroll = 0
+	}
+	if scroll > scrollMax {
+		scroll = scrollMax
+	}
+	visible := make([]taskLine, 0, limit)
+	remaining := limit
+	if scroll > 0 && limit >= 3 {
+		visible = append(visible, taskLine{line: taskListHiddenLine(s, scroll, "above")})
+		remaining--
+	}
+	contentRows := remaining
+	showBelow := scroll+contentRows < len(rows) && remaining >= 2
+	if showBelow {
+		contentRows--
+	}
+	if contentRows < 1 {
+		contentRows = 1
+	}
+	end := scroll + contentRows
+	if end > len(rows) {
+		end = len(rows)
+	}
+	visible = append(visible, rows[scroll:end]...)
+	if showBelow {
+		hiddenBelow := len(rows) - end
+		if hiddenBelow > 0 {
+			visible = append(visible, taskLine{line: taskListHiddenLine(s, hiddenBelow, "below")})
+		}
+	}
+	return visible, scrollMax
+}
+
+func maxTaskListScroll(rowCount, limit int) int {
+	if limit <= 1 || rowCount <= limit {
+		return 0
+	}
+	endContentRows := limit
+	if limit >= 3 {
+		endContentRows--
+	}
+	if endContentRows < 1 {
+		endContentRows = 1
+	}
+	maxScroll := rowCount - endContentRows
+	if maxScroll < 0 {
+		return 0
+	}
+	return maxScroll
+}
+
+func taskListHiddenLine(s rendererSnapshot, count int, direction string) string {
+	text := fmt.Sprintf("%d hidden %s", count, direction)
+	if direction == "below" {
+		text += " (up/down to scroll)"
+	}
+	return colorize(s, ansiDim, text)
 }
 
 func shouldRenderTaskTodos(item taskItem, index, active int) bool {

@@ -71,6 +71,9 @@ type runRenderer struct {
 	inputCancel           context.CancelFunc
 	inputDone             chan struct{}
 	inputRunning          bool
+	inputSequence         []byte
+	taskScroll            int
+	taskScrollMax         int
 	titleEnabled          bool
 	drawMu                sync.Mutex
 	lastFrame             []string
@@ -262,12 +265,6 @@ func (r *runRenderer) cyclePRReviewMode() {
 }
 
 func (r *runRenderer) startInput(ctx context.Context) {
-	r.mu.Lock()
-	prMode := r.prMode
-	r.mu.Unlock()
-	if !prMode {
-		return
-	}
 	if !rendererInputSupported(r) {
 		return
 	}
@@ -317,6 +314,9 @@ func (r *runRenderer) inputActive() bool {
 }
 
 func (r *runRenderer) handleInputByte(ctx context.Context, b byte) {
+	if r.handleInputSequence(b) {
+		return
+	}
 	switch b {
 	case 0x03:
 		if state := runInterruptFromContext(ctx); state != nil {
@@ -331,6 +331,67 @@ func (r *runRenderer) handleInputByte(ctx context.Context, b byte) {
 	default:
 		r.requestSleepFetchIfSleeping()
 	}
+}
+
+func (r *runRenderer) handleInputSequence(b byte) bool {
+	if r == nil {
+		return false
+	}
+	if b == 0x1b {
+		r.inputSequence = []byte{b}
+		return true
+	}
+	if len(r.inputSequence) == 0 {
+		return false
+	}
+	r.inputSequence = append(r.inputSequence, b)
+	sequence := string(r.inputSequence)
+	switch sequence {
+	case "\x1b[A", "\x1bOA":
+		r.inputSequence = nil
+		if !r.scrollTaskList(-1) {
+			r.requestSleepFetchIfSleeping()
+		}
+		return true
+	case "\x1b[B", "\x1bOB":
+		r.inputSequence = nil
+		if !r.scrollTaskList(1) {
+			r.requestSleepFetchIfSleeping()
+		}
+		return true
+	}
+	if sequence == "\x1b[" || sequence == "\x1bO" {
+		return true
+	}
+	r.inputSequence = nil
+	r.requestSleepFetchIfSleeping()
+	return true
+}
+
+func (r *runRenderer) scrollTaskList(delta int) bool {
+	if r == nil || delta == 0 {
+		return false
+	}
+	r.mu.Lock()
+	maxScroll := r.taskScrollMax
+	if maxScroll <= 0 {
+		r.mu.Unlock()
+		return false
+	}
+	next := r.taskScroll + delta
+	if next < 0 {
+		next = 0
+	}
+	if next > maxScroll {
+		next = maxScroll
+	}
+	changed := next != r.taskScroll
+	r.taskScroll = next
+	r.mu.Unlock()
+	if changed {
+		r.render()
+	}
+	return true
 }
 
 func (r *runRenderer) requestSleepFetchIfSleeping() {
@@ -1119,6 +1180,7 @@ func (r *runRenderer) frame(width, height int) []string {
 		PRMode:             r.prMode,
 		PRReviewMode:       r.prReviewMode,
 		PRReviewModeLocked: r.prReviewModeLocked,
+		TaskScroll:         r.taskScroll,
 		Now:                time.Now(),
 	}
 	r.mu.Unlock()
@@ -1132,7 +1194,14 @@ func (r *runRenderer) frame(width, height int) []string {
 		}
 	}
 	snapshot.Tasks = tasks
-	return renderDashboard(snapshot, width, height)
+	result := renderDashboardWithMetadata(snapshot, width, height)
+	r.mu.Lock()
+	r.taskScrollMax = result.TaskScrollMax
+	if r.taskScroll > result.TaskScrollMax {
+		r.taskScroll = result.TaskScrollMax
+	}
+	r.mu.Unlock()
+	return result.Lines
 }
 
 func refreshRendererPullRequest(snapshot *rendererSnapshot) {

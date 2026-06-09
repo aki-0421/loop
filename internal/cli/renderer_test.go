@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -805,6 +807,68 @@ func TestRunRendererDashboardListsMaximumTasksWithHiddenBelow(t *testing.T) {
 	}
 	if strings.Contains(frame, "Task 2") || strings.Contains(frame, "Task 8") {
 		t.Fatalf("hidden tasks should not be rendered when hidden-below row is needed:\n%s", frame)
+	}
+}
+
+func TestRunRendererDashboardScrollsHiddenTasks(t *testing.T) {
+	t.Setenv("LOOP_ASCII", "1")
+	now := time.Now()
+	tasks := make([]taskItem, 0, 20)
+	for i := 1; i <= 20; i++ {
+		tasks = append(tasks, taskItem{Text: "Task " + strconv.Itoa(i)})
+	}
+	lines := renderDashboard(rendererSnapshot{
+		Started:      now.Add(-time.Minute),
+		Now:          now,
+		Instruction:  "",
+		Tasks:        tasks,
+		InputTokens:  100,
+		OutputTokens: 50,
+		LatestMsg:    "Latest agent message.",
+		TaskScroll:   3,
+	}, 100, 22)
+	frame := stripANSISequences(strings.Join(lines, "\n"))
+
+	assertFrameBounds(t, lines, 100, 22)
+	for _, want := range []string{"3 hidden above", "Task 4", "hidden below"} {
+		if !strings.Contains(frame, want) {
+			t.Fatalf("scrolled frame missing %q:\n%s", want, frame)
+		}
+	}
+	if strings.Contains(frame, "Task 1") {
+		t.Fatalf("top task should be hidden after scrolling:\n%s", frame)
+	}
+}
+
+func TestRunRendererArrowKeysScrollHiddenTasks(t *testing.T) {
+	t.Setenv("LOOP_ASCII", "1")
+	renderer := &runRenderer{
+		enabled:             true,
+		interactive:         false,
+		writer:              io.Discard,
+		started:             time.Now(),
+		done:                make(chan struct{}),
+		sleepFetchRequested: make(chan struct{}, 1),
+	}
+	for i := 1; i <= 12; i++ {
+		renderer.tasks = append(renderer.tasks, taskItem{Text: "Task " + strconv.Itoa(i)})
+	}
+
+	_ = renderer.frame(100, 18)
+	if renderer.taskScrollMax <= 0 {
+		t.Fatalf("task scroll max should be populated for hidden tasks")
+	}
+	renderer.handleInputByte(context.Background(), 0x1b)
+	renderer.handleInputByte(context.Background(), '[')
+	renderer.handleInputByte(context.Background(), 'B')
+	if renderer.taskScroll != 1 {
+		t.Fatalf("down arrow task scroll = %d, want 1", renderer.taskScroll)
+	}
+	renderer.handleInputByte(context.Background(), 0x1b)
+	renderer.handleInputByte(context.Background(), '[')
+	renderer.handleInputByte(context.Background(), 'A')
+	if renderer.taskScroll != 0 {
+		t.Fatalf("up arrow task scroll = %d, want 0", renderer.taskScroll)
 	}
 }
 
