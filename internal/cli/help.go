@@ -388,7 +388,7 @@ func renderAgentHelp(commands []helpCommand) string {
 	b.WriteString("rule:use `loop help`, `loop help issue`, `loop help task todo`, and `loop help handoff write`; read artifacts as `loop iteration read validation`.\n")
 	b.WriteString("planner:write one AI sprint-sized task-tree for a coherent independently mergeable PR; use few meaningful task boundaries, dependencies, and conflicts.\n")
 	b.WriteString("coding:create task TODOs before edits; commit TODOs need one quoted final commit-message argument; no_commit TODOs omit --type and commit message; process start/change/complete serially; write task-result; run `loop task merge`; resolve conflicts before exit.\n")
-	b.WriteString("review:inspect diff, task results, validation, browser QA, and acceptance criteria; write review-result only and do not run PR lifecycle commands.\n")
+	b.WriteString("review:inspect diff, task results, validation, browser QA, and acceptance criteria; record each finding with loop review finding add, continue reviewing, then write review-result; do not run PR lifecycle commands.\n")
 	b.WriteString("merge:after review approval, handle only PR lifecycle with loop branch/pr commands; write merge-result and use pr_check_failed for PR check failures.\n")
 	for _, cmd := range commands {
 		fmt.Fprintf(&b, "cmd:%s;%s\n", compactUsage(cmd.Usage), compactText(cmd.Summary))
@@ -670,6 +670,55 @@ func allHelpCommands() []helpCommand {
 			Usage:       "loop role instruction",
 			Summary:     "Print LOOP_ROLE-specific operating instructions",
 			Description: "Reads LOOP_ROLE from the environment and prints Markdown operating instructions for the current planner, coding, review, or merge role.",
+			Agent:       true,
+			AgentOnly:   true,
+		},
+		{
+			Path:        []string{"review"},
+			Usage:       "loop review <finding> ...",
+			Summary:     "Record QA review findings",
+			Description: "Agent-facing review commands. Review agents record each repair finding as soon as it is discovered, continue reviewing, then write the final review-result handoff.",
+			Agent:       true,
+			AgentOnly:   true,
+		},
+		{
+			Path:        []string{"review", "finding"},
+			Usage:       "loop review finding <add|list|clear> ...",
+			Summary:     "Manage recorded QA review findings",
+			Description: "Findings recorded here are merged into the final review-result after the review agent exits. Any recorded finding causes the orchestrator to start repair tasks.",
+			Agent:       true,
+			AgentOnly:   true,
+		},
+		{
+			Path:        []string{"review", "finding", "add"},
+			Usage:       "loop review finding add --id <id> --title <title> (--description <text>|--description-file <path>) --acceptance <text>...",
+			Summary:     "Record one QA review repair finding",
+			Description: "Adds or replaces one concrete finding for the current review pass. Use one command per independent repair request, then continue reviewing for more findings.",
+			Flags: append(iterationLocatorFlags(),
+				helpFlag{Name: "--id <id>", Description: "stable finding id; lowercase letters, digits, and hyphens"},
+				helpFlag{Name: "--task <id>", Description: "optional related planner task id"},
+				helpFlag{Name: "--title <title>", Description: "finding title"},
+				helpFlag{Name: "--description <text>", Description: "finding evidence and impact"},
+				helpFlag{Name: "--description-file <path>", Description: "read finding description from a file"},
+				helpFlag{Name: "--acceptance <text>", Description: "repair acceptance criterion; repeatable"},
+			),
+			Agent:     true,
+			AgentOnly: true,
+		},
+		{
+			Path:      []string{"review", "finding", "list"},
+			Usage:     "loop review finding list [--iteration-dir <dir>|--run <run-id> --iteration <n>]",
+			Summary:   "List recorded QA review findings",
+			Flags:     iterationLocatorFlags(),
+			Agent:     true,
+			AgentOnly: true,
+		},
+		{
+			Path:        []string{"review", "finding", "clear"},
+			Usage:       "loop review finding clear [id] [--iteration-dir <dir>|--run <run-id> --iteration <n>]",
+			Summary:     "Clear recorded QA review findings",
+			Description: "Clears one finding by id, or all findings when id is omitted. The orchestrator also clears stale findings at the start of each review pass.",
+			Flags:       iterationLocatorFlags(),
 			Agent:       true,
 			AgentOnly:   true,
 		},

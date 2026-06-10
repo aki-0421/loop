@@ -507,6 +507,67 @@ git:
 	}
 }
 
+func TestReviewAgentRecordsMultipleFindingsBeforeRepair(t *testing.T) {
+	ctx := context.Background()
+	repo := newCleanupRepo(t)
+	mustWrite(t, filepath.Join(repo, "task.md"), "# Task\n\nRecord review findings before repair.\n")
+	agentCommand, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, filepath.Join(repo, ".loop", "config.yaml"), `version: 1
+
+agent:
+  default: rolereviewrecord
+  adapters:
+    rolereviewrecord:
+      command: `+yamlSingleQuote(agentCommand)+`
+      args: [-test.run=TestHelperProcessRoleAgent, --]
+      prompt: stdin
+      env:
+        LOOP_ROLE_TEST_AGENT: "1"
+        LOOP_ROLE_TEST_AGENT_MODE: review-recorded-findings
+
+run:
+  maxIterations: 1
+  maxParallelTasks: 2
+
+git:
+  baseBranch: develop
+  integration:
+    mode: local_merge
+`)
+	git(t, repo, "add", "task.md", ".loop/config.yaml")
+	git(t, repo, "commit", "-m", "T: add recorded review findings fixture")
+	withWorkingDir(t, repo)
+
+	if _, err := captureStdout(t, func() error {
+		return commandRun(ctx, globals{Agent: "rolereviewrecord", JSON: true, NoColor: true}, []string{"task.md"})
+	}); err != nil {
+		t.Fatalf("loop run should repair recorded review findings: %v", err)
+	}
+
+	for _, name := range []string{"review-recorded-one.txt", "review-recorded-two.txt"} {
+		if got := readText(t, filepath.Join(repo, name)); got != "repaired\n" {
+			t.Fatalf("%s = %q, want repaired", name, got)
+		}
+	}
+	iterDir := latestIterationDir(t, repo, "0001")
+	for _, want := range []string{`"id": "repair-recorded-one"`, `"id": "repair-recorded-two"`} {
+		found := false
+		for _, taskDir := range []string{"0002", "0003"} {
+			taskJSON := readText(t, filepath.Join(iterDir, "tasks", taskDir, "task.json"))
+			if strings.Contains(taskJSON, want) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("repair task %s was not created", want)
+		}
+	}
+}
+
 func TestResumeRunRestartsReviewingIterationFromDurableArtifacts(t *testing.T) {
 	ctx := context.Background()
 	repo := newCleanupRepo(t)
@@ -1462,7 +1523,7 @@ func runRoleTestAgent() int {
   ]
 }`
 			return exitCode(commandHandoff(ctx, globals{}, []string{"write", "task-tree", "--value", payload}))
-		case "review-repair-cycle":
+		case "review-repair-cycle", "review-recorded-findings":
 			payload := `{
   "schema_version": 1,
   "summary": "Run review repair workflow",
@@ -1817,13 +1878,23 @@ func runRoleTestAgent() int {
 				return 1
 			}
 			return exitCode(commandTask(ctx, globals{}, []string{"merge", "--type", "F", "complete", taskID}))
-		case "review-repair-cycle":
+		case "review-repair-cycle", "review-recorded-findings":
 			filename := "review-initial.txt"
 			message := "run initial review task"
 			value := "initial\n"
 			if taskID == "repair-review" {
 				filename = "review-repair.txt"
 				message = "repair review finding"
+				value = "repaired\n"
+			}
+			if taskID == "repair-recorded-one" {
+				filename = "review-recorded-one.txt"
+				message = "repair first recorded review finding"
+				value = "repaired\n"
+			}
+			if taskID == "repair-recorded-two" {
+				filename = "review-recorded-two.txt"
+				message = "repair second recorded review finding"
 				value = "repaired\n"
 			}
 			if err := startRoleTaskTodo(ctx, taskID, message); err != nil {
@@ -1904,6 +1975,28 @@ func runRoleTestAgent() int {
       "acceptance": ["review-repair.txt contains the repaired value."]
     }
   ]
+}`
+				return exitCode(commandHandoff(ctx, globals{}, []string{"write", "review-result", "--value", payload}))
+			}
+		}
+		if os.Getenv("LOOP_ROLE_TEST_AGENT_MODE") == "review-recorded-findings" {
+			workDir := os.Getenv("LOOP_WORKDIR")
+			_, firstErr := os.Stat(filepath.Join(workDir, "review-recorded-one.txt"))
+			_, secondErr := os.Stat(filepath.Join(workDir, "review-recorded-two.txt"))
+			if os.IsNotExist(firstErr) || os.IsNotExist(secondErr) {
+				if err := commandReview(ctx, globals{}, []string{"finding", "add", "--id", "repair-recorded-one", "--title", "Repair first recorded finding", "--description", "Create the first recorded repair marker.", "--acceptance", "review-recorded-one.txt contains the repaired value."}); err != nil {
+					fmt.Fprintln(os.Stderr, err)
+					return exitCode(err)
+				}
+				if err := commandReview(ctx, globals{}, []string{"finding", "add", "--id", "repair-recorded-two", "--title", "Repair second recorded finding", "--description", "Create the second recorded repair marker.", "--acceptance", "review-recorded-two.txt contains the repaired value."}); err != nil {
+					fmt.Fprintln(os.Stderr, err)
+					return exitCode(err)
+				}
+				payload := `{
+  "schema_version": 1,
+  "status": "approved",
+  "summary": "Fake review finished after recording findings.",
+  "goal_evaluation": "Recorded findings should drive repair before approval."
 }`
 				return exitCode(commandHandoff(ctx, globals{}, []string{"write", "review-result", "--value", payload}))
 			}

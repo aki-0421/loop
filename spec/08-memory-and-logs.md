@@ -54,6 +54,7 @@ Every active iteration writes disposable runtime artifacts as files in a Go temp
 - `task-tree`: planner task graph.
 - `task-result`: coding task result handoffs.
 - `task-merge`: coding task merge audit written after `loop task merge` succeeds.
+- `review-findings`: QA review findings recorded incrementally before the final review handoff.
 - `review-result`: QA review decision and repair findings.
 - `merge-result`: PR lifecycle result and PR check repair findings.
 - `validation`: validation commands and results.
@@ -70,7 +71,7 @@ The durable iteration directory stores audit and replay files plus PR lifecycle 
 - `tasks/<sequence>/task-merge.json`: durable audit of task TODO commits and the iteration merge commit.
 - `tasks/<sequence>/agent-events.jsonl`: structured audit events for that coding agent only.
 - `errors`: process, result, validation, or sync warnings.
-- `task-tree`, `review-result`, and `merge-result`: durable iteration-level role handoff audit copies.
+- `task-tree`, `review-findings`, `review-result`, and `merge-result`: durable iteration-level role handoff audit copies.
 - `pr-state`, `pr-checks`, and `pr-check-log`: pull request lifecycle state and check diagnostics written by the CLI.
 - `github-updates`: newly observed GitHub Issue, PR, or comment diffs for an iteration boundary or sleep wake cycle.
 

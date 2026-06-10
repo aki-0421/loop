@@ -1954,6 +1954,8 @@ func runReviewRole(ctx context.Context, cfg config.Config, workDir string, paths
 	promptText := buildRolePrompt("review", paths, workflow.Task{}, tree, taskResults, validationResults)
 	globalDB := artifactdb.GlobalDBPathForIteration(paths.IterationDir)
 	_ = artifactdb.ClearRoleHandoff(globalDB, paths.RunID, paths.IterationID, "review-result", "")
+	_ = clearRecordedReviewFindings(globalDB, paths.RunID, paths.IterationID)
+	_ = writeReviewFindingsAudit(paths.IterationDir, globalDB, paths.RunID, paths.IterationID)
 	var lastErr error
 	var lastDecodeErr error
 	roleAttempt := 1
@@ -1967,9 +1969,22 @@ func runReviewRole(ctx context.Context, cfg config.Config, workDir string, paths
 		if decodeErr == nil {
 			review, reviewErr := workflow.DecodeReviewResult([]byte(handoff.Payload))
 			if reviewErr == nil {
-				return review, nil
+				recorded, findingErr := readRecordedReviewFindings(globalDB, paths.RunID, paths.IterationID)
+				if findingErr != nil {
+					return workflow.ReviewResult{}, findingErr
+				}
+				return applyRecordedReviewFindings(review, recorded), nil
 			}
 			decodeErr = reviewErr
+		}
+		if err == nil {
+			recorded, findingErr := readRecordedReviewFindings(globalDB, paths.RunID, paths.IterationID)
+			if findingErr != nil {
+				return workflow.ReviewResult{}, findingErr
+			}
+			if len(recorded) > 0 {
+				return syntheticReviewResultFromFindings(recorded), nil
+			}
 		}
 		lastErr = err
 		lastDecodeErr = decodeErr
@@ -2230,11 +2245,12 @@ func buildRolePrompt(role string, paths pathSet, task workflow.Task, tree any, t
 		treeData, _ := workflow.MarshalIndent(tree)
 		resultsData, _ := workflow.MarshalIndent(taskResults)
 		b.WriteString("\nAct as the QA / integration review agent. Review the iteration branch diff, task results, validation evidence, browser/UI behavior when relevant, and cross-task acceptance criteria. Approve only if the integrated code matches the planner's task tree and acceptance criteria, the coding-agent results accurately describe the implemented work, code quality is acceptable, and validation is acceptable.\n")
-		b.WriteString("\nReview scope is the `review-result` handoff. Branch rename, PR title/body artifacts, PR creation, PR checks, and PR merge belong to the merge agent after QA approval. Use `changes_requested` for implementation, acceptance, QA, or validation findings that coding agents should repair. PR check failures belong in merge-result `pr_check_failed` findings.\n")
+		b.WriteString("\nWhen you find a concrete implementation, acceptance, QA, or validation problem, record it immediately with `loop review finding add --id <id> --title <title> --description <text> --acceptance <text>...`, then continue reviewing for additional independent findings. Do not stop at the first finding. After the full review pass is complete, write one final `review-result` handoff. If one or more findings were recorded, the CLI will convert the final result to `changes_requested` and start repair tasks after this review agent exits, even if the final handoff omits `findings`.\n")
+		b.WriteString("\nReview scope is recorded QA findings plus the final `review-result` handoff. Branch rename, PR title/body artifacts, PR creation, PR checks, and PR merge belong to the merge agent after QA approval. PR check failures belong in merge-result `pr_check_failed` findings.\n")
 		b.WriteString("\nTask tree:\n\n```json\n" + string(treeData) + "```\n")
 		b.WriteString("\nTask results:\n\n```json\n" + string(resultsData) + "```\n")
 		b.WriteString("\nValidation status: " + validation.StatusFromResults(validationResults) + "\n")
-		b.WriteString("\nWrite one review-result handoff:\n\n```bash\nloop handoff write review-result --file review-result.json\n```\n")
+		b.WriteString("\nRecord findings as you discover them, then write one review-result handoff after review coverage is complete:\n\n```bash\nloop review finding add --id concrete-finding --title \"Concrete finding\" --description \"Evidence and impact.\" --acceptance \"Repair acceptance criterion.\"\nloop handoff write review-result --file review-result.json\n```\n")
 		b.WriteString("\nThe JSON must match this schema: " + reviewResultSchemaHelpText() + "\n")
 	case "merge":
 		treeData, _ := workflow.MarshalIndent(tree)

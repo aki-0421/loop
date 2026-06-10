@@ -31,13 +31,13 @@ An adapter receives:
 The assembled prompt is a compact, non-user-editable skill bootstrap:
 
 1. A short instruction to use the `loop` skill.
-2. A short instruction to use `loop iteration`, `loop issue`, and `loop handoff` commands.
+2. A short instruction to use `loop iteration`, `loop issue`, `loop review`, and `loop handoff` commands.
 
 Detailed loop behavior and CLI usage live in repository skills, especially `loop`. The prompt intentionally does not inline skill instructions, effective config, JSON contract details, required file paths, runtime values, cached GitHub context memory, goal text, instruction Markdown content, or instruction file paths.
 
 ## Bootstrap requirements
 
-The code-generated bootstrap activates the `loop` skill. The skill directs agents to `loop role instruction` for role-scoped operating rules, then to `loop iteration`, `loop issue`, and `loop handoff` commands for runtime context, GitHub Issues, and strict role handoffs. Agents do not receive a command for querying cached memory directly. The CLI owns commit creation, pull request text, check waiting, check failure handling, PR merge, and cleanup.
+The code-generated bootstrap activates the `loop` skill. The skill directs agents to `loop role instruction` for role-scoped operating rules, then to `loop iteration`, `loop issue`, `loop review`, and `loop handoff` commands for runtime context, GitHub Issues, incremental QA findings, and strict role handoffs. Agents do not receive a command for querying cached memory directly. The CLI owns commit creation, pull request text, check waiting, check failure handling, PR merge, and cleanup.
 
 ## Process output capture
 
@@ -81,7 +81,7 @@ The built-in process adapter recognizes these provider streams without reading p
 
 ## Role Handoff Contract
 
-Role-orchestrated agents write planner, task, review, and merge handoffs with `loop handoff`. The CLI validates and stores those handoffs in the runtime `loop.db`, then copies audit JSON into the durable iteration directory. Agents do not run raw Git or GitHub lifecycle commands, create commits directly, or close iterations in the role-orchestrated workflow. Coding and merge agents use role-owned `loop task`, `loop branch`, and `loop pr` commands for lifecycle actions.
+Role-orchestrated agents write planner, task, review, and merge handoffs with `loop handoff`. QA review agents may record individual findings with `loop review finding add` before the final review handoff. The CLI validates and stores those handoffs and findings in the runtime `loop.db`, then copies audit JSON into the durable iteration directory. Agents do not run raw Git or GitHub lifecycle commands, create commits directly, or close iterations in the role-orchestrated workflow. Coding and merge agents use role-owned `loop task`, `loop branch`, and `loop pr` commands for lifecycle actions.
 
 ## Terminal Close Handoff Contract
 

@@ -64,6 +64,8 @@ Required fields:
 
 Each finding has `id`, optional `task_id`, `title`, `description`, and `acceptance`. Findings must be specific enough for the CLI to create repair tasks.
 
+QA review agents may also record findings incrementally with `loop review finding add`. Recorded findings are merged into the final `review-result` after the review agent exits. If at least one recorded finding exists, the CLI treats the review as `changes_requested` and starts repair tasks even when the final handoff omits inline `findings`.
+
 ### Merge Result
 
 Required fields:

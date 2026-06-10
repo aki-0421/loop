@@ -11,7 +11,7 @@ func TestAssembleIncludesOnlyBootstrap(t *testing.T) {
 	})
 	for _, want := range []string{
 		"Use the `loop` skill",
-		"Use `loop iteration`, `loop issue`, and `loop handoff` commands",
+		"Use `loop iteration`, `loop issue`, `loop review`, and `loop handoff` commands",
 		"Read artifacts as `loop iteration read validation`, `loop iteration read events`, or `loop iteration path events`.",
 	} {
 		if !strings.Contains(text, want) {

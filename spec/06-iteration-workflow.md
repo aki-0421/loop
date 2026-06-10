@@ -80,8 +80,11 @@ If `loop task merge` reports conflicts, the coding agent resolves the conflicts 
 Review agents write:
 
 ```bash
+loop review finding add --id <id> --title <title> --description <text> --acceptance <text>
 loop handoff write review-result --file review-result.json
 ```
+
+The review agent records each independent repair finding as it is discovered and continues reviewing. After the review agent exits, the CLI merges recorded findings into the final review result and starts repair tasks when at least one finding exists.
 
 Merge agents write:
 

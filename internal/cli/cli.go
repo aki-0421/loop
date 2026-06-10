@@ -120,6 +120,8 @@ func Run(args []string) error {
 		return commandIssue(ctx, g, rest[1:])
 	case "role":
 		return commandRole(ctx, g, rest[1:])
+	case "review":
+		return commandReview(ctx, g, rest[1:])
 	case "iteration":
 		return commandIteration(ctx, g, rest[1:])
 	case "handoff":

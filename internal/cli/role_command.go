@@ -173,9 +173,10 @@ func reviewRoleMarkdown() string {
 
 Review the iteration branch after coding and validation. Inspect the diff, task tree, task results, validation evidence, browser/UI behavior when relevant, and cross-task acceptance criteria. Focus on whether the integrated code matches the planner's task tree and acceptance criteria, whether the coding-agent results accurately describe the implemented work, and whether code quality is acceptable.
 
-Review scope is the ` + "`review-result`" + ` handoff. Branch rename, PR title/body artifacts, PR creation, PR checks, and PR merge belong to the merge role after QA approval. PR check failures belong in merge-result ` + "`pr_check_failed`" + ` findings.
+Review scope is recorded QA findings plus the final ` + "`review-result`" + ` handoff. Branch rename, PR title/body artifacts, PR creation, PR checks, and PR merge belong to the merge role after QA approval. PR check failures belong in merge-result ` + "`pr_check_failed`" + ` findings.
 
 ` + "```bash" + `
+loop review finding add --id concrete-finding --title "Concrete finding" --description "Evidence and impact." --acceptance "Repair acceptance criterion."
 loop handoff write review-result --file review-result.json
 ` + "```" + `
 
@@ -192,7 +193,7 @@ Review-result shape:
 }
 ` + "```" + `
 
-Use ` + "`status: \"approved\"`" + ` only when the iteration goals are satisfied, code quality is acceptable, and the integrated branch satisfies the task tree and acceptance criteria. Use ` + "`changes_requested`" + ` with concrete implementation, QA, validation, or acceptance findings that can be converted into repair tasks. Set ` + "`goal_complete`" + ` only when a CLI goal exists and the integrated code would satisfy it after successful integration.
+When you find a concrete implementation, QA, validation, or acceptance problem, record it immediately with ` + "`loop review finding add`" + ` and continue reviewing for additional independent findings. Do not stop at the first finding. After the review pass is complete, write one final ` + "`review-result`" + ` handoff. If any findings were recorded, the CLI will convert the final result to ` + "`changes_requested`" + ` and start repair tasks after the review agent exits, even when the final handoff itself omits ` + "`findings`" + `. Use ` + "`status: \"approved\"`" + ` only when the iteration goals are satisfied, code quality is acceptable, no findings were recorded, and the integrated branch satisfies the task tree and acceptance criteria. Set ` + "`goal_complete`" + ` only when a CLI goal exists and the integrated code would satisfy it after successful integration.
 `
 }
 
